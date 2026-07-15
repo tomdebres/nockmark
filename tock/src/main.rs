@@ -5,10 +5,6 @@
 //! machine. `bench` is the headline command; `prove`/`verify` are the M0
 //! spike primitives, kept because the registry driver will need them.
 
-mod hardware;
-mod miner;
-mod nonce;
-
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -22,7 +18,8 @@ use nockvm::noun::{Atom, D, T};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::miner::DEFAULT_POW_LEN;
+use tock::{hardware, miner, nonce};
+use tock::miner::DEFAULT_POW_LEN;
 
 #[derive(Parser)]
 #[command(version, about = "tock — Nockmark bench harness (real Nockchain STARK prover)")]
