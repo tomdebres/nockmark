@@ -66,7 +66,7 @@ node's main kernel at all.
 
 ## Spike binary
 
-`spike/` in this repo — `nockmark-spike` with two subcommands:
+`spike/` in this repo (since renamed to `tock/` when M1 started) — with two subcommands:
 
 - `prove --nonce <any string> --kernel miner.jam --out proof.jam` — boots the
   miner kernel exactly like the mining driver, derives 5 nonce belts from the
