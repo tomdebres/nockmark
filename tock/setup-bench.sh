@@ -3,12 +3,16 @@
 # benches against the Nockchain prover, then run the standard matrix.
 #
 # Usage (from your Mac, in the nockmark repo root):
-#   scp -i key.pem -r tock ubuntu@<ip>:tock
-#   scp -i key.pem tock/assets/miner.jam tock/setup-bench.sh ubuntu@<ip>:
-#   ssh -i key.pem ubuntu@<ip> 'bash setup-bench.sh 2>&1 | tee setup.log'
-#   scp -i key.pem 'ubuntu@<ip>:bench-results/*.json' bench-results/
-# (scp -r tock also copies tock/target and tock/assets — harmless but slow;
-#  add --exclude via rsync if you prefer: rsync -a --exclude target tock/ ubuntu@<ip>:tock/)
+#   1. On EC2, wait for BOTH status checks before copying anything:
+#        aws ec2 wait instance-status-ok --instance-ids <id>
+#   2. Copy sources with tar-over-ssh — do NOT use macOS rsync (it's Apple's
+#      openrsync and silently fails against Linux rsync, sometimes exit 0
+#      with nothing transferred):
+#        tar czf - --exclude tock/target --exclude tock/assets tock \
+#          | ssh -i key.pem ubuntu@<ip> 'tar xzf -'
+#        scp -i key.pem tock/assets/miner.jam tock/setup-bench.sh ubuntu@<ip>:
+#   3. ssh -i key.pem ubuntu@<ip> 'bash setup-bench.sh 2>&1 | tee setup.log'
+#   4. scp -i key.pem 'ubuntu@<ip>:bench-results/*.json' bench-results/
 #
 # Pin these to what the local benches used (see the findings doc / bench JSON):
 NOCKCHAIN_REPO=${NOCKCHAIN_REPO:-https://github.com/zorp-corp/nockchain}
