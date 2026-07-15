@@ -2,10 +2,13 @@
 # Provision a fresh Linux box (Ubuntu 24.04, x86_64 or aarch64) to run tock
 # benches against the Nockchain prover, then run the standard matrix.
 #
-# Usage (from your Mac):
-#   scp -i key.pem tock/setup-bench.sh tock/assets/miner.jam ubuntu@<ip>:
+# Usage (from your Mac, in the nockmark repo root):
+#   scp -i key.pem -r tock ubuntu@<ip>:tock
+#   scp -i key.pem tock/assets/miner.jam tock/setup-bench.sh ubuntu@<ip>:
 #   ssh -i key.pem ubuntu@<ip> 'bash setup-bench.sh 2>&1 | tee setup.log'
 #   scp -i key.pem 'ubuntu@<ip>:bench-results/*.json' bench-results/
+# (scp -r tock also copies tock/target and tock/assets — harmless but slow;
+#  add --exclude via rsync if you prefer: rsync -a --exclude target tock/ ubuntu@<ip>:tock/)
 #
 # Pin these to what the local benches used (see the findings doc / bench JSON):
 NOCKCHAIN_REPO=${NOCKCHAIN_REPO:-https://github.com/zorp-corp/nockchain}
