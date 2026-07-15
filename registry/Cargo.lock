@@ -3539,6 +3539,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "kernels-roswell"
+version = "0.1.0"
+
+[[package]]
 name = "konst"
 version = "0.2.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3969,6 +3973,7 @@ dependencies = [
  "nockvm",
  "nockvm_macros",
  "noun-serde",
+ "roswell",
  "serde",
  "serde_json",
  "tempfile",
@@ -5163,6 +5168,20 @@ dependencies = [
  "serde_derive",
  "typeid",
  "unicode-ident",
+]
+
+[[package]]
+name = "roswell"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "kernels-roswell",
+ "nockapp",
+ "nockvm",
+ "noun-serde",
+ "tokio",
+ "tracing",
+ "zkvm-jetpack",
 ]
 
 [[package]]

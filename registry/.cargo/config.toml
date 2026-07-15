@@ -1,0 +1,2 @@
+[env]
+KERNEL_JAM_PATH = { value = "../tock/assets/roswell.jam", relative = true }
