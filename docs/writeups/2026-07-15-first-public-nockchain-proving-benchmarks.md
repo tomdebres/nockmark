@@ -68,13 +68,55 @@ two sessions within 5%.
 Your expected reward rate is simply your share of network proving:
 
 ```
-NOCK/day ≈ (your proofs/day ÷ network proofs/day) × daily emission
+NOCK/day ≈ (your rate ÷ network rate) × daily emission
 ```
 
-<!-- TODO before publishing: plug in current network difficulty/emission from
-the block explorer for a worked example, e.g. "at today's difficulty a
-16-core Graviton4 at 44,400 proofs/day earns ≈ X NOCK/day". The upcoming
-registry automates this as an `economics` endpoint. -->
+Emission today: the chain is past the Aletheia activation (we observed
+pool work at height ~105,300), so blocks pay **2,048 NOCK**; at the 2,016
+blocks / 14 days retarget that's ≈ **295,000 NOCK/day** network-wide —
+about $11.8k/day at NOCK ≈ $0.04.
+
+Here the trouble starts: **the "network rate" is not published in a unit
+you can verify.** Nockchain's own year-in-review quotes ~3M "proofs/s".
+Interpreted as full STARK proofs — the thing this article benchmarks —
+that would mean ~100 million server cores securing an $80M-cap chain,
+which is absurd. Pool software reports in the same inflated unit (see the
+GPU postscript below), so the honest reading is that "proofs/s" in the
+wild counts *PoW attempts or sub-proof work units*, and CPU proofs/day
+cannot be converted to NOCK/day using any publicly verifiable number.
+What can be said with confidence:
+
+- **CPU mining earns effectively nothing.** Whatever the unit, a machine
+  producing on the order of one work-unit per 30 s competes against a
+  network producing millions per second. Even the 64-core box's share
+  rounds to well under a cent per day.
+- **Consumer GPUs are roughly break-even.** Measured in the *pool's own
+  unit* (which is what pools pay on), an RTX 4090 at ~334 "p/s" earns
+  ~334/3M × 295k ≈ **33 NOCK/day ≈ $1.30**, against $1.00–1.50/day of
+  electricity at its measured 420 W. Profit is a coin-flip on the NOCK
+  price and your power tariff.
+
+The proper conversion — network rate derived from on-chain difficulty
+(blocks/day × max-target ÷ current-target), in the same STARK-proof unit
+this article measures — is exactly what the Nockmark registry's
+`economics` endpoint will compute. Until then, treat every NOCK/day
+calculator with suspicion: the units don't reconcile.
+
+## A GPU postscript
+
+Public GPU miners exist (GoldenMiner's closed-source CUDA prover,
+NockPool's GPU prover), so we measured one: GoldenMiner v0.4.3 on a rented
+RTX 4090, mining live pool work for 15 minutes at 100% GPU utilization and
+~420 W. It self-reported a steady **326–334 "p/s"** — a number produced by
+a closed binary, in an unverifiable unit, that does not square with any
+plausible STARK-on-GPU speedup over the open CPU prover (typical published
+gains elsewhere are 10–50×, not the ~10,000× a naive unit reading implies).
+That is not an accusation — it is an illustration. The only proving
+numbers for this chain that anyone can independently verify are the CPU
+benchmarks in the table above, because the workload, inputs, and artefacts
+are all public and replayable. Making *verified* numbers the norm — for
+GPUs too, once their provers can be driven with challenge inputs — is the
+point of the registry this work feeds into.
 
 ## Method (and why you can trust the numbers)
 
