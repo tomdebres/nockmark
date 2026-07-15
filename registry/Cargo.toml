@@ -1,0 +1,27 @@
+[package]
+name = "nockmark-registry"
+version = "0.1.0"
+edition = "2021"
+
+# M2 Task 3: RegistryKernel wrapper around tock/assets/registry.jam (Task 2's
+# kernel). Standalone crate (not part of a workspace), sibling of tock/.
+
+[dependencies]
+tock = { path = "../tock" }
+nockapp = { path = "../../../nockchain/crates/nockapp" }
+nockvm = { path = "../../../nockchain/crates/nockvm/rust/nockvm" }
+nockvm_macros = { path = "../../../nockchain/crates/nockvm/rust/nockvm_macros" }
+zkvm-jetpack = { path = "../../../nockchain/crates/zkvm-jetpack" }
+noun-serde = { path = "../../../nockchain/crates/noun-serde" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+axum = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tempfile = "3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
