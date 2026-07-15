@@ -45,11 +45,20 @@ fn detect_macos() -> Hardware {
 
 fn detect_linux() -> Hardware {
     let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+    // ARM /proc/cpuinfo has no "model name" line; fall back to lscpu.
     let cpu_model = cpuinfo
         .lines()
         .find(|l| l.starts_with("model name"))
         .and_then(|l| l.split(':').nth(1))
-        .map(|s| s.trim().to_string());
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            run("lscpu", &[]).and_then(|out| {
+                out.lines()
+                    .find(|l| l.starts_with("Model name"))
+                    .and_then(|l| l.split(':').nth(1))
+                    .map(|s| s.trim().to_string())
+            })
+        });
     let logical_cores = cpuinfo
         .lines()
         .filter(|l| l.starts_with("processor"))
