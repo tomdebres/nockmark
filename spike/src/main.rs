@@ -114,8 +114,17 @@ fn seed_to_belts(seed: &str, domain: &str) -> [u64; 5] {
 }
 
 /// Build a noun-digest:tip5, i.e. a right-nested 5-tuple [a b c d e].
+/// Belts can exceed DIRECT_MAX (2^63-1), so go through Atom::from_value,
+/// which allocates indirect atoms when needed (D() would panic).
 fn belts_to_digest(slab: &mut NounSlab, belts: &[u64; 5]) -> Noun {
-    let nouns: Vec<Noun> = belts.iter().map(|b| D(*b)).collect();
+    let nouns: Vec<Noun> = belts
+        .iter()
+        .map(|b| {
+            Atom::from_value(slab, *b)
+                .expect("failed to allocate belt atom")
+                .as_noun()
+        })
+        .collect();
     T(slab, &nouns)
 }
 

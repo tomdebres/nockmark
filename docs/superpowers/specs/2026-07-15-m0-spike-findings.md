@@ -79,7 +79,15 @@ with `hoonc` (one-time, cached).
 
 ## Timings (this machine: Apple Silicon, Darwin 25.3.0)
 
-_Pending — filled in below when runs complete._
+| step | wall-clock | notes |
+|------|-----------|-------|
+| miner kernel boot | 1.6 s | one-time per SerfThread; excluded from prove time |
+| **prove** (pow-len 64, v2) | **20.5 s / 21.4 s / 21.2 s** (3 nonces) | single-threaded, one attempt; ±3% |
+| verify | _pending_ | |
+
+Proof artefact: **116,039 bytes jammed** (`proof.jam`). Digest (tip5 hash of
+proof): `0x4343…80e6`. Kernel compile times (one-time): miner.jam 6m15s cold,
+roswell.jam _pending_ (warm cache); jams are 17 MB (miner).
 
 ## Sharp edges hit
 
