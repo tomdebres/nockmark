@@ -106,7 +106,8 @@ compiled kernel jams; a provisioning script does a fresh Linux box
 end-to-end in ~15 minutes. Run it, and send me your numbers — especially
 modern desktop CPUs and big-core-count servers.
 
-<!-- TODO before publishing: repo link once Nockmark is public. -->
+Harness, provisioning script, raw result JSONs, and methodology docs:
+**https://github.com/tomdebres/nockmark** (`tock/` and `bench-results/`).
 
 This is milestone one of **Nockmark**: a benchmark registry for Nockchain
 where submissions are *cryptographically verified* — you fetch a challenge
