@@ -23,7 +23,7 @@ use nockapp::noun::AtomExt;
 use nockapp::save::SaveableCheckpoint;
 use nockapp::utils::{NOCK_STACK_SIZE_HUGE, NOCK_STACK_SIZE_TINY};
 use nockapp::wire::{SystemWire, Wire, WireRepr};
-use nockapp::NounExt;
+use nockapp::NounAllocator;
 use nockvm::noun::{Atom, Noun, D, T};
 use nockvm_macros::tas;
 use zkvm_jetpack::form::belt::PRIME;
@@ -176,14 +176,13 @@ async fn prove(nonce_seed: &str, kernel: &PathBuf, out: &PathBuf, pow_len: u64) 
 
     // Effects: list containing [%mine-result %& hash %command %pow proof dig header nonce]
     let space = result.noun_space();
-    let root = unsafe { *result.root() };
-    let mut effects = root;
+    let mut effects = unsafe { *result.root() }.in_space(&space);
     let mut proof: Option<Noun> = None;
-    let mut dig: Option<Noun> = None;
-    while let Ok(cell) = effects.in_space(&space).as_cell() {
+    let mut dig_hex = String::new();
+    while let Ok(cell) = effects.as_cell() {
         let effect = cell.head();
-        effects = cell.tail().noun();
-        let Ok(effect_cell) = effect.in_space(&space).as_cell() else {
+        effects = cell.tail();
+        let Ok(effect_cell) = effect.as_cell() else {
             continue;
         };
         if !effect_cell.head().eq_bytes("mine-result") {
@@ -214,14 +213,17 @@ async fn prove(nonce_seed: &str, kernel: &PathBuf, out: &PathBuf, pow_len: u64) 
         let after_pow = after_hash.tail().as_cell().expect("expected [%pow ...]");
         assert!(after_pow.head().eq_bytes("pow"), "expected %pow");
         let proof_cell = after_pow.tail().as_cell().expect("expected [proof dig ...]");
-        proof = Some(proof_cell.head());
-        dig = Some(
-            proof_cell
-                .tail()
-                .as_cell()
-                .expect("expected [dig header nonce]")
-                .head(),
-        );
+        proof = Some(proof_cell.head().noun());
+        let dig = proof_cell
+            .tail()
+            .as_cell()
+            .expect("expected [dig header nonce]")
+            .head();
+        if let Ok(atom) = dig.as_atom() {
+            for b in atom.to_ne_bytes().iter().rev() {
+                dig_hex.push_str(&format!("{b:02x}"));
+            }
+        }
         break;
     }
 
@@ -232,19 +234,12 @@ async fn prove(nonce_seed: &str, kernel: &PathBuf, out: &PathBuf, pow_len: u64) 
     let jammed = proof_slab.jam();
     std::fs::write(out, &jammed).expect("could not write proof jam");
 
-    let dig = dig.expect("no digest in mine-result");
-    let dig_atom = dig
-        .in_space(&space)
-        .as_atom()
-        .map(|a| format!("{a:?}"))
-        .unwrap_or_else(|_| "<cell>".to_string());
-
     println!("prove: OK");
     println!("  nonce seed:   {nonce_seed:?}");
     println!("  pow-len:      {pow_len}");
     println!("  prove time:   {prove_time:.2?}");
     println!("  proof size:   {} bytes (jammed)", jammed.len());
-    println!("  proof digest: {dig_atom}");
+    println!("  proof digest: 0x{dig_hex}");
     println!("  written to:   {}", out.display());
 }
 
@@ -282,13 +277,12 @@ async fn verify(proof_path: &PathBuf, kernel: &PathBuf) {
         }
         Ok(result) => {
             let space = result.noun_space();
-            let root = unsafe { *result.root() };
-            let mut effects = root;
+            let mut effects = unsafe { *result.root() }.in_space(&space);
             let mut ok = false;
-            while let Ok(cell) = effects.in_space(&space).as_cell() {
+            while let Ok(cell) = effects.as_cell() {
                 let effect = cell.head();
-                effects = cell.tail().noun();
-                let Ok(effect_cell) = effect.in_space(&space).as_cell() else {
+                effects = cell.tail();
+                let Ok(effect_cell) = effect.as_cell() else {
                     continue;
                 };
                 if effect_cell.head().eq_bytes("exit") {
