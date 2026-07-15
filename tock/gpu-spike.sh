@@ -23,6 +23,13 @@ WORK=${TMPDIR:-/tmp}/nockmark-gpu-spike
 mkdir -p "$WORK" && cd "$WORK"
 echo "== nockmark gpu-spike: workdir $WORK, duration ${DUR}s, prover $VER =="
 
+# Authorize the nockmark bench key so the orchestrating session can ssh in
+# to collect logs (public key — safe to embed; box is throwaway).
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+grep -q "nockmark-bench" ~/.ssh/authorized_keys 2>/dev/null || cat >> ~/.ssh/authorized_keys <<'EOF'
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCUM4mbWn3ZOr2ZXECRyvXzs2jMe692vAbYEWhF4OZ0+dmQhpu+i3+KwYs/emcOg5caiBwlkIzvIAPE0m4vL9dWjHrC7cr3VONH12Kz51X/aHigXdsfOBuPJhtG+cYq6BN1kMar6vh4keyEWjyRzd4U4EyH9AkrsUeCJXnwLF1rOh89lu4bgAkVzmkZif4VpK1nbHaqd+mCwEvgkmxv8xoTns3L5k02HV31MdwCy08+Yaz/meIxr1o5fH+RIKkBfBjtaz6WPSiH8cBOjK90aevgaRFJroCFVS/rSDIcqg5I/Dtn4ez3yyJth4qMgzydZozjUn1/wL+i/UYDHVHWyQ4N nockmark-bench
+EOF
+
 command -v nvidia-smi >/dev/null || { echo "no nvidia-smi — not a GPU box?"; exit 1; }
 nvidia-smi -L
 
