@@ -1,0 +1,45 @@
+{
+  "tool": "tock",
+  "tool_version": "0.1.0",
+  "nonce_rule": "fnv1a-splitmix64-v1",
+  "seed": "m1-baseline",
+  "proof_version": 2,
+  "pow_len": 64,
+  "k": 8,
+  "threads": 4,
+  "kernel_jam_sha256": "2e762b175e9dfcdfd01a30cf4afa354a2e8ddc302913309a0863a7d8d4bfdef5",
+  "kernel_boot_s": 6.41840425,
+  "per_proof_ms": [
+    27539,
+    27277,
+    27308,
+    27173,
+    24720,
+    24849,
+    24839,
+    24858
+  ],
+  "proof_bytes": [
+    115426,
+    117007,
+    117156,
+    116087,
+    116720,
+    116742,
+    116845,
+    114636
+  ],
+  "total_s": 52.272341709,
+  "proofs_per_sec": 0.15304460711815782,
+  "hardware": {
+    "cpu_model": "Apple M1",
+    "logical_cores": 8,
+    "physical_cores": 8,
+    "perf_cores": 4,
+    "eff_cores": 4,
+    "mem_bytes": 8589934592,
+    "os": "macOS 26.3.1",
+    "arch": "aarch64"
+  },
+  "timestamp_epoch_s": 1784119390
+}
