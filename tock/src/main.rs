@@ -64,6 +64,11 @@ enum Command {
         out: PathBuf,
         #[arg(long, default_value_t = DEFAULT_POW_LEN)]
         pow_len: u64,
+        /// Seed for header-belt derivation (the registry challenge lands
+        /// here later). Defaults to the fixed M0-spike seed for backwards
+        /// compatibility with existing fixtures/benches.
+        #[arg(long, default_value = "nockmark-m0-spike")]
+        header_seed: String,
     },
     /// Verify a proof jam; prints ACCEPT or REJECT (exit code 1 on reject).
     Verify {
@@ -93,7 +98,8 @@ async fn main() {
             kernel,
             out,
             pow_len,
-        } => prove(&nonce, &kernel, &out, pow_len).await,
+            header_seed,
+        } => prove(&nonce, &kernel, &out, pow_len, &header_seed).await,
         Command::Verify { proof, kernel } => verify(&proof, &kernel).await,
     }
 }
@@ -251,14 +257,14 @@ fn print_human(r: &BenchResult) {
     );
 }
 
-async fn prove(nonce_seed: &str, kernel: &PathBuf, out: &PathBuf, pow_len: u64) {
+async fn prove(nonce_seed: &str, kernel: &PathBuf, out: &PathBuf, pow_len: u64, header_seed: &str) {
     let kernel_bytes = std::fs::read(kernel)
         .unwrap_or_else(|e| panic!("could not read kernel jam {}: {e}", kernel.display()));
     let boot_t0 = Instant::now();
     let serf = miner::boot_kernel(kernel_bytes, NOCK_STACK_SIZE_TINY).await;
     eprintln!("kernel boot: {:.2?}", boot_t0.elapsed());
 
-    let header_belts = nonce::seed_to_belts("nockmark-m0-spike", "header");
+    let header_belts = nonce::seed_to_belts(header_seed, "header");
     let nonce_belts = nonce::seed_to_belts(nonce_seed, "nonce");
     eprintln!("nonce belts: {nonce_belts:?}");
 
@@ -267,6 +273,7 @@ async fn prove(nonce_seed: &str, kernel: &PathBuf, out: &PathBuf, pow_len: u64) 
 
     println!("prove: OK");
     println!("  nonce seed:   {nonce_seed:?}");
+    println!("  header seed:  {header_seed:?}");
     println!("  pow-len:      {pow_len}");
     println!("  prove time:   {:.2?}", result.duration);
     println!("  proof size:   {} bytes (jammed)", result.proof_jam.len());
