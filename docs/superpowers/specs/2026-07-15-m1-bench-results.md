@@ -11,7 +11,8 @@ kernel jam `sha256:2e762b175e9dfcdf…` (miner.hoon @ nockchain 31b8a015)
 |----------|------------------------|------------------------|--------------------|----------------------|
 | Apple M1 (4P+4E, 8 GB), macOS | **20.5 s** | 0.048 | 0.153 (4 threads) | ~13,200 |
 | AWS Graviton4, c8g.4xlarge (16c, 32 GB) | 30.4 s | 0.033 | 0.514 (16 threads) | ~44,400 |
-| AWS Graviton4, c8g.8xlarge (32c, 64 GB) | 30.7 s | 0.033 | **1.020** (32 threads) | **~88,100** |
+| AWS Graviton4, c8g.8xlarge (32c, 64 GB) | 30.7 s | 0.033 | 1.020 (32 threads) | ~88,100 |
+| AWS Graviton4, c8g.16xlarge (64c, 128 GB) | 30.6 s | 0.033 | **1.977** (64 threads) | **~170,800** |
 | AMD EPYC 9R14, c7a.4xlarge (16c, 32 GB) | 34.0 s | 0.029 | 0.465 (16 threads) | ~40,100 |
 | Intel Xeon 8488C, c7i.4xlarge (8c/16t, 32 GB) | 30.1 s | 0.033 | 0.294 (16 SMT threads) | ~25,400 |
 
@@ -21,9 +22,10 @@ Observations:
   on the server parts) — the prover is dominated by single-core field
   arithmetic + hashing and rewards high IPC/clock over core count.
   Graviton4, Sapphire Rapids and Zen 4c are within 13% of each other.
-- **Throughput scales linearly with physical cores**: 15.6× on 16 Graviton
-  cores, **31.3× on 32**, 15.8× on 16 EPYC cores, 3.2× on the M1's 4 P-cores
-  (its E-cores and 8 GB RAM limit it). Per-proof latency rises only ~2%
+- **Throughput scales linearly with physical cores all the way to 64**:
+  15.6× on 16 Graviton cores, 31.3× on 32, **60.5× on 64** (94% parallel
+  efficiency), 15.8× on 16 EPYC cores, 3.2× on the M1's 4 P-cores (its
+  E-cores and 8 GB RAM limit it). Per-proof latency rises only ~2–5%
   under full load on the server parts.
 - **Hyperthreading is nearly worthless for proving**: on the Intel box,
   8 threads on 8 physical cores = 0.264 proofs/s; 16 SMT threads = 0.294
