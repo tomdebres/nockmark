@@ -24,8 +24,10 @@ numbers with the same hash proved the exact same workload).
 | hardware | 1-thread s/proof | 1-thread proofs/s | all-cores proofs/s | all-cores proofs/day |
 |----------|-----------------:|------------------:|-------------------:|---------------------:|
 | Apple M1 (4P+4E, 8 GB, macOS) | **20.5** | 0.048 | 0.153 (4 threads) | ~13,200 |
-| AWS Graviton4, c8g.4xlarge (16 cores) | 30.4 | 0.033 | **0.514** (16 threads) | **~44,400** |
+| AWS Graviton4, c8g.4xlarge (16 cores) | 30.4 | 0.033 | 0.514 (16 threads) | ~44,400 |
+| AWS Graviton4, c8g.8xlarge (32 cores) | 30.7 | 0.033 | **1.020** (32 threads) | **~88,100** |
 | AMD EPYC 9R14, c7a.4xlarge (16 cores) | 34.0 | 0.029 | 0.465 (16 threads) | ~40,100 |
+| Intel Xeon 8488C, c7i.4xlarge (8 cores / 16 SMT) | 30.1 | 0.033 | 0.294 (16 threads) | ~25,400 |
 
 Proof artefacts are ~116 KB jammed; verification of a proof takes ~0.5 s —
 the prove/verify asymmetry that makes zkPoW work.
@@ -39,12 +41,16 @@ arithmetic and hashing inside one kernel: high IPC and clock win, core count
 doesn't help a single proof. Modern high-clock desktop CPUs (Ryzen 9,
 M-series Pro/Max) should be very competitive per-core — benchmarks welcome.
 
-**2. Throughput scales almost perfectly with cores.** Mining runs one
-independent proving kernel per thread, and it shows: 16 Graviton4 cores give
-15.6× the single-core rate, 16 EPYC cores 15.8×. Per-proof latency rises
-only ~2% under full load on the server parts (~25% on the M1, whose
-efficiency cores and 8 GB RAM drag a little). For total proofs/day, cores ×
-per-core speed is an excellent first-order model.
+**2. Throughput scales almost perfectly with physical cores — but
+hyperthreading is nearly worthless.** Mining runs one independent proving
+kernel per thread, and it shows: 16 Graviton4 cores give 15.6× the
+single-core rate, 32 cores give 31.3×, 16 EPYC cores 15.8×. Per-proof
+latency rises only ~2% under full load. SMT is the exception: on the Intel
+box, doubling from 8 threads (one per physical core) to 16 SMT threads
+added just +11% throughput while per-proof latency ballooned from 30 s to
+54 s — the prover saturates each core's execution units, leaving nothing
+for a sibling hyperthread. Size your mining threads to physical cores;
+for proofs/day, physical cores × per-core speed is an excellent model.
 
 **3. For cloud miners: Graviton4 beat EPYC on this workload.** Faster per
 core, faster in aggregate, and cheaper per hour (c8g vs c7a). If you're
