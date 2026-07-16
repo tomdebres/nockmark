@@ -85,6 +85,11 @@ async fn submit_run(
     let Ok(nonce) = sub.nonce.parse::<u64>() else {
         return bad("nonce must be a decimal u64".into());
     };
+    // elapsed_ms = 0 would make proofs_per_sec = Infinity, which serde_json
+    // serializes as JSON null — corrupting the leaderboard at rank #1.
+    if sub.elapsed_ms == 0 {
+        return bad("elapsed_ms must be greater than zero".into());
+    }
     if sub.proofs.len() as u64 != K_DEFAULT {
         return bad(format!("expected {} proofs, got {}", K_DEFAULT, sub.proofs.len()));
     }

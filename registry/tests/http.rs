@@ -85,6 +85,22 @@ async fn run_rejects_unknown_challenge() {
 }
 
 #[tokio::test]
+async fn run_rejects_zero_elapsed_ms() {
+    use base64::Engine;
+    let _guard = test_lock().lock().await;
+    let app = nockmark_registry::http::router(state().await);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(GOOD);
+    // elapsed_ms = 0 must be rejected before binding/verify: it would make
+    // proofs_per_sec = Infinity, which serde_json serializes as JSON null.
+    let (status, body) = post_json(app, "/run", serde_json::json!({
+        "nonce": "12345", "hardware": "hw", "prover_version": "x",
+        "elapsed_ms": 0, "proofs": [b64, b64]
+    })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("elapsed_ms"));
+}
+
+#[tokio::test]
 async fn leaderboard_empty_initially() {
     let _guard = test_lock().lock().await;
     let app = nockmark_registry::http::router(state().await);
