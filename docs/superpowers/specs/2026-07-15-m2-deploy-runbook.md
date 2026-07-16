@@ -207,6 +207,9 @@ Caddy auto-renews HTTPS certificates.
 
 ## Seeding the Registry
 
+> As of M3 the supported path is `tock bench --submit <registry-url>` —
+> the curl flow below is the manual equivalent, kept for debugging.
+
 Once the registry is live, seed it with a proof to populate the leaderboard.
 
 ### From a Bench Machine (with tock and miner.jam)
@@ -272,24 +275,25 @@ The e2e test (`registry/tests/e2e.rs`) shows this exact flow; see its source for
 - The registry kernel (registry.jam) is loaded via command-line `--kernel` at runtime and persists state across requests (kernel pokes). The state is persisted to `--data-dir` between restarts.
 - Ensure `/opt/nockmark/data` is writable by the `nobody` user.
 
-## Known limitations (before public submissions / M3)
+## M3 status of the M2 known limitations
 
-- **`elapsed_ms` is client-reported and not yet cross-checked.** The kernel
-  stores server-side `issued_at` (challenge mint time) and `submitted_at`
-  (run submission time) on every `RunRecord`, but registry v1 does not yet
-  enforce `elapsed_ms <= submitted_at - issued_at` (the server-observed
-  window). A submitter can currently report an artificially low
-  `elapsed_ms` to inflate `proofs_per_sec` on the leaderboard — rates from
-  untrusted submitters are **not yet trustless**. This must be enforced
-  (reject or clamp submissions where the claimed `elapsed_ms` is
-  inconsistent with the server window) before M3 opens the registry to
-  public submissions.
-- **No rate limiting in the application.** `nockmark-registry` itself
-  applies no per-IP or per-nonce request throttling. The Caddy reverse
-  proxy block above should add a rate limit or connection cap (see the
-  commented `rate_limit` example) before the registry is exposed to
-  untrusted public traffic.
-- **The de facto request-size bound is axum's default.** `POST /run`
-  (and other routes) rely on axum's default 2 MB body-size limit
-  (`DefaultBodyLimit`) as the only guard against oversized request
-  bodies; there is no registry-specific limit configured today.
+All three M2 carry-forwards are closed as of M3:
+
+- **Timing is enforced and the ranked rate is server-side.** The kernel
+  rejects submissions whose claimed `elapsed_ms` exceeds the
+  server-observed window (`submitted_at − issued_at`), and the leaderboard
+  ranks by `k / server_window` — client `elapsed_ms` is displayed as
+  `self_reported_pps` only. Note the window includes proof verification
+  (~0.5 s/proof), so published rates are slightly conservative lower
+  bounds — by design.
+- **Rate limiting is in-app.** `POST /challenge` and `POST /run` are
+  limited to 10/min per IP (first `X-Forwarded-For` entry; Railway sets
+  it). The Caddy `rate_limit` suggestion below remains optional
+  belt-and-braces for VPS deploys.
+- **Request bodies are explicitly capped at 4 MiB**, and `hardware` /
+  `prover_version` strings at 128/64 bytes.
+
+Remaining (acceptable for M3, revisit post-v1): the challenge map grows
+monotonically (bounded to ≤14.4k mints/day by the rate limit; expired
+entries are rejected but not purged), and hardware descriptors remain
+self-reported by design.
