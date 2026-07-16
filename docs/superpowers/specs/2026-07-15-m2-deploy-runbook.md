@@ -1,5 +1,11 @@
 # M2 Registry Deployment Runbook
 
+> **Deployed 2026-07-16 on Railway** (now the primary path): project
+> `nockmark-registry`, live at https://nockmark-registry-production.up.railway.app
+> with a persistent volume at `/data`. The repo's `Dockerfile` + `railway.json`
+> encode the whole build (jams ship from `deploy/assets/`); redeploy = `railway up`.
+> The VPS instructions below remain valid as the self-hosted alternative.
+
 Deploy a Nockmark registry to a Linux VPS. The registry verifies STARK proofs against the Nockchain kernel and maintains a public leaderboard.
 
 ## VPS Requirements
