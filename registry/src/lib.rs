@@ -4,6 +4,7 @@
 //! Additional mods (`http`) land in later M2 tasks; `kernel` (Task 3),
 //! `binding` (Task 4), and `verifier` (Task 5) exist so far.
 pub mod binding;
+pub mod economics;
 pub mod http;
 pub mod kernel;
 pub mod ratelimit;

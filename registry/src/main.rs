@@ -20,6 +20,12 @@ async fn main() {
     let state = nockmark_registry::http::AppState::boot_with_k(&cli.kernel, &cli.data_dir, cli.k)
         .await
         .expect("boot registry");
+    if let Ok(url) = std::env::var("NOCKMARK_ECON_URL") {
+        tokio::spawn(nockmark_registry::economics::refresh_loop(
+            url,
+            state.econ.clone(),
+        ));
+    }
     let app = nockmark_registry::http::router(state);
     let listener = tokio::net::TcpListener::bind(&cli.listen).await.expect("bind");
     eprintln!("nockmark registry listening on {}", cli.listen);

@@ -30,18 +30,22 @@ pub struct LeaderboardEntry {
     pub proofs_per_sec: f64,
     /// k / client-reported elapsed_ms — informational only.
     pub self_reported_pps: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub est_nock_per_day: Option<f64>,
 }
 
 fn round4(x: f64) -> f64 {
     (x * 10_000.0).round() / 10_000.0
 }
 
-fn to_entry(run: RunRecord) -> LeaderboardEntry {
+fn to_entry(run: RunRecord, econ: Option<crate::economics::EconParams>) -> LeaderboardEntry {
     let server_window_ms =
         crate::kernel::da_diff_to_ms(run.issued_at, run.submitted_at).max(1);
     let proofs_per_sec = round4(run.k as f64 / (server_window_ms as f64 / 1000.0));
     let self_reported_pps = round4(run.k as f64 / (run.elapsed_ms as f64 / 1000.0));
-    LeaderboardEntry { run, server_window_ms, proofs_per_sec, self_reported_pps }
+    let est_nock_per_day =
+        econ.map(|p| round4(crate::economics::nock_per_day(proofs_per_sec, &p)));
+    LeaderboardEntry { run, server_window_ms, proofs_per_sec, self_reported_pps, est_nock_per_day }
 }
 
 #[derive(Clone)]
@@ -50,6 +54,7 @@ pub struct AppState {
     pub verifier: Arc<Mutex<Verifier>>,
     pub limiter: Arc<RateLimiter>,
     pub k: u64,
+    pub econ: Arc<tokio::sync::RwLock<Option<crate::economics::EconParams>>>,
 }
 
 impl AppState {
@@ -67,6 +72,7 @@ impl AppState {
             verifier: Arc::new(Mutex::new(Verifier::boot().await?)),
             limiter: Arc::new(RateLimiter::new(10, Duration::from_secs(60))),
             k,
+            econ: Arc::new(tokio::sync::RwLock::new(crate::economics::from_env())),
         })
     }
 }
@@ -101,6 +107,7 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(index_page))
         .route("/leaderboard", get(leaderboard))
         .route("/runs/:id", get(run_by_id))
+        .route("/economics", get(economics))
         .merge(limited)
         // Explicit request-size bound (M2 carry-forward): k=8 proofs are
         // ~1.2 MiB base64, so 4 MiB is generous headroom.
@@ -211,9 +218,11 @@ async fn index_page() -> Html<&'static str> {
 }
 
 async fn leaderboard(State(st): State<AppState>) -> (StatusCode, Json<Vec<LeaderboardEntry>>) {
+    let econ = *st.econ.read().await;
     match st.kernel.lock().await.leaderboard().await {
         Ok(runs) => {
-            let mut entries: Vec<LeaderboardEntry> = runs.into_iter().map(to_entry).collect();
+            let mut entries: Vec<LeaderboardEntry> =
+                runs.into_iter().map(|run| to_entry(run, econ)).collect();
             entries.sort_by(|a, b| b.proofs_per_sec.partial_cmp(&a.proofs_per_sec).unwrap_or(std::cmp::Ordering::Equal));
             (StatusCode::OK, Json(entries))
         }
@@ -225,9 +234,10 @@ async fn run_by_id(
     State(st): State<AppState>,
     AxumPath(id): AxumPath<u64>,
 ) -> (StatusCode, Json<Option<LeaderboardEntry>>) {
+    let econ = *st.econ.read().await;
     match st.kernel.lock().await.leaderboard().await {
         Ok(runs) => {
-            let entry = runs.into_iter().find(|r| r.id == id).map(to_entry);
+            let entry = runs.into_iter().find(|r| r.id == id).map(|run| to_entry(run, econ));
             match entry {
                 Some(e) => (StatusCode::OK, Json(Some(e))),
                 None => (StatusCode::NOT_FOUND, Json(None)),
@@ -235,4 +245,27 @@ async fn run_by_id(
         }
         Err(_e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(None)),
     }
+}
+
+async fn economics(
+    State(st): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(p) = *st.econ.read().await else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "economics not configured on this instance" })),
+        );
+    };
+    let mut out = json!({
+        "difficulty": p.difficulty,
+        "block_reward_nock": p.block_reward_nock,
+        "model": "est_nock_per_day = pps * 86400 / difficulty * block_reward_nock",
+        "note": "difficulty = expected proof attempts per block; estimates only",
+    });
+    if let Some(pps) = q.get("pps").and_then(|s| s.parse::<f64>().ok()) {
+        out["pps"] = json!(pps);
+        out["est_nock_per_day"] = json!(crate::economics::nock_per_day(pps, &p));
+    }
+    (StatusCode::OK, Json(out))
 }

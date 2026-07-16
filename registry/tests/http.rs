@@ -278,3 +278,47 @@ async fn default_k_is_eight_and_test_states_override_it() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["k"], 2);
 }
+
+#[tokio::test]
+async fn economics_unconfigured_returns_503() {
+    let _guard = test_lock().lock().await;
+    let app = nockmark_registry::http::router(state().await);
+    let res = app
+        .oneshot(Request::get("/economics").body(Body::empty()).unwrap())
+        .await.unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn economics_estimates_and_annotates_the_board() {
+    let _guard = test_lock().lock().await;
+    let st = state().await;
+    *st.econ.write().await = Some(nockmark_registry::economics::EconParams {
+        difficulty: 6_000.0,
+        block_reward_nock: 2_048.0,
+    });
+    let app = nockmark_registry::http::router(st.clone());
+
+    // /economics?pps= computes the estimate
+    let res = app.clone()
+        .oneshot(Request::get("/economics?pps=10").body(Body::empty()).unwrap())
+        .await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["difficulty"], 6_000.0);
+    let est = v["est_nock_per_day"].as_f64().unwrap();
+    assert!((est - 10.0 * 86_400.0 / 6_000.0 * 2_048.0).abs() < 1e-6);
+
+    // leaderboard rows carry est_nock_per_day when configured
+    let nonce = st.kernel.lock().await.mint_challenge().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    st.kernel.lock().await
+        .submit_run(nonce, "hw", "v", 2, 400).await.unwrap().unwrap();
+    let res = app
+        .oneshot(Request::get("/leaderboard").body(Body::empty()).unwrap())
+        .await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(v[0]["est_nock_per_day"].as_f64().unwrap() > 0.0);
+}
