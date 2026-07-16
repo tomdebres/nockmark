@@ -1,9 +1,11 @@
 # M3 announcement drafts (Tom posts these manually)
 
 Pre-flight checklist (human):
+- [ ] **URGENT (before Fri Jul 18, 12:25 +01:00):** the Railway `/data` volume is pending deletion (an M3-deploy wipe attempt could not be completed — the CLI token lacked ssh scope, and `volume delete` turned out to be a scheduled soft-delete that blocks detach/re-add). Run `railway login`, then in the dashboard cancel the volume deletion — or attach a fresh `/data` volume and re-run `tock bench --submit`. Until resolved, a redeploy/restart after Friday would lose the leaderboard.
+- [ ] After restoring the volume: optionally wipe the old M2 row (run `railway ssh "rm -rf /data/*"` then restart, then reseed) — it now displays its honest server-window rate, so keeping it is also fine.
 - [ ] Read through docs/writeups/2026-07-15-first-public-nockchain-proving-benchmarks.md (pending since M1) and publish it (repo link is fine)
 - [ ] Verify the leaderboard shows the reseeded M3 runs
-- [ ] Set NOCKMARK_DIFFICULTY / NOCKMARK_BLOCK_REWARD_NOCK on Railway (current values from https://nockblocks.com) so /economics is live
+- [ ] Set NOCKMARK_DIFFICULTY / NOCKMARK_BLOCK_REWARD_NOCK on Railway (current values from https://nockblocks.com) so /economics is live. Note: no public JSON difficulty endpoint was found on NockBlocks (the official Block Explorer API is gRPC-first), so leave NOCKMARK_ECON_URL unset and refresh the value manually for now.
 - [ ] Post Discord + Telegram drafts below; ask a mod about pinning
 
 ## Discord (Nockchain server, #mining or #ecosystem)
