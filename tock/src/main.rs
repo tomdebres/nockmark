@@ -18,7 +18,7 @@ use nockvm::noun::{Atom, D, T};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use tock::{hardware, miner, nonce};
+use tock::{client, hardware, miner, nonce};
 use tock::miner::DEFAULT_POW_LEN;
 
 #[derive(Parser)]
@@ -53,6 +53,15 @@ enum Command {
         /// Directory to write the proof jams into (kept only if given).
         #[arg(long)]
         keep_proofs: Option<PathBuf>,
+        /// Registry base URL. When set, fetches a challenge (which supplies
+        /// the seed, k, and pow-len — --seed/-k are ignored) and submits the
+        /// proof bundle after proving. Without it, bench stays fully local.
+        #[arg(long, value_name = "REGISTRY_URL")]
+        submit: Option<String>,
+        /// Prover version string recorded on submission (the nockchain
+        /// commit the kernel jams were built from).
+        #[arg(long, default_value = "31b8a015")]
+        prover_version: String,
     },
     /// Produce one STARK proof whose input incorporates an arbitrary nonce.
     Prove {
@@ -92,7 +101,22 @@ async fn main() {
             pow_len,
             json,
             keep_proofs,
-        } => bench(&seed, &kernel, k, threads, pow_len, json, keep_proofs).await,
+            submit,
+            prover_version,
+        } => {
+            bench(
+                &seed,
+                &kernel,
+                k,
+                threads,
+                pow_len,
+                json,
+                keep_proofs,
+                submit,
+                prover_version,
+            )
+            .await
+        }
         Command::Prove {
             nonce,
             kernel,
@@ -133,12 +157,11 @@ async fn bench(
     pow_len: u64,
     json: bool,
     keep_proofs: Option<PathBuf>,
+    submit: Option<String>,
+    prover_version: String,
 ) {
     assert!(k >= 1, "k must be at least 1");
-    assert!(
-        threads >= 1 && threads <= k,
-        "threads must be between 1 and k"
-    );
+    assert!(threads >= 1, "threads must be at least 1");
     let hw = hardware::detect();
     let kernel_bytes = std::fs::read(kernel)
         .unwrap_or_else(|e| panic!("could not read kernel jam {}: {e}", kernel.display()));
@@ -157,15 +180,43 @@ async fn bench(
     let kernel_boot_s = boot_t0.elapsed().as_secs_f64();
     eprintln!("booted {threads} kernel(s) in {kernel_boot_s:.2}s; proving {k} proofs…");
 
-    let header_belts = nonce::seed_to_belts(seed, "header");
+    // Resolve the workload: local seed, or a server challenge (fetched
+    // AFTER kernel boot so boot time never counts against the window).
+    let (challenge, seed, k, pow_len) = match &submit {
+        Some(base) => {
+            let ch = client::fetch_challenge(base)
+                .await
+                .unwrap_or_else(|e| panic!("could not fetch challenge: {e}"));
+            assert_eq!(
+                ch.nonce_rule,
+                nonce::NONCE_RULE,
+                "registry expects nonce rule {:?}; this tock speaks {:?} — upgrade tock",
+                ch.nonce_rule,
+                nonce::NONCE_RULE
+            );
+            eprintln!(
+                "challenge {} from {base} (k={}, pow_len={}); the clock is running",
+                ch.nonce, ch.k, ch.pow_len
+            );
+            let seed = ch.nonce.clone();
+            let (k, pow_len) = (ch.k, ch.pow_len);
+            (Some(ch), seed, k, pow_len)
+        }
+        None => (None, seed.to_string(), k, pow_len),
+    };
+    if threads > k {
+        eprintln!("note: {threads} threads for {k} proofs — extra threads idle");
+    }
+
+    let header_belts = nonce::seed_to_belts(&seed, "header");
 
     let total_t0 = Instant::now();
     let mut tasks = tokio::task::JoinSet::new();
     for (tid, serf) in serfs.into_iter().enumerate() {
-        let seed = seed.to_string();
+        let seed = seed.clone();
         let keep_proofs = keep_proofs.clone();
         tasks.spawn(async move {
-            let mut results: Vec<(u64, u64, u64)> = Vec::new(); // (i, ms, bytes)
+            let mut results: Vec<(u64, u64, Vec<u8>)> = Vec::new(); // (i, ms, jam)
             let mut i = tid as u64;
             while i < k {
                 let nonce_belts = nonce::seed_to_belts(&format!("{seed}/{i}"), "nonce");
@@ -179,28 +230,24 @@ async fn bench(
                     std::fs::write(dir.join(format!("proof-{i}.jam")), &out.proof_jam)
                         .expect("could not write proof jam");
                 }
-                results.push((
-                    i,
-                    out.duration.as_millis() as u64,
-                    out.proof_jam.len() as u64,
-                ));
+                results.push((i, out.duration.as_millis() as u64, out.proof_jam));
                 i += threads;
             }
             results
         });
     }
-    let mut per_proof: Vec<(u64, u64, u64)> = Vec::new();
+    let mut per_proof: Vec<(u64, u64, Vec<u8>)> = Vec::new();
     while let Some(res) = tasks.join_next().await {
         per_proof.extend(res.expect("proving task panicked"));
     }
     let total_s = total_t0.elapsed().as_secs_f64();
-    per_proof.sort_unstable();
+    per_proof.sort_by_key(|(i, _, _)| *i);
 
     let result = BenchResult {
         tool: "tock",
         tool_version: env!("CARGO_PKG_VERSION"),
         nonce_rule: nonce::NONCE_RULE,
-        seed: seed.to_string(),
+        seed: seed.clone(),
         proof_version: miner::PROOF_VERSION,
         pow_len,
         k,
@@ -208,7 +255,7 @@ async fn bench(
         kernel_jam_sha256,
         kernel_boot_s,
         per_proof_ms: per_proof.iter().map(|(_, ms, _)| *ms).collect(),
-        proof_bytes: per_proof.iter().map(|(_, _, b)| *b).collect(),
+        proof_bytes: per_proof.iter().map(|(_, _, jam)| jam.len() as u64).collect(),
         total_s,
         proofs_per_sec: k as f64 / total_s,
         hardware: hw,
@@ -225,6 +272,35 @@ async fn bench(
         );
     } else {
         print_human(&result);
+    }
+
+    if let (Some(base), Some(ch)) = (&submit, challenge) {
+        use base64::Engine;
+        let proofs: Vec<String> = per_proof
+            .iter() // i-ordered: proof i must sit at index i (binding check)
+            .map(|(_, _, jam)| base64::engine::general_purpose::STANDARD.encode(jam))
+            .collect();
+        // Round UP: never claim faster than measured, so an honest claim
+        // always fits inside the server window.
+        let elapsed_ms = (total_s * 1000.0).ceil().max(1.0) as u64;
+        let sub = client::Submission {
+            nonce: ch.nonce,
+            hardware: client::hardware_summary(&result.hardware),
+            prover_version,
+            elapsed_ms,
+            proofs,
+        };
+        match client::submit_run(base, &sub).await {
+            Ok(id) => {
+                println!("submitted: run {id}");
+                println!("  {}/runs/{id}", base.trim_end_matches('/'));
+            }
+            Err(e) => {
+                eprintln!("submission REJECTED or failed: {e}");
+                eprintln!("(local bench result above is still valid)");
+                std::process::exit(1);
+            }
+        }
     }
 }
 
