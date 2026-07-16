@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nockmark — verified Nockchain proving benchmarks</title>
+<style>
+  body { font: 16px/1.5 system-ui; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #ccc; }
+  caption { font-weight: 700; font-size: 1.2rem; padding: .5rem; }
+</style>
+<table id="board"><caption>Nockmark — verified proving runs</caption>
+  <thead><tr><th>#</th><th>hardware</th><th>proofs/sec</th><th>k</th><th>prover</th></tr></thead>
+  <tbody></tbody>
+</table>
+<p>Every row passed server-side STARK verification against a server-issued
+challenge nonce. <a href="https://github.com/tomdebres/nockmark">How it works.</a></p>
+<script>
+fetch('/leaderboard').then(r => r.json()).then(rows => {
+  const tb = document.querySelector('#board tbody');
+  rows.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    [i + 1, r.hardware, r.proofs_per_sec, r.k, r.prover_version].forEach(v => {
+      const td = document.createElement('td');
+      td.textContent = v;
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+});
+</script>

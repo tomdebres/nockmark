@@ -1,16 +1,26 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use axum::extract::State;
-use axum::routing::post;
+use axum::extract::{Path as AxumPath, State};
+use axum::http::StatusCode;
+use axum::response::Html;
+use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 
-use crate::kernel::RegistryKernel;
+use crate::kernel::{RegistryKernel, RunRecord};
 use crate::verifier::Verifier;
 
 pub const K_DEFAULT: u64 = 2;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LeaderboardEntry {
+    #[serde(flatten)]
+    pub run: RunRecord,
+    pub proofs_per_sec: f64,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -29,8 +39,11 @@ impl AppState {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(index_page))
         .route("/challenge", post(new_challenge))
         .route("/run", post(submit_run))
+        .route("/leaderboard", get(leaderboard))
+        .route("/runs/:id", get(run_by_id))
         .with_state(state)
 }
 
@@ -63,11 +76,10 @@ async fn submit_run(
     State(st): State<AppState>,
     Json(sub): Json<RunSubmission>,
 ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
-    use axum::http::StatusCode;
     use base64::Engine;
 
-    fn bad(msg: String) -> (axum::http::StatusCode, Json<serde_json::Value>) {
-        (axum::http::StatusCode::BAD_REQUEST, Json(json!({ "error": msg })))
+    fn bad(msg: String) -> (StatusCode, Json<serde_json::Value>) {
+        (StatusCode::BAD_REQUEST, Json(json!({ "error": msg })))
     }
 
     let Ok(nonce) = sub.nonce.parse::<u64>() else {
@@ -119,5 +131,53 @@ async fn submit_run(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": format!("kernel error: {e}") })),
         ),
+    }
+}
+
+async fn index_page() -> Html<&'static str> {
+    Html(include_str!("../static/index.html"))
+}
+
+async fn leaderboard(State(st): State<AppState>) -> (StatusCode, Json<Vec<LeaderboardEntry>>) {
+    match st.kernel.lock().await.leaderboard().await {
+        Ok(runs) => {
+            let mut entries: Vec<LeaderboardEntry> = runs
+                .into_iter()
+                .map(|run| {
+                    let proofs_per_sec = run.k as f64 / (run.elapsed_ms as f64 / 1000.0);
+                    let proofs_per_sec = (proofs_per_sec * 10000.0).round() / 10000.0;
+                    LeaderboardEntry {
+                        run,
+                        proofs_per_sec,
+                    }
+                })
+                .collect();
+            entries.sort_by(|a, b| b.proofs_per_sec.partial_cmp(&a.proofs_per_sec).unwrap_or(std::cmp::Ordering::Equal));
+            (StatusCode::OK, Json(entries))
+        }
+        Err(_e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(vec![])),
+    }
+}
+
+async fn run_by_id(
+    State(st): State<AppState>,
+    AxumPath(id): AxumPath<u64>,
+) -> (StatusCode, Json<Option<LeaderboardEntry>>) {
+    match st.kernel.lock().await.leaderboard().await {
+        Ok(runs) => {
+            let entry = runs.into_iter().find(|r| r.id == id).map(|run| {
+                let proofs_per_sec = run.k as f64 / (run.elapsed_ms as f64 / 1000.0);
+                let proofs_per_sec = (proofs_per_sec * 10000.0).round() / 10000.0;
+                LeaderboardEntry {
+                    run,
+                    proofs_per_sec,
+                }
+            });
+            match entry {
+                Some(e) => (StatusCode::OK, Json(Some(e))),
+                None => (StatusCode::NOT_FOUND, Json(None)),
+            }
+        }
+        Err(_e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(None)),
     }
 }

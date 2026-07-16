@@ -83,3 +83,43 @@ async fn run_rejects_unknown_challenge() {
     // binding fails before the kernel is ever consulted
     assert!(body["error"].as_str().is_some());
 }
+
+#[tokio::test]
+async fn leaderboard_empty_initially() {
+    let _guard = test_lock().lock().await;
+    let app = nockmark_registry::http::router(state().await);
+    let res = app
+        .oneshot(Request::get("/leaderboard").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn index_page_ok() {
+    let _guard = test_lock().lock().await;
+    let app = nockmark_registry::http::router(state().await);
+    let res = app
+        .oneshot(Request::get("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(html.contains("Nockmark"));
+    assert!(html.contains("<table"));
+}
+
+#[tokio::test]
+async fn run_by_id_not_found() {
+    let _guard = test_lock().lock().await;
+    let app = nockmark_registry::http::router(state().await);
+    let res = app
+        .oneshot(Request::get("/runs/999").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
