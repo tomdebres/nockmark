@@ -1,0 +1,9 @@
+**/target
+tock/assets
+.superpowers
+.git
+bench-results
+docs
+spike
+*.jam
+!deploy/assets/*.jam
