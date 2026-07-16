@@ -143,6 +143,14 @@ impl NounDecode for RunRecord {
     }
 }
 
+/// Difference of two `@da` atoms (64.64 fixed-point seconds) in milliseconds.
+/// The absolute Urbit epoch cancels out — only the difference is meaningful.
+pub fn da_diff_to_ms(issued_at: u128, submitted_at: u128) -> u64 {
+    let diff = submitted_at.saturating_sub(issued_at);
+    // diff < 2^76 for windows under ~1 h, so ×1000 stays well inside u128.
+    (diff.saturating_mul(1_000) >> 64) as u64
+}
+
 pub struct RegistryKernel {
     app: NockApp,
 }
@@ -280,5 +288,20 @@ impl RegistryKernel {
         };
         Vec::<RunRecord>::from_noun(&inner, &space)
             .map_err(|e| NockAppError::OtherError(format!("decode leaderboard: {e:?}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::da_diff_to_ms;
+
+    #[test]
+    fn da_diff_to_ms_converts_fixed_point_seconds() {
+        let one_second: u128 = 1 << 64; // @dr: 64.64 fixed-point seconds
+        assert_eq!(da_diff_to_ms(0, one_second), 1_000);
+        assert_eq!(da_diff_to_ms(one_second, one_second * 43), 42_000);
+        assert_eq!(da_diff_to_ms(0, one_second / 2), 500);
+        // clock nonsense (submitted before issued) must not panic
+        assert_eq!(da_diff_to_ms(one_second, 0), 0);
     }
 }

@@ -1,9 +1,11 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, Request, State};
 use axum::http::StatusCode;
-use axum::response::Html;
+use axum::middleware::{self, Next};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
@@ -11,39 +13,107 @@ use serde_json::json;
 use tokio::sync::Mutex;
 
 use crate::kernel::{RegistryKernel, RunRecord};
+use crate::ratelimit::RateLimiter;
 use crate::verifier::Verifier;
 
-pub const K_DEFAULT: u64 = 2;
+/// Proofs per submission. 8 ≈ 3 minutes on an M1 Mac (21 s/proof) — the
+/// design spec's "minutes of proving" target; the spike value was 2.
+pub const K_DEFAULT: u64 = 8;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LeaderboardEntry {
     #[serde(flatten)]
     pub run: RunRecord,
+    /// submitted_at − issued_at, the server-observed window.
+    pub server_window_ms: u64,
+    /// k / server window — the trustless, ranked rate (a lower bound).
     pub proofs_per_sec: f64,
+    /// k / client-reported elapsed_ms — informational only.
+    pub self_reported_pps: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub est_nock_per_day: Option<f64>,
+}
+
+fn round4(x: f64) -> f64 {
+    (x * 10_000.0).round() / 10_000.0
+}
+
+fn to_entry(run: RunRecord, econ: Option<crate::economics::EconParams>) -> LeaderboardEntry {
+    let server_window_ms =
+        crate::kernel::da_diff_to_ms(run.issued_at, run.submitted_at).max(1);
+    let proofs_per_sec = round4(run.k as f64 / (server_window_ms as f64 / 1000.0));
+    let self_reported_pps = round4(run.k as f64 / (run.elapsed_ms as f64 / 1000.0));
+    let est_nock_per_day =
+        econ.map(|p| round4(crate::economics::nock_per_day(proofs_per_sec, &p)));
+    LeaderboardEntry { run, server_window_ms, proofs_per_sec, self_reported_pps, est_nock_per_day }
 }
 
 #[derive(Clone)]
 pub struct AppState {
     pub kernel: Arc<Mutex<RegistryKernel>>,
     pub verifier: Arc<Mutex<Verifier>>,
+    pub limiter: Arc<RateLimiter>,
+    pub k: u64,
+    pub econ: Arc<tokio::sync::RwLock<Option<crate::economics::EconParams>>>,
 }
 
 impl AppState {
     pub async fn boot(jam: &Path, data_dir: &Path) -> Result<Self, nockapp::NockAppError> {
+        Self::boot_with_k(jam, data_dir, K_DEFAULT).await
+    }
+
+    pub async fn boot_with_k(
+        jam: &Path,
+        data_dir: &Path,
+        k: u64,
+    ) -> Result<Self, nockapp::NockAppError> {
         Ok(Self {
             kernel: Arc::new(Mutex::new(RegistryKernel::boot(jam, data_dir).await?)),
             verifier: Arc::new(Mutex::new(Verifier::boot().await?)),
+            limiter: Arc::new(RateLimiter::new(10, Duration::from_secs(60))),
+            k,
+            econ: Arc::new(tokio::sync::RwLock::new(crate::economics::from_env())),
         })
     }
 }
 
+/// Key = LAST X-Forwarded-For entry (the proxy-appended true client IP; the
+/// last entry is trustworthy whether the edge proxy appends to or overwrites
+/// a client-supplied header), else "direct" (oneshot tests, local curl).
+/// Applied only to the POST routes — they mint kernel state / burn verifier
+/// CPU.
+async fn rate_limit_mw(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    let key = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next_back())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "direct".into());
+    if !st.limiter.check(&key) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({ "error": "rate limit exceeded — try again in a minute" })),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/", get(index_page))
+    let limited = Router::new()
         .route("/challenge", post(new_challenge))
         .route("/run", post(submit_run))
+        .route_layer(middleware::from_fn_with_state(state.clone(), rate_limit_mw));
+    Router::new()
+        .route("/", get(index_page))
         .route("/leaderboard", get(leaderboard))
         .route("/runs/:id", get(run_by_id))
+        .route("/economics", get(economics))
+        .merge(limited)
+        // Explicit request-size bound (M2 carry-forward): k=8 proofs are
+        // ~1.2 MiB base64, so 4 MiB is generous headroom.
+        .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
         .with_state(state)
 }
 
@@ -58,7 +128,7 @@ async fn new_challenge(State(st): State<AppState>) -> Json<serde_json::Value> {
     Json(json!({
         "nonce": nonce.to_string(),
         "pow_len": tock::miner::DEFAULT_POW_LEN,
-        "k": K_DEFAULT,
+        "k": st.k,
         "nonce_rule": tock::nonce::NONCE_RULE,
     }))
 }
@@ -90,8 +160,14 @@ async fn submit_run(
     if sub.elapsed_ms == 0 {
         return bad("elapsed_ms must be greater than zero".into());
     }
-    if sub.proofs.len() as u64 != K_DEFAULT {
-        return bad(format!("expected {} proofs, got {}", K_DEFAULT, sub.proofs.len()));
+    if sub.hardware.len() > 128 {
+        return bad("hardware string too long (max 128 bytes)".into());
+    }
+    if sub.prover_version.len() > 64 {
+        return bad("prover_version string too long (max 64 bytes)".into());
+    }
+    if sub.proofs.len() as u64 != st.k {
+        return bad(format!("expected {} proofs, got {}", st.k, sub.proofs.len()));
     }
     // decode + bind + verify every proof BEFORE touching kernel state
     for (i, b64) in sub.proofs.iter().enumerate() {
@@ -127,7 +203,7 @@ async fn submit_run(
         }
     }
     match st.kernel.lock().await
-        .submit_run(nonce, &sub.hardware, &sub.prover_version, K_DEFAULT, sub.elapsed_ms)
+        .submit_run(nonce, &sub.hardware, &sub.prover_version, st.k, sub.elapsed_ms)
         .await
     {
         Ok(Ok(id)) => (StatusCode::OK, Json(json!({ "run_id": id }))),
@@ -144,19 +220,11 @@ async fn index_page() -> Html<&'static str> {
 }
 
 async fn leaderboard(State(st): State<AppState>) -> (StatusCode, Json<Vec<LeaderboardEntry>>) {
+    let econ = *st.econ.read().await;
     match st.kernel.lock().await.leaderboard().await {
         Ok(runs) => {
-            let mut entries: Vec<LeaderboardEntry> = runs
-                .into_iter()
-                .map(|run| {
-                    let proofs_per_sec = run.k as f64 / (run.elapsed_ms as f64 / 1000.0);
-                    let proofs_per_sec = (proofs_per_sec * 10000.0).round() / 10000.0;
-                    LeaderboardEntry {
-                        run,
-                        proofs_per_sec,
-                    }
-                })
-                .collect();
+            let mut entries: Vec<LeaderboardEntry> =
+                runs.into_iter().map(|run| to_entry(run, econ)).collect();
             entries.sort_by(|a, b| b.proofs_per_sec.partial_cmp(&a.proofs_per_sec).unwrap_or(std::cmp::Ordering::Equal));
             (StatusCode::OK, Json(entries))
         }
@@ -168,16 +236,10 @@ async fn run_by_id(
     State(st): State<AppState>,
     AxumPath(id): AxumPath<u64>,
 ) -> (StatusCode, Json<Option<LeaderboardEntry>>) {
+    let econ = *st.econ.read().await;
     match st.kernel.lock().await.leaderboard().await {
         Ok(runs) => {
-            let entry = runs.into_iter().find(|r| r.id == id).map(|run| {
-                let proofs_per_sec = run.k as f64 / (run.elapsed_ms as f64 / 1000.0);
-                let proofs_per_sec = (proofs_per_sec * 10000.0).round() / 10000.0;
-                LeaderboardEntry {
-                    run,
-                    proofs_per_sec,
-                }
-            });
+            let entry = runs.into_iter().find(|r| r.id == id).map(|run| to_entry(run, econ));
             match entry {
                 Some(e) => (StatusCode::OK, Json(Some(e))),
                 None => (StatusCode::NOT_FOUND, Json(None)),
@@ -185,4 +247,27 @@ async fn run_by_id(
         }
         Err(_e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(None)),
     }
+}
+
+async fn economics(
+    State(st): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Some(p) = *st.econ.read().await else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "economics not configured on this instance" })),
+        );
+    };
+    let mut out = json!({
+        "difficulty": p.difficulty,
+        "block_reward_nock": p.block_reward_nock,
+        "model": "est_nock_per_day = pps * 86400 / difficulty * block_reward_nock",
+        "note": "difficulty = expected proof attempts per block; estimates only",
+    });
+    if let Some(pps) = q.get("pps").and_then(|s| s.parse::<f64>().ok()) {
+        out["pps"] = json!(pps);
+        out["est_nock_per_day"] = json!(crate::economics::nock_per_day(pps, &p));
+    }
+    (StatusCode::OK, Json(out))
 }

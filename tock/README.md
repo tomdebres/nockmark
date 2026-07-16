@@ -69,3 +69,24 @@ proofs share an input; `--seed` is where a registry challenge will land at M3.
 Reference timings (Tom's Apple M1, 8 GB): prove ~21 s/proof single-threaded
 (and ~21 s wall-clock for 2 proofs on 2 threads), verify ~0.5 s, proofs
 ~116 KB jammed.
+
+## Submitting to the public registry (M3)
+
+One command — it fetches a challenge, proves against it, and submits:
+
+    export PATH="$HOME/.rustup/toolchains/<your-nightly-2026-04-03>/bin:$PATH"
+    export RUST_MIN_STACK=8388608
+    ./target/release/tock bench \
+      --kernel assets/miner.jam \
+      --submit https://nockmark-registry-production.up.railway.app
+
+The registry supplies the nonce, k (currently 8), and pow-len; your
+`--seed`/`-k` flags are ignored in submit mode. `--pow-len` is supplied by
+the registry too, so any value you pass is ignored the same way.
+`--threads N` is honored.
+The published rate is computed **server-side** from the challenge-issue →
+submission window, so it is a cryptographically verified lower bound on
+your machine's proving rate: nothing you report can inflate it. Hardware
+strings are self-reported and labelled as such.
+
+Fully offline benching (`tock bench` without `--submit`) is unchanged.
