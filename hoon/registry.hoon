@@ -68,6 +68,9 @@
         [[%rejected 'nonce-used']~ k]
       ?:  (gth now (add issued-at.u.c ~h1))
         [[%rejected 'stale-nonce']~ k]
+      =/  window-ms  (div (mul (sub now issued-at.u.c) 1.000) ~s1)
+      ?:  (gth elapsed-ms.cau window-ms)
+        [[%rejected 'elapsed-exceeds-window']~ k]
       =/  r=run
         :*  next-id.k  nonce.cau  hardware.cau  prover-version.cau
             k.cau  elapsed-ms.cau  issued-at.u.c  now

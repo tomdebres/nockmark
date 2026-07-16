@@ -139,20 +139,30 @@ async fn leaderboard_sorts_by_proofs_per_sec_desc() {
     // nonce), then poke submit_run directly on the same kernel handle.
     // This bypasses proof verification (legitimately, for this READ-path
     // test) and lets us control elapsed_ms precisely to assert ordering.
-    let nonce1 = st.kernel.lock().await.mint_challenge().await.unwrap();
-    let nonce2 = st.kernel.lock().await.mint_challenge().await.unwrap();
-
+    // Windows are real (enforced by the kernel now): each run's claimed
+    // elapsed_ms must fit inside its own mint→submit window, with a >=3x
+    // margin so scheduling jitter can't flip a claim into rejection.
+    // slow-hw: ~2400 ms window / 800 ms claim; fast-hw: ~600 ms window /
+    // 200 ms claim. fast-hw ranks first under both client-pps and
+    // server-window ranking (Task 2 flips the ranked source; this
+    // scenario survives it), and the 1800 ms gap between the two windows
+    // keeps the ordering robust under load.
+    let nonce_slow = st.kernel.lock().await.mint_challenge().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(2_400)).await;
     st.kernel
         .lock()
         .await
-        .submit_run(nonce1, "slow-hw", "v", 2, 60_000)
+        .submit_run(nonce_slow, "slow-hw", "v", 2, 800)
         .await
         .unwrap()
         .unwrap();
+
+    let nonce_fast = st.kernel.lock().await.mint_challenge().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
     st.kernel
         .lock()
         .await
-        .submit_run(nonce2, "fast-hw", "v", 2, 30_000)
+        .submit_run(nonce_fast, "fast-hw", "v", 2, 200)
         .await
         .unwrap()
         .unwrap();
