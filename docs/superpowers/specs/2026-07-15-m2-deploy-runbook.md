@@ -178,6 +178,16 @@ Add this block to `/etc/caddy/Caddyfile`:
 ```
 nockmark.example {
   reverse_proxy 127.0.0.1:8080
+  # No rate limiting is configured by default (see "Known limitations"
+  # below). Consider adding Caddy's rate_limit directive (requires the
+  # caddy-ratelimit plugin) or a connection cap, e.g.:
+  # rate_limit {
+  #   zone dynamic_run {
+  #     key {remote_host}
+  #     events 10
+  #     window 1m
+  #   }
+  # }
 }
 ```
 
@@ -255,3 +265,25 @@ The e2e test (`registry/tests/e2e.rs`) shows this exact flow; see its source for
 - RUST_MIN_STACK=8388608 must be set during both build and runtime (kernel stack requirement).
 - The registry kernel (registry.jam) is loaded via command-line `--kernel` at runtime and persists state across requests (kernel pokes). The state is persisted to `--data-dir` between restarts.
 - Ensure `/opt/nockmark/data` is writable by the `nobody` user.
+
+## Known limitations (before public submissions / M3)
+
+- **`elapsed_ms` is client-reported and not yet cross-checked.** The kernel
+  stores server-side `issued_at` (challenge mint time) and `submitted_at`
+  (run submission time) on every `RunRecord`, but registry v1 does not yet
+  enforce `elapsed_ms <= submitted_at - issued_at` (the server-observed
+  window). A submitter can currently report an artificially low
+  `elapsed_ms` to inflate `proofs_per_sec` on the leaderboard — rates from
+  untrusted submitters are **not yet trustless**. This must be enforced
+  (reject or clamp submissions where the claimed `elapsed_ms` is
+  inconsistent with the server window) before M3 opens the registry to
+  public submissions.
+- **No rate limiting in the application.** `nockmark-registry` itself
+  applies no per-IP or per-nonce request throttling. The Caddy reverse
+  proxy block above should add a rate limit or connection cap (see the
+  commented `rate_limit` example) before the registry is exposed to
+  untrusted public traffic.
+- **The de facto request-size bound is axum's default.** `POST /run`
+  (and other routes) rely on axum's default 2 MB body-size limit
+  (`DefaultBodyLimit`) as the only guard against oversized request
+  bodies; there is no registry-specific limit configured today.

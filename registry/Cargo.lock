@@ -3972,7 +3972,6 @@ dependencies = [
  "clap",
  "nockapp",
  "nockvm",
- "nockvm_macros",
  "noun-serde",
  "roswell",
  "serde",

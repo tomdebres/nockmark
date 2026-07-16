@@ -130,6 +130,52 @@ async fn index_page_ok() {
 }
 
 #[tokio::test]
+async fn leaderboard_sorts_by_proofs_per_sec_desc() {
+    let _guard = test_lock().lock().await;
+    let st = state().await;
+    let app = nockmark_registry::http::router(st.clone());
+
+    // Mint two real nonces via the kernel (submit_run requires a known
+    // nonce), then poke submit_run directly on the same kernel handle.
+    // This bypasses proof verification (legitimately, for this READ-path
+    // test) and lets us control elapsed_ms precisely to assert ordering.
+    let nonce1 = st.kernel.lock().await.mint_challenge().await.unwrap();
+    let nonce2 = st.kernel.lock().await.mint_challenge().await.unwrap();
+
+    st.kernel
+        .lock()
+        .await
+        .submit_run(nonce1, "slow-hw", "v", 2, 60_000)
+        .await
+        .unwrap()
+        .unwrap();
+    st.kernel
+        .lock()
+        .await
+        .submit_run(nonce2, "fast-hw", "v", 2, 30_000)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let res = app
+        .oneshot(Request::get("/leaderboard").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let rows = v.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["hardware"].as_str().unwrap(), "fast-hw");
+    assert_eq!(rows[1]["hardware"].as_str().unwrap(), "slow-hw");
+    let fast = rows[0]["proofs_per_sec"].as_f64().unwrap();
+    let slow = rows[1]["proofs_per_sec"].as_f64().unwrap();
+    assert!(fast.is_finite());
+    assert!(slow.is_finite());
+    assert!(fast > slow);
+}
+
+#[tokio::test]
 async fn run_by_id_not_found() {
     let _guard = test_lock().lock().await;
     let app = nockmark_registry::http::router(state().await);
