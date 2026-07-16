@@ -6,4 +6,5 @@
 pub mod binding;
 pub mod http;
 pub mod kernel;
+pub mod ratelimit;
 pub mod verifier;

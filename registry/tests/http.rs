@@ -205,3 +205,62 @@ async fn run_by_id_not_found() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn challenge_is_rate_limited_per_ip() {
+    let _guard = test_lock().lock().await;
+    let app = nockmark_registry::http::router(state().await);
+    // Limit is 10/min/IP on POST /challenge and POST /run.
+    for i in 0..10 {
+        let res = app.clone()
+            .oneshot(Request::post("/challenge")
+                .header("x-forwarded-for", "203.0.113.7")
+                .body(Body::empty()).unwrap())
+            .await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "request {i} should pass");
+    }
+    let res = app.clone()
+        .oneshot(Request::post("/challenge")
+            .header("x-forwarded-for", "203.0.113.7")
+            .body(Body::empty()).unwrap())
+        .await.unwrap();
+    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+    // A different IP is unaffected.
+    let res = app
+        .oneshot(Request::post("/challenge")
+            .header("x-forwarded-for", "203.0.113.8")
+            .body(Body::empty()).unwrap())
+        .await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn run_rejects_oversized_body() {
+    let _guard = test_lock().lock().await;
+    let app = nockmark_registry::http::router(state().await);
+    let res = app.oneshot(Request::post("/run")
+        .header("content-type", "application/json")
+        .body(Body::from(vec![b'x'; 5 * 1024 * 1024])).unwrap())
+        .await.unwrap();
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn run_rejects_overlong_strings() {
+    use base64::Engine;
+    let _guard = test_lock().lock().await;
+    let app = nockmark_registry::http::router(state().await);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(GOOD);
+    let (status, body) = post_json(app.clone(), "/run", serde_json::json!({
+        "nonce": "12345", "hardware": "h".repeat(129), "prover_version": "x",
+        "elapsed_ms": 1, "proofs": [b64.clone(), b64.clone()]
+    })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("hardware"));
+    let (status, body) = post_json(app, "/run", serde_json::json!({
+        "nonce": "12345", "hardware": "hw", "prover_version": "p".repeat(65),
+        "elapsed_ms": 1, "proofs": [b64.clone(), b64]
+    })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("prover_version"));
+}

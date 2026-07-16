@@ -1,9 +1,11 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, Request, State};
 use axum::http::StatusCode;
-use axum::response::Html;
+use axum::middleware::{self, Next};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
@@ -11,6 +13,7 @@ use serde_json::json;
 use tokio::sync::Mutex;
 
 use crate::kernel::{RegistryKernel, RunRecord};
+use crate::ratelimit::RateLimiter;
 use crate::verifier::Verifier;
 
 pub const K_DEFAULT: u64 = 2;
@@ -43,6 +46,7 @@ fn to_entry(run: RunRecord) -> LeaderboardEntry {
 pub struct AppState {
     pub kernel: Arc<Mutex<RegistryKernel>>,
     pub verifier: Arc<Mutex<Verifier>>,
+    pub limiter: Arc<RateLimiter>,
 }
 
 impl AppState {
@@ -50,17 +54,45 @@ impl AppState {
         Ok(Self {
             kernel: Arc::new(Mutex::new(RegistryKernel::boot(jam, data_dir).await?)),
             verifier: Arc::new(Mutex::new(Verifier::boot().await?)),
+            limiter: Arc::new(RateLimiter::new(10, Duration::from_secs(60))),
         })
     }
 }
 
+/// Key = first X-Forwarded-For entry (Railway always sets it); "direct"
+/// otherwise (oneshot tests, local curl). Applied only to the POST routes —
+/// they mint kernel state / burn verifier CPU.
+async fn rate_limit_mw(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    let key = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "direct".into());
+    if !st.limiter.check(&key) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({ "error": "rate limit exceeded — try again in a minute" })),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/", get(index_page))
+    let limited = Router::new()
         .route("/challenge", post(new_challenge))
         .route("/run", post(submit_run))
+        .route_layer(middleware::from_fn_with_state(state.clone(), rate_limit_mw));
+    Router::new()
+        .route("/", get(index_page))
         .route("/leaderboard", get(leaderboard))
         .route("/runs/:id", get(run_by_id))
+        .merge(limited)
+        // Explicit request-size bound (M2 carry-forward): k=8 proofs are
+        // ~1.2 MiB base64, so 4 MiB is generous headroom.
+        .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
         .with_state(state)
 }
 
@@ -106,6 +138,12 @@ async fn submit_run(
     // serializes as JSON null — corrupting the leaderboard at rank #1.
     if sub.elapsed_ms == 0 {
         return bad("elapsed_ms must be greater than zero".into());
+    }
+    if sub.hardware.len() > 128 {
+        return bad("hardware string too long (max 128 bytes)".into());
+    }
+    if sub.prover_version.len() > 64 {
+        return bad("prover_version string too long (max 64 bytes)".into());
     }
     if sub.proofs.len() as u64 != K_DEFAULT {
         return bad(format!("expected {} proofs, got {}", K_DEFAULT, sub.proofs.len()));
