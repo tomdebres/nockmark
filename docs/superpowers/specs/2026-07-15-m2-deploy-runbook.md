@@ -50,11 +50,11 @@ cargo --version  # verify installation
 
 ```bash
 cd "$HOME"
-git clone --filter=blob:none https://github.com/nockchain/nockchain.git nockchain
+# Tom's fork is the guaranteed source of the pinned commit 31b8a015
+# (upstream is https://github.com/nockchain/nockchain.git; tock/setup-bench.sh
+# uses the same fork default, overridable via NOCKCHAIN_REPO).
+git clone --filter=blob:none https://github.com/tomdebres/nockchain.git nockchain
 git -C nockchain checkout 31b8a015
-# Pinned-commit source: Tom's fork https://github.com/tomdebres/nockchain.git
-# (what tock/setup-bench.sh uses via NOCKCHAIN_REPO) if the commit is
-# unavailable upstream.
 
 # Mirror the nockmark layout: <root>/nockchain and <root>/nockmark/m0-prover-spike
 mkdir -p nockmark/m0-prover-spike

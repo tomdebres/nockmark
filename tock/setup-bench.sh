@@ -15,7 +15,7 @@
 #   4. scp -i key.pem 'ubuntu@<ip>:bench-results/*.json' bench-results/
 #
 # Pin these to what the local benches used (see the findings doc / bench JSON):
-NOCKCHAIN_REPO=${NOCKCHAIN_REPO:-https://github.com/zorp-corp/nockchain}
+NOCKCHAIN_REPO=${NOCKCHAIN_REPO:-https://github.com/tomdebres/nockchain.git}
 NOCKCHAIN_COMMIT=${NOCKCHAIN_COMMIT:-31b8a015}
 NOCKMARK_REPO=${NOCKMARK_REPO:-}   # if empty, tock sources must be scp'd to ~/tock
 TOOLCHAIN_DATE=2026-04-03
