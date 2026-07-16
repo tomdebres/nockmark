@@ -5,6 +5,8 @@ same miner kernel mining uses, run standalone (no node, no networking). Born
 as the M0 spike (`docs/superpowers/specs/2026-07-15-m0-spike-findings.md`);
 this is the M1 `tock bench --local` milestone.
 
+See also: [M2 Registry Deployment Runbook](../docs/superpowers/specs/2026-07-15-m2-deploy-runbook.md)
+
 ## Prerequisites
 
 - The nockchain checkout at `../../../nockchain` (this crate uses path deps).
