@@ -5,7 +5,11 @@ use tower::ServiceExt; // add tower = "0.5" to [dependencies]
 async fn state() -> nockmark_registry::http::AppState {
     let dir = tempfile::tempdir().unwrap();
     let jam = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../tock/assets/registry.jam"));
-    nockmark_registry::http::AppState::boot(jam, dir.path()).await.unwrap()
+    let state = nockmark_registry::http::AppState::boot(jam, dir.path()).await.unwrap();
+    // leak: kernel checkpoints live here; dropping would delete the dir under
+    // the running NockApp (SIGABRT)
+    std::mem::forget(dir);
+    state
 }
 
 #[tokio::test]
