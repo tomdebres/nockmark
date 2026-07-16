@@ -13,7 +13,7 @@ async fn golden_path_and_anti_cheat() {
     let dir = tempfile::tempdir().unwrap();
     let reg_jam = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../tock/assets/registry.jam"));
     let miner_jam = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../tock/assets/miner.jam")).unwrap();
-    let st = nockmark_registry::http::AppState::boot(reg_jam, dir.path()).await.unwrap();
+    let st = nockmark_registry::http::AppState::boot_with_k(reg_jam, dir.path(), K).await.unwrap();
     let app = nockmark_registry::http::router(st);
 
     // 1. mint

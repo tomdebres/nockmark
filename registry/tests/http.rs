@@ -17,7 +17,7 @@ fn test_lock() -> &'static tokio::sync::Mutex<()> {
 async fn state() -> nockmark_registry::http::AppState {
     let dir = tempfile::tempdir().unwrap();
     let jam = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../tock/assets/registry.jam"));
-    let state = nockmark_registry::http::AppState::boot(jam, dir.path()).await.unwrap();
+    let state = nockmark_registry::http::AppState::boot_with_k(jam, dir.path(), 2).await.unwrap();
     // leak: kernel checkpoints live here; dropping would delete the dir under
     // the running NockApp (SIGABRT)
     std::mem::forget(dir);
@@ -263,4 +263,18 @@ async fn run_rejects_overlong_strings() {
     })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].as_str().unwrap().contains("prover_version"));
+}
+
+#[tokio::test]
+async fn default_k_is_eight_and_test_states_override_it() {
+    let _guard = test_lock().lock().await;
+    assert_eq!(nockmark_registry::http::K_DEFAULT, 8);
+    // state() boots with k=2 so the 116 KB fixture pair keeps working.
+    let app = nockmark_registry::http::router(state().await);
+    let res = app
+        .oneshot(Request::post("/challenge").body(Body::empty()).unwrap())
+        .await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["k"], 2);
 }

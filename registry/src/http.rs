@@ -16,7 +16,9 @@ use crate::kernel::{RegistryKernel, RunRecord};
 use crate::ratelimit::RateLimiter;
 use crate::verifier::Verifier;
 
-pub const K_DEFAULT: u64 = 2;
+/// Proofs per submission. 8 ≈ 3 minutes on an M1 Mac (21 s/proof) — the
+/// design spec's "minutes of proving" target; the spike value was 2.
+pub const K_DEFAULT: u64 = 8;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LeaderboardEntry {
@@ -47,14 +49,24 @@ pub struct AppState {
     pub kernel: Arc<Mutex<RegistryKernel>>,
     pub verifier: Arc<Mutex<Verifier>>,
     pub limiter: Arc<RateLimiter>,
+    pub k: u64,
 }
 
 impl AppState {
     pub async fn boot(jam: &Path, data_dir: &Path) -> Result<Self, nockapp::NockAppError> {
+        Self::boot_with_k(jam, data_dir, K_DEFAULT).await
+    }
+
+    pub async fn boot_with_k(
+        jam: &Path,
+        data_dir: &Path,
+        k: u64,
+    ) -> Result<Self, nockapp::NockAppError> {
         Ok(Self {
             kernel: Arc::new(Mutex::new(RegistryKernel::boot(jam, data_dir).await?)),
             verifier: Arc::new(Mutex::new(Verifier::boot().await?)),
             limiter: Arc::new(RateLimiter::new(10, Duration::from_secs(60))),
+            k,
         })
     }
 }
@@ -107,7 +119,7 @@ async fn new_challenge(State(st): State<AppState>) -> Json<serde_json::Value> {
     Json(json!({
         "nonce": nonce.to_string(),
         "pow_len": tock::miner::DEFAULT_POW_LEN,
-        "k": K_DEFAULT,
+        "k": st.k,
         "nonce_rule": tock::nonce::NONCE_RULE,
     }))
 }
@@ -145,8 +157,8 @@ async fn submit_run(
     if sub.prover_version.len() > 64 {
         return bad("prover_version string too long (max 64 bytes)".into());
     }
-    if sub.proofs.len() as u64 != K_DEFAULT {
-        return bad(format!("expected {} proofs, got {}", K_DEFAULT, sub.proofs.len()));
+    if sub.proofs.len() as u64 != st.k {
+        return bad(format!("expected {} proofs, got {}", st.k, sub.proofs.len()));
     }
     // decode + bind + verify every proof BEFORE touching kernel state
     for (i, b64) in sub.proofs.iter().enumerate() {
@@ -182,7 +194,7 @@ async fn submit_run(
         }
     }
     match st.kernel.lock().await
-        .submit_run(nonce, &sub.hardware, &sub.prover_version, K_DEFAULT, sub.elapsed_ms)
+        .submit_run(nonce, &sub.hardware, &sub.prover_version, st.k, sub.elapsed_ms)
         .await
     {
         Ok(Ok(id)) => (StatusCode::OK, Json(json!({ "run_id": id }))),

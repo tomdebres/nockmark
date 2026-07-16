@@ -8,13 +8,16 @@ struct Cli {
     kernel: std::path::PathBuf,
     #[arg(long, default_value = "./registry-data")]
     data_dir: std::path::PathBuf,
+    /// Proofs required per submission (challenge responses advertise this).
+    #[arg(long, default_value_t = nockmark_registry::http::K_DEFAULT)]
+    k: u64,
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     std::fs::create_dir_all(&cli.data_dir).expect("create data dir");
-    let state = nockmark_registry::http::AppState::boot(&cli.kernel, &cli.data_dir)
+    let state = nockmark_registry::http::AppState::boot_with_k(&cli.kernel, &cli.data_dir, cli.k)
         .await
         .expect("boot registry");
     let app = nockmark_registry::http::router(state);
