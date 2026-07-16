@@ -287,8 +287,9 @@ All three M2 carry-forwards are closed as of M3:
   (~0.5 s/proof), so published rates are slightly conservative lower
   bounds — by design.
 - **Rate limiting is in-app.** `POST /challenge` and `POST /run` are
-  limited to 10/min per IP (first `X-Forwarded-For` entry; Railway sets
-  it). The Caddy `rate_limit` suggestion below remains optional
+  limited to 10/min per IP (last `X-Forwarded-For` entry — the
+  proxy-appended client IP, spoof-safe under both append and overwrite
+  proxy behaviors). The Caddy `rate_limit` suggestion below remains optional
   belt-and-braces for VPS deploys.
 - **Request bodies are explicitly capped at 4 MiB**, and `hardware` /
   `prover_version` strings at 128/64 bytes.
