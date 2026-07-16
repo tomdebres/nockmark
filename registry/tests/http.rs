@@ -210,25 +210,28 @@ async fn run_by_id_not_found() {
 async fn challenge_is_rate_limited_per_ip() {
     let _guard = test_lock().lock().await;
     let app = nockmark_registry::http::router(state().await);
-    // Limit is 10/min/IP on POST /challenge and POST /run.
+    // Limit is 10/min/IP on POST /challenge and POST /run. The rate-limit
+    // key is the LAST XFF entry (the proxy-appended true client IP); a
+    // different spoofed FIRST entry each request must not mint a fresh
+    // bucket as long as the trusted last entry stays the same.
     for i in 0..10 {
         let res = app.clone()
             .oneshot(Request::post("/challenge")
-                .header("x-forwarded-for", "203.0.113.7")
+                .header("x-forwarded-for", format!("10.0.0.{i}, 203.0.113.7"))
                 .body(Body::empty()).unwrap())
             .await.unwrap();
         assert_eq!(res.status(), StatusCode::OK, "request {i} should pass");
     }
     let res = app.clone()
         .oneshot(Request::post("/challenge")
-            .header("x-forwarded-for", "203.0.113.7")
+            .header("x-forwarded-for", "10.0.0.99, 203.0.113.7")
             .body(Body::empty()).unwrap())
         .await.unwrap();
     assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
-    // A different IP is unaffected.
+    // A different IP (different LAST entry) is unaffected.
     let res = app
         .oneshot(Request::post("/challenge")
-            .header("x-forwarded-for", "203.0.113.8")
+            .header("x-forwarded-for", "10.0.0.1, 203.0.113.8")
             .body(Body::empty()).unwrap())
         .await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -312,7 +315,7 @@ async fn economics_estimates_and_annotates_the_board() {
 
     // leaderboard rows carry est_nock_per_day when configured
     let nonce = st.kernel.lock().await.mint_challenge().await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
     st.kernel.lock().await
         .submit_run(nonce, "hw", "v", 2, 400).await.unwrap().unwrap();
     let res = app

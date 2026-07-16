@@ -77,15 +77,17 @@ impl AppState {
     }
 }
 
-/// Key = first X-Forwarded-For entry (Railway always sets it); "direct"
-/// otherwise (oneshot tests, local curl). Applied only to the POST routes —
-/// they mint kernel state / burn verifier CPU.
+/// Key = LAST X-Forwarded-For entry (the proxy-appended true client IP; the
+/// last entry is trustworthy whether the edge proxy appends to or overwrites
+/// a client-supplied header), else "direct" (oneshot tests, local curl).
+/// Applied only to the POST routes — they mint kernel state / burn verifier
+/// CPU.
 async fn rate_limit_mw(State(st): State<AppState>, req: Request, next: Next) -> Response {
     let key = req
         .headers()
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
+        .and_then(|s| s.split(',').next_back())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "direct".into());
     if !st.limiter.check(&key) {

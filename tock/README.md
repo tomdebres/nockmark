@@ -81,7 +81,9 @@ One command — it fetches a challenge, proves against it, and submits:
       --submit https://nockmark-registry-production.up.railway.app
 
 The registry supplies the nonce, k (currently 8), and pow-len; your
-`--seed`/`-k` flags are ignored in submit mode. `--threads N` is honored.
+`--seed`/`-k` flags are ignored in submit mode. `--pow-len` is supplied by
+the registry too, so any value you pass is ignored the same way.
+`--threads N` is honored.
 The published rate is computed **server-side** from the challenge-issue →
 submission window, so it is a cryptographically verified lower bound on
 your machine's proving rate: nothing you report can inflate it. Hardware

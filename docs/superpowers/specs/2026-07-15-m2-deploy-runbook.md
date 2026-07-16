@@ -294,6 +294,7 @@ All three M2 carry-forwards are closed as of M3:
   `prover_version` strings at 128/64 bytes.
 
 Remaining (acceptable for M3, revisit post-v1): the challenge map grows
-monotonically (bounded to ≤14.4k mints/day by the rate limit; expired
+monotonically (bounded to ≤14.4k mints/day per IP by the rate limit (a
+distributed attacker scales this by IP count); expired
 entries are rejected but not purged), and hardware descriptors remain
 self-reported by design.

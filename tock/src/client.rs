@@ -56,16 +56,24 @@ pub async fn submit_run(base: &str, sub: &Submission) -> Result<u64, String> {
         .await
         .map_err(|e| format!("POST {url}: {e}"))?;
     let status = resp.status();
-    let body: serde_json::Value = resp
-        .json()
+    let text = resp
+        .text()
         .await
-        .map_err(|e| format!("bad response JSON from {url}: {e}"))?;
+        .map_err(|e| format!("POST {url}: reading response body: {e}"))?;
     if !status.is_success() {
-        return Err(body["error"].as_str().unwrap_or("unknown error").to_string());
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(msg) = v["error"].as_str() {
+                return Err(msg.to_string());
+            }
+        }
+        let snippet: String = text.chars().take(200).collect();
+        return Err(format!("POST {url}: HTTP {status}: {snippet}"));
     }
+    let body: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("POST {url}: bad response JSON: {e}"))?;
     body["run_id"]
         .as_u64()
-        .ok_or_else(|| "response missing run_id".to_string())
+        .ok_or_else(|| format!("POST {url}: response missing run_id"))
 }
 
 /// Compact self-reported hardware descriptor, capped to the registry's

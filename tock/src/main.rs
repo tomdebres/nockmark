@@ -178,7 +178,7 @@ async fn bench(
         serfs.push(miner::boot_kernel(kernel_bytes.clone(), NOCK_STACK_SIZE_TINY).await);
     }
     let kernel_boot_s = boot_t0.elapsed().as_secs_f64();
-    eprintln!("booted {threads} kernel(s) in {kernel_boot_s:.2}s; proving {k} proofs…");
+    eprintln!("booted {threads} kernel(s) in {kernel_boot_s:.2}s");
 
     // Resolve the workload: local seed, or a server challenge (fetched
     // AFTER kernel boot so boot time never counts against the window).
@@ -202,7 +202,10 @@ async fn bench(
             let (k, pow_len) = (ch.k, ch.pow_len);
             (Some(ch), seed, k, pow_len)
         }
-        None => (None, seed.to_string(), k, pow_len),
+        None => {
+            eprintln!("proving {k} proofs…");
+            (None, seed.to_string(), k, pow_len)
+        }
     };
     if threads > k {
         eprintln!("note: {threads} threads for {k} proofs — extra threads idle");

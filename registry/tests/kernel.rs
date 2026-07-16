@@ -1,6 +1,12 @@
 use std::path::Path;
+use std::sync::OnceLock;
 
 use nockmark_registry::kernel::RegistryKernel;
+
+fn test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 fn jam() -> &'static Path {
     let p = Path::new(concat!(
@@ -16,6 +22,7 @@ fn jam() -> &'static Path {
 
 #[tokio::test]
 async fn mint_and_submit_and_leaderboard() {
+    let _guard = test_lock().lock().await;
     let dir = tempfile::tempdir().unwrap();
     let mut k = RegistryKernel::boot(jam(), dir.path()).await.unwrap();
 
@@ -50,6 +57,7 @@ async fn mint_and_submit_and_leaderboard() {
 
 #[tokio::test]
 async fn elapsed_exceeding_server_window_is_rejected() {
+    let _guard = test_lock().lock().await;
     let dir = tempfile::tempdir().unwrap();
     let mut k = RegistryKernel::boot(jam(), dir.path()).await.unwrap();
     let nonce = k.mint_challenge().await.unwrap();
