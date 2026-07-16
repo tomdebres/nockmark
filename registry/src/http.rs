@@ -19,7 +19,24 @@ pub const K_DEFAULT: u64 = 2;
 pub struct LeaderboardEntry {
     #[serde(flatten)]
     pub run: RunRecord,
+    /// submitted_at − issued_at, the server-observed window.
+    pub server_window_ms: u64,
+    /// k / server window — the trustless, ranked rate (a lower bound).
     pub proofs_per_sec: f64,
+    /// k / client-reported elapsed_ms — informational only.
+    pub self_reported_pps: f64,
+}
+
+fn round4(x: f64) -> f64 {
+    (x * 10_000.0).round() / 10_000.0
+}
+
+fn to_entry(run: RunRecord) -> LeaderboardEntry {
+    let server_window_ms =
+        crate::kernel::da_diff_to_ms(run.issued_at, run.submitted_at).max(1);
+    let proofs_per_sec = round4(run.k as f64 / (server_window_ms as f64 / 1000.0));
+    let self_reported_pps = round4(run.k as f64 / (run.elapsed_ms as f64 / 1000.0));
+    LeaderboardEntry { run, server_window_ms, proofs_per_sec, self_reported_pps }
 }
 
 #[derive(Clone)]
@@ -146,17 +163,7 @@ async fn index_page() -> Html<&'static str> {
 async fn leaderboard(State(st): State<AppState>) -> (StatusCode, Json<Vec<LeaderboardEntry>>) {
     match st.kernel.lock().await.leaderboard().await {
         Ok(runs) => {
-            let mut entries: Vec<LeaderboardEntry> = runs
-                .into_iter()
-                .map(|run| {
-                    let proofs_per_sec = run.k as f64 / (run.elapsed_ms as f64 / 1000.0);
-                    let proofs_per_sec = (proofs_per_sec * 10000.0).round() / 10000.0;
-                    LeaderboardEntry {
-                        run,
-                        proofs_per_sec,
-                    }
-                })
-                .collect();
+            let mut entries: Vec<LeaderboardEntry> = runs.into_iter().map(to_entry).collect();
             entries.sort_by(|a, b| b.proofs_per_sec.partial_cmp(&a.proofs_per_sec).unwrap_or(std::cmp::Ordering::Equal));
             (StatusCode::OK, Json(entries))
         }
@@ -170,14 +177,7 @@ async fn run_by_id(
 ) -> (StatusCode, Json<Option<LeaderboardEntry>>) {
     match st.kernel.lock().await.leaderboard().await {
         Ok(runs) => {
-            let entry = runs.into_iter().find(|r| r.id == id).map(|run| {
-                let proofs_per_sec = run.k as f64 / (run.elapsed_ms as f64 / 1000.0);
-                let proofs_per_sec = (proofs_per_sec * 10000.0).round() / 10000.0;
-                LeaderboardEntry {
-                    run,
-                    proofs_per_sec,
-                }
-            });
+            let entry = runs.into_iter().find(|r| r.id == id).map(to_entry);
             match entry {
                 Some(e) => (StatusCode::OK, Json(Some(e))),
                 None => (StatusCode::NOT_FOUND, Json(None)),

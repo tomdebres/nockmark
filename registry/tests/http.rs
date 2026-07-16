@@ -176,13 +176,23 @@ async fn leaderboard_sorts_by_proofs_per_sec_desc() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let rows = v.as_array().unwrap();
     assert_eq!(rows.len(), 2);
+    // Ranked by the SERVER-WINDOW rate (the trustless number), not the
+    // client-reported elapsed_ms.
     assert_eq!(rows[0]["hardware"].as_str().unwrap(), "fast-hw");
     assert_eq!(rows[1]["hardware"].as_str().unwrap(), "slow-hw");
-    let fast = rows[0]["proofs_per_sec"].as_f64().unwrap();
-    let slow = rows[1]["proofs_per_sec"].as_f64().unwrap();
-    assert!(fast.is_finite());
-    assert!(slow.is_finite());
-    assert!(fast > slow);
+    for row in rows {
+        let window = row["server_window_ms"].as_u64().unwrap();
+        assert!(window >= 300, "window {window} ms implausibly small");
+        let pps = row["proofs_per_sec"].as_f64().unwrap();
+        let expect = 2.0 / (window as f64 / 1000.0);
+        assert!(
+            (pps - expect).abs() <= 0.05 * expect,
+            "proofs_per_sec {pps} not derived from server window {window} ms"
+        );
+        // Client claims are faster than the window here, so the
+        // self-reported rate must exceed the ranked rate.
+        assert!(row["self_reported_pps"].as_f64().unwrap() > pps);
+    }
 }
 
 #[tokio::test]

@@ -8,17 +8,19 @@
   caption { font-weight: 700; font-size: 1.2rem; padding: .5rem; }
 </style>
 <table id="board"><caption>Nockmark — verified proving runs</caption>
-  <thead><tr><th>#</th><th>hardware</th><th>proofs/sec</th><th>k</th><th>prover</th></tr></thead>
+  <thead><tr><th>#</th><th>hardware</th><th>proofs/sec (verified)</th><th>self-reported</th><th>k</th><th>prover</th></tr></thead>
   <tbody></tbody>
 </table>
 <p>Every row passed server-side STARK verification against a server-issued
-challenge nonce. <a href="https://github.com/tomdebres/nockmark">How it works.</a></p>
+challenge nonce; the ranked rate is computed from the server-observed
+submission window, so it cannot be inflated by the submitter. <a
+href="https://github.com/tomdebres/nockmark">How it works.</a></p>
 <script>
 fetch('/leaderboard').then(r => r.json()).then(rows => {
   const tb = document.querySelector('#board tbody');
   rows.forEach((r, i) => {
     const tr = document.createElement('tr');
-    [i + 1, r.hardware, r.proofs_per_sec, r.k, r.prover_version].forEach(v => {
+    [i + 1, r.hardware, r.proofs_per_sec, r.self_reported_pps, r.k, r.prover_version].forEach(v => {
       const td = document.createElement('td');
       td.textContent = v;
       tr.appendChild(td);
