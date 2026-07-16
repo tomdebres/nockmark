@@ -3097,6 +3097,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -3973,6 +3974,7 @@ dependencies = [
  "nockapp",
  "nockvm",
  "noun-serde",
+ "reqwest 0.12.28",
  "roswell",
  "serde",
  "serde_json",
@@ -5028,16 +5030,21 @@ dependencies = [
  "http-body",
  "http-body-util",
  "hyper",
+ "hyper-rustls",
  "hyper-util",
  "js-sys",
  "log",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
+ "tokio-rustls",
  "tower",
  "tower-http",
  "tower-service",
@@ -5045,6 +5052,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -6156,10 +6164,12 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 name = "tock"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "clap",
  "nockapp",
  "nockvm",
  "nockvm_macros",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2",
