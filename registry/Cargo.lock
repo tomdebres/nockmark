@@ -3979,6 +3979,7 @@ dependencies = [
  "tempfile",
  "tock",
  "tokio",
+ "tower",
  "zkvm-jetpack",
 ]
 
