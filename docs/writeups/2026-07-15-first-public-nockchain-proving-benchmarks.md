@@ -1,6 +1,6 @@
 # First public Nockchain proving benchmarks
 
-*Tom de Bres — 2026-07-15 — draft for publication*
+*Tom de Bres — 2026-07-17*
 
 Nockchain is a zkPoW chain: miners earn NOCK by producing STARK proofs of
 Nock execution, and the fastest prover wins. Which makes it strange that the
@@ -72,9 +72,11 @@ NOCK/day ≈ (your rate ÷ network rate) × daily emission
 ```
 
 Emission today: the chain is past the Aletheia activation (we observed
-pool work at height ~105,300), so blocks pay **2,048 NOCK**; at the 2,016
-blocks / 14 days retarget that's ≈ **295,000 NOCK/day** network-wide —
-about $11.8k/day at NOCK ≈ $0.04.
+pool work at height ~105,300), so blocks pay **2,048 NOCK** (2^27 nicks);
+with ASERT retargeting at its 150-second ideal block time that's ~576
+blocks/day — matching the ~1,150 blocks the chain actually produced in
+the two days between drafting and publishing this — for ≈ **1.18M
+NOCK/day** network-wide, about $22k/day at NOCK ≈ $0.019.
 
 Here the trouble starts: **the "network rate" is not published in a unit
 you can verify.** Nockchain's own year-in-review quotes ~3M "proofs/s".
@@ -90,17 +92,19 @@ What can be said with confidence:
   producing on the order of one work-unit per 30 s competes against a
   network producing millions per second. Even the 64-core box's share
   rounds to well under a cent per day.
-- **Consumer GPUs are roughly break-even.** Measured in the *pool's own
-  unit* (which is what pools pay on), an RTX 4090 at ~334 "p/s" earns
-  ~334/3M × 295k ≈ **33 NOCK/day ≈ $1.30**, against $1.00–1.50/day of
-  electricity at its measured 420 W. Profit is a coin-flip on the NOCK
-  price and your power tariff.
+- **Consumer GPUs clear their power bill — barely, and only in the
+  pool's own unit.** Measured in that unit (which is what pools pay on),
+  an RTX 4090 at ~334 "p/s" earns ~334/3M × 1.18M ≈ **131 NOCK/day ≈
+  $2.50**, against $1.00–1.50/day of electricity at its measured 420 W.
+  A halving of the NOCK price or a doubling of network rate puts it back
+  to a coin-flip.
 
-The proper conversion — network rate derived from on-chain difficulty
-(blocks/day × max-target ÷ current-target), in the same STARK-proof unit
-this article measures — is exactly what the Nockmark registry's
-`economics` endpoint will compute. Until then, treat every NOCK/day
-calculator with suspicion: the units don't reconcile.
+The proper conversion — network rate derived from on-chain difficulty,
+in the same STARK-proof unit this article measures — is what the Nockmark
+registry's [`/economics`](https://nockmark-registry-production.up.railway.app/economics)
+endpoint now reports (difficulty operator-refreshed from the explorer
+until a public JSON feed exists). Until the wild-unit numbers reconcile
+with it, treat every NOCK/day calculator with suspicion.
 
 ## A GPU postscript
 
@@ -136,10 +140,10 @@ driver does. Three choices make runs comparable and hard to game:
   not the lottery.
 
 Caveats: hardware descriptors are self-reported (auto-detected); these
-timings are *lower bounds on latency, not audited claims* — the
-trust-minimized version of this (challenge-response benchmarking, where a
-registry issues the nonce and verifies every submitted proof server-side) is
-what I'm building next.
+timings are *lower bounds on latency, not audited claims*. The
+trust-minimized version — challenge-response benchmarking, where the
+registry issues the nonce and verifies every submitted proof server-side —
+is now live; see below.
 
 ## Reproduce it / what's next
 
@@ -151,8 +155,13 @@ modern desktop CPUs and big-core-count servers.
 Harness, provisioning script, raw result JSONs, and methodology docs:
 **https://github.com/tomdebres/nockmark** (`tock/` and `bench-results/`).
 
-This is milestone one of **Nockmark**: a benchmark registry for Nockchain
-where submissions are *cryptographically verified* — you fetch a challenge
-nonce, prove against it, submit the proofs, and the registry verifies every
-STARK and computes your rate from server-side elapsed time. A leaderboard
-that cannot lie, on the chain whose whole thesis is verifiable computation.
+These benchmarks were milestone one of **Nockmark**. The registry itself
+is now live: submissions are *cryptographically verified* — you fetch a
+challenge nonce, prove against it, submit the proofs, and the registry
+verifies every STARK and computes your rate from server-side elapsed
+time. A leaderboard that cannot lie, on the chain whose whole thesis is
+verifiable computation:
+
+- Leaderboard: **https://nockmark-registry-production.up.railway.app/leaderboard**
+- Submit your machine:
+  `tock bench --kernel assets/miner.jam --submit https://nockmark-registry-production.up.railway.app`
