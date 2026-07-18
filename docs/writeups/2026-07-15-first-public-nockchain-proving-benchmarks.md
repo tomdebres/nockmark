@@ -162,6 +162,6 @@ verifies every STARK and computes your rate from server-side elapsed
 time. A leaderboard that cannot lie, on the chain whose whole thesis is
 verifiable computation:
 
-- Leaderboard: **https://nockmark-registry-production.up.railway.app/leaderboard**
+- Leaderboard: **https://nockmark-registry-production.up.railway.app/** (JSON at `/leaderboard`)
 - Submit your machine:
   `tock bench --kernel assets/miner.jam --submit https://nockmark-registry-production.up.railway.app`
