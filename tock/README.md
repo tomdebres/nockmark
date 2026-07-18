@@ -78,7 +78,7 @@ One command — it fetches a challenge, proves against it, and submits:
     export RUST_MIN_STACK=8388608
     ./target/release/tock bench \
       --kernel assets/miner.jam \
-      --submit https://nockmark-registry-production.up.railway.app
+      --submit https://nockmark.xyz
 
 The registry supplies the nonce, k (currently 8), and pow-len; your
 `--seed`/`-k` flags are ignored in submit mode. `--pow-len` is supplied by
