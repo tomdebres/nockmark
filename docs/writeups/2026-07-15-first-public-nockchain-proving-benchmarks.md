@@ -101,7 +101,7 @@ What can be said with confidence:
 
 The proper conversion — network rate derived from on-chain difficulty,
 in the same STARK-proof unit this article measures — is what the Nockmark
-registry's [`/economics`](https://nockmark-registry-production.up.railway.app/economics)
+registry's [`/economics`](https://nockmark.xyz/economics)
 endpoint now reports (difficulty operator-refreshed from the explorer
 until a public JSON feed exists). Until the wild-unit numbers reconcile
 with it, treat every NOCK/day calculator with suspicion.
@@ -177,6 +177,6 @@ verifies every STARK and computes your rate from server-side elapsed
 time. A leaderboard that cannot lie, on the chain whose whole thesis is
 verifiable computation:
 
-- Leaderboard: **https://nockmark-registry-production.up.railway.app/** (JSON at `/leaderboard`)
+- Leaderboard: **https://nockmark.xyz/** (JSON at `/leaderboard`)
 - Submit your machine:
-  `tock bench --kernel assets/miner.jam --submit https://nockmark-registry-production.up.railway.app`
+  `tock bench --kernel assets/miner.jam --submit https://nockmark.xyz`
