@@ -1,34 +1,199 @@
 <!doctype html>
+<html lang="en">
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nockmark — verified Nockchain proving benchmarks</title>
+<meta name="description" content="A public registry of Nockchain STARK proving benchmarks. Every rate is computed server-side from verified proofs of a server-issued challenge.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext x='1' y='13' font-family='monospace' font-size='15' fill='%23555'%3E~%3C/text%3E%3C/svg%3E">
 <style>
-  body { font: 16px/1.5 system-ui; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #ccc; }
-  caption { font-weight: 700; font-size: 1.2rem; padding: .5rem; }
+  :root {
+    --paper: #ffffff;
+    --ink: #161615;
+    --faint: #8b8a86;
+    --hair: #e4e3df;
+    --wash: #f6f6f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0d0d0c;
+      --ink: #e8e6e1;
+      --faint: #77756f;
+      --hair: #262523;
+      --wash: #151514;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 14px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 4rem 1.25rem 5rem;
+  }
+  a { color: inherit; text-underline-offset: 3px; }
+  a:hover { text-decoration-thickness: 2px; }
+  a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  header { margin-bottom: 3.5rem; }
+  .mark { font-size: 1.5rem; font-weight: 700; letter-spacing: -.02em; }
+  .mark .sig { color: var(--faint); font-weight: 400; }
+  .thesis { margin-top: 1rem; max-width: 36rem; }
+  .thesis em { font-style: normal; border-bottom: 1px solid var(--faint); }
+
+  .rule { border: 0; border-top: 1px solid var(--hair); margin: 2.5rem 0; }
+
+  .eyebrow {
+    font-size: .6875rem;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 1rem;
+  }
+
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 38rem; }
+  th {
+    font-size: .6875rem;
+    font-weight: 400;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--faint);
+    text-align: left;
+    padding: 0 1rem .5rem 0;
+    border-bottom: 1px solid var(--ink);
+    white-space: nowrap;
+  }
+  td {
+    padding: .7rem 1rem .7rem 0;
+    border-bottom: 1px solid var(--hair);
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  th:last-child, td:last-child { padding-right: 0; }
+  td.hw { white-space: normal; min-width: 11rem; }
+  th.num, td.num { text-align: right; }
+  tr:hover td { background: var(--wash); }
+  .rank { color: var(--faint); }
+  .sigil svg { display: block; }
+  .verified { font-size: 1.0625rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .quiet { color: var(--faint); font-variant-numeric: tabular-nums; }
+  .state td { color: var(--faint); white-space: normal; }
+
+  .econ { margin-top: .875rem; font-size: .8125rem; color: var(--faint); }
+
+  .submit { margin-top: 3rem; }
+  pre {
+    border: 1px solid var(--hair);
+    padding: 1rem 1.25rem;
+    overflow-x: auto;
+    font: inherit;
+    line-height: 1.5;
+  }
+  pre b { font-weight: 700; }
+
+  footer { margin-top: 3rem; font-size: .8125rem; color: var(--faint); }
+  footer p + p { margin-top: .75rem; }
+  footer a { color: var(--ink); }
 </style>
-<table id="board"><caption>Nockmark — verified proving runs</caption>
-  <thead><tr><th>#</th><th>hardware</th><th>proofs/sec (verified)</th><th>self-reported</th><th>k</th><th>prover</th><th>est. NOCK/day</th></tr></thead>
-  <tbody></tbody>
-</table>
-<p>Every row passed server-side STARK verification against a server-issued
-challenge nonce; the ranked rate is computed from the server-observed
-submission window, so it cannot be inflated by the submitter. <a
-href="https://github.com/tomdebres/nockmark">How it works.</a></p>
-<p>NOCK/day figures are estimates (attempt-lottery model at current
-difficulty and emission), shown only when the instance has economics
-configured.</p>
+
+<header>
+  <div class="mark"><span class="sig">~</span>nockmark</div>
+  <p class="thesis">Nockchain proving benchmarks, <em>verified</em>. Every rate
+  below was computed by this server, from STARK proofs it checked, of a
+  challenge it issued. Nobody can inflate their number — including the
+  submitter.</p>
+</header>
+
+<section>
+  <div class="eyebrow">Leaderboard — proofs per second, server-observed</div>
+  <div class="scroll">
+    <table id="board">
+      <thead>
+        <tr>
+          <th>#</th><th></th><th>hardware</th>
+          <th class="num">verified p/s</th><th class="num">self-reported</th>
+          <th class="num">k</th><th>prover</th><th class="num">nock/day</th>
+        </tr>
+      </thead>
+      <tbody><tr class="state"><td colspan="8">Loading verified runs…</td></tr></tbody>
+    </table>
+  </div>
+  <p class="econ" id="econ" hidden></p>
+</section>
+
+<section class="submit">
+  <div class="eyebrow">Get on the board</div>
+  <pre><b>tock bench</b> --kernel assets/miner.jam \
+  --submit https://nockmark-registry-production.up.railway.app</pre>
+</section>
+
+<footer>
+  <p>Each mark in the second column is drawn from that run's challenge
+  nonce — a fingerprint of the workload the machine actually proved.
+  Hardware descriptors are self-reported; rates are not.</p>
+  <p>nock/day is an estimate (attempt-lottery model at current difficulty
+  and emission), shown when this instance has economics configured.</p>
+  <p><a href="https://github.com/tomdebres/nockmark">How it works</a> ·
+  <a href="/leaderboard">JSON</a> ·
+  <a href="/economics">economics</a></p>
+</footer>
+
 <script>
+// A sigil in the spirit of Urbit's: four glyphs in a 2×2 cell, chosen
+// deterministically from the run's challenge nonce.
+function sigil(seed) {
+  let h = 0x811c9dc5;
+  for (const c of String(seed)) { h ^= c.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+  const next = () => (h = (Math.imul(h, 0x2c1b3c6d) + 0x297a2d39) >>> 0);
+  const S = 11, glyphs = [];
+  const draw = [
+    (x, y) => `<circle cx="${x + 5.5}" cy="${y + 5.5}" r="4.5" fill="currentColor"/>`,
+    (x, y) => `<circle cx="${x + 5.5}" cy="${y + 5.5}" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/>`,
+    (x, y, r) => `<path d="M ${x + 1} ${y + 5.5} A 4.5 4.5 0 0 1 ${x + 10} ${y + 5.5} Z" fill="currentColor" transform="rotate(${r * 90} ${x + 5.5} ${y + 5.5})"/>`,
+    (x, y, r) => `<path d="M ${x + 1.5} ${y + 9.5} A 8 8 0 0 1 ${x + 9.5} ${y + 1.5}" fill="none" stroke="currentColor" stroke-width="1.5" transform="rotate(${r * 90} ${x + 5.5} ${y + 5.5})"/>`,
+    (x, y, r) => `<line x1="${x + 1.5}" y1="${y + 9.5}" x2="${x + 9.5}" y2="${y + 1.5}" stroke="currentColor" stroke-width="1.5" transform="rotate(${r * 90} ${x + 5.5} ${y + 5.5})"/>`,
+    (x, y) => `<circle cx="${x + 5.5}" cy="${y + 5.5}" r="1.6" fill="currentColor"/>`,
+  ];
+  for (const [x, y] of [[0, 0], [S, 0], [0, S], [S, S]]) {
+    next();
+    glyphs.push(draw[h % draw.length](x, y, (h >>> 8) % 4));
+  }
+  return `<svg width="22" height="22" viewBox="0 0 22 22" role="img" aria-label="challenge sigil">${glyphs.join('')}</svg>`;
+}
+
+const fmt = v => v == null ? '—' : (v < 1 ? v.toFixed(3) : v.toFixed(1));
+const tb = document.querySelector('#board tbody');
+
 fetch('/leaderboard').then(r => r.json()).then(rows => {
-  const tb = document.querySelector('#board tbody');
-  rows.forEach((r, i) => {
+  tb.textContent = '';
+  if (!rows.length) {
+    tb.innerHTML = '<tr class="state"><td colspan="8">No verified runs yet. Yours can be first — command below.</td></tr>';
+    return;
+  }
+  for (const [i, r] of rows.entries()) {
     const tr = document.createElement('tr');
-    [i + 1, r.hardware, r.proofs_per_sec, r.self_reported_pps, r.k, r.prover_version, r.est_nock_per_day ?? '—'].forEach(v => {
-      const td = document.createElement('td');
-      td.textContent = v;
-      tr.appendChild(td);
-    });
+    tr.innerHTML =
+      `<td class="rank">${i + 1}</td>` +
+      `<td class="sigil">${sigil(r.nonce)}</td>` +
+      `<td class="hw"></td>` +
+      `<td class="num verified">${r.proofs_per_sec.toFixed(4)}</td>` +
+      `<td class="num quiet">${r.self_reported_pps.toFixed(4)}</td>` +
+      `<td class="num">${r.k}</td>` +
+      `<td class="quiet">${r.prover_version}</td>` +
+      `<td class="num">${fmt(r.est_nock_per_day)}</td>`;
+    tr.querySelector('.hw').textContent = r.hardware;
     tb.appendChild(tr);
-  });
+  }
+}).catch(() => {
+  tb.innerHTML = '<tr class="state"><td colspan="8">Could not load the leaderboard — reload the page to retry, or read the <a href="/leaderboard">JSON</a> directly.</td></tr>';
 });
+
+fetch('/economics').then(r => r.ok ? r.json() : null).then(d => {
+  if (!d || !d.difficulty) return;
+  const el = document.getElementById('econ');
+  el.textContent = `economics: difficulty 2^${Math.log2(d.difficulty).toFixed(2)} · block reward ${d.block_reward_nock} NOCK`;
+  el.hidden = false;
+}).catch(() => {});
 </script>
+</html>
