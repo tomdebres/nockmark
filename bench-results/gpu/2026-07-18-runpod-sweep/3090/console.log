@@ -1,0 +1,83 @@
+== nockmark gpu-spike: workdir /tmp/nockmark-gpu-spike, duration 900s, prover v0.4.3 ==
+GPU 0: NVIDIA GeForce RTX 3090 (UUID: GPU-4ec356f6-de08-2102-ffa8-758fab9eca7f)
+2026-07-18T07:27:02.049137Z  INFO version: 0.4.3
+2026-07-18T07:27:02.049250Z  INFO Pure GPU mode prover start
+2026-07-18T07:27:02.086415Z  INFO GPU Cards: 1, GPU Memory Percentage: 100%
+2026-07-18T07:27:02.090024Z  INFO Card-0: NVIDIA GeForce RTX 3090, SM count: 82, Memory: 23.6GB, Free memory: 23.3GB
+2026-07-18T07:27:02.131745Z  INFO Card-0 Waiting for tasks
+2026-07-18T07:27:02.147906Z  INFO Connecting to server
+2026-07-18T07:27:07.103911Z  INFO Connected
+2026-07-18T07:27:07.377104Z  INFO Handshake with server success
+2026-07-18T07:27:29.928404Z  INFO Card-0 New task received, height: 106772
+2026-07-18T07:28:04.471000Z  INFO Card-0 New task received, height: 106773
+2026-07-18T07:29:02.050327Z  INFO Card-0 speed:  167.98 p/s
+2026-07-18T07:29:32.050937Z  INFO Card-0 speed:  163.60 p/s
+2026-07-18T07:30:02.051606Z  INFO Card-0 speed:  160.80 p/s
+2026-07-18T07:30:22.920894Z  INFO Heartbeat
+2026-07-18T07:30:22.921006Z  INFO Heartbeat success
+2026-07-18T07:30:32.052251Z  INFO Card-0 speed:  164.53 p/s
+2026-07-18T07:31:02.052726Z  INFO Card-0 speed:  162.36 p/s
+2026-07-18T07:31:32.053212Z  INFO Card-0 speed:  160.69 p/s
+2026-07-18T07:32:02.053841Z  INFO Card-0 speed:  163.26 p/s
+2026-07-18T07:32:32.054494Z  INFO Card-0 speed:  161.82 p/s
+2026-07-18T07:33:02.054967Z  INFO Card-0 speed:  160.63 p/s
+2026-07-18T07:33:32.055595Z  INFO Card-0 speed:  162.59 p/s
+2026-07-18T07:33:50.746992Z  INFO Card-0 New task received, height: 106774
+2026-07-18T07:34:02.056156Z  INFO Card-0 speed:  161.52 p/s
+2026-07-18T07:34:11.542331Z  INFO Card-0 New task received, height: 106775
+2026-07-18T07:34:32.056620Z  INFO Card-0 speed:  160.60 p/s
+2026-07-18T07:34:57.552151Z  INFO Heartbeat
+2026-07-18T07:34:57.552254Z  INFO Heartbeat success
+2026-07-18T07:35:02.057383Z  INFO Card-0 speed:  161.39 p/s
+2026-07-18T07:35:16.422146Z  INFO Card-0 New task received, height: 106776
+2026-07-18T07:35:32.058450Z  INFO Card-0 speed:  161.97 p/s
+2026-07-18T07:36:02.059294Z  INFO Card-0 speed:  162.39 p/s
+2026-07-18T07:36:32.061946Z  INFO Card-0 speed:  160.70 p/s
+2026-07-18T07:37:02.063084Z  INFO Card-0 speed:  160.96 p/s
+2026-07-18T07:37:32.063864Z  INFO Card-0 speed:  161.24 p/s
+2026-07-18T07:37:48.773324Z  INFO Card-0 New task received, height: 106777
+2026-07-18T07:38:02.064929Z  INFO Card-0 speed:  159.80 p/s
+2026-07-18T07:38:32.065870Z  INFO Card-0 speed:  160.17 p/s
+2026-07-18T07:39:02.066672Z  INFO Card-0 speed:  158.77 p/s
+2026-07-18T07:39:32.067405Z  INFO Card-0 speed:  159.14 p/s
+2026-07-18T07:40:02.068166Z  INFO Card-0 speed:  157.69 p/s
+2026-07-18T07:40:32.069339Z  INFO Card-0 speed:  158.11 p/s
+2026-07-18T07:41:02.070447Z  INFO Card-0 speed:  156.69 p/s
+2026-07-18T07:41:32.071511Z  INFO Card-0 speed:  156.99 p/s
+== rate lines (self-reported, unverified) ==
+2026-07-18T07:29:02.050327Z  INFO Card-0 speed:  167.98 p/s
+2026-07-18T07:29:32.050937Z  INFO Card-0 speed:  163.60 p/s
+2026-07-18T07:30:02.051606Z  INFO Card-0 speed:  160.80 p/s
+2026-07-18T07:30:32.052251Z  INFO Card-0 speed:  164.53 p/s
+2026-07-18T07:31:02.052726Z  INFO Card-0 speed:  162.36 p/s
+2026-07-18T07:31:32.053212Z  INFO Card-0 speed:  160.69 p/s
+2026-07-18T07:32:02.053841Z  INFO Card-0 speed:  163.26 p/s
+2026-07-18T07:32:32.054494Z  INFO Card-0 speed:  161.82 p/s
+2026-07-18T07:33:02.054967Z  INFO Card-0 speed:  160.63 p/s
+2026-07-18T07:33:32.055595Z  INFO Card-0 speed:  162.59 p/s
+2026-07-18T07:34:02.056156Z  INFO Card-0 speed:  161.52 p/s
+2026-07-18T07:34:32.056620Z  INFO Card-0 speed:  160.60 p/s
+2026-07-18T07:35:02.057383Z  INFO Card-0 speed:  161.39 p/s
+2026-07-18T07:35:32.058450Z  INFO Card-0 speed:  161.97 p/s
+2026-07-18T07:36:02.059294Z  INFO Card-0 speed:  162.39 p/s
+2026-07-18T07:36:32.061946Z  INFO Card-0 speed:  160.70 p/s
+2026-07-18T07:37:02.063084Z  INFO Card-0 speed:  160.96 p/s
+2026-07-18T07:37:32.063864Z  INFO Card-0 speed:  161.24 p/s
+2026-07-18T07:38:02.064929Z  INFO Card-0 speed:  159.80 p/s
+2026-07-18T07:38:32.065870Z  INFO Card-0 speed:  160.17 p/s
+2026-07-18T07:39:02.066672Z  INFO Card-0 speed:  158.77 p/s
+2026-07-18T07:39:32.067405Z  INFO Card-0 speed:  159.14 p/s
+2026-07-18T07:40:02.068166Z  INFO Card-0 speed:  157.69 p/s
+2026-07-18T07:40:32.069339Z  INFO Card-0 speed:  158.11 p/s
+2026-07-18T07:41:02.070447Z  INFO Card-0 speed:  156.69 p/s
+2026-07-18T07:41:32.071511Z  INFO Card-0 speed:  156.99 p/s
+== gpu utilization (tail) ==
+2026/07/18 07:40:56.988, 98 %, 260.01 W, 11712 MiB
+2026/07/18 07:41:11.989, 100 %, 274.89 W, 11712 MiB
+2026/07/18 07:41:26.989, 100 %, 270.08 W, 11712 MiB
+2026/07/18 07:41:41.990, 100 %, 272.72 W, 11712 MiB
+2026/07/18 07:41:56.990, 95 %, 265.92 W, 11712 MiB
+== done: copy prover.log gpu-util.csv rate-summary.txt from /tmp/nockmark-gpu-spike before destroying the pod ==
+
+--- stderr ---
+Warning: Permanently added '[64.119.209.250]:6520' (ED25519) to the list of known hosts.
