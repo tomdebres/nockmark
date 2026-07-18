@@ -109,12 +109,27 @@ with it, treat every NOCK/day calculator with suspicion.
 ## A GPU postscript
 
 Public GPU miners exist (GoldenMiner's closed-source CUDA prover,
-NockPool's GPU prover), so we measured one: GoldenMiner v0.4.3 on a rented
-RTX 4090, mining live pool work for 15 minutes at 100% GPU utilization and
-~420 W. It self-reported a steady **326–334 "p/s"** — a number produced by
-a closed binary, in an unverifiable unit, that does not square with any
-plausible STARK-on-GPU speedup over the open CPU prover (typical published
-gains elsewhere are 10–50×, not the ~10,000× a naive unit reading implies).
+NockPool's GPU prover), so we measured GoldenMiner v0.4.3 on rented cards,
+mining live pool work for 15 minutes each at 98–100% GPU utilization:
+
+| card | steady "p/s" | avg W | "p/s"/W |
+|------|-------------:|------:|--------:|
+| RTX 3090 | 161 | 269 | 0.60 |
+| A100 SXM4 80GB | 171 | 277 | 0.62 |
+| RTX 4090 | 316–334¹ | ~410 | 0.79 |
+| RTX 5090 | 431 | 526 | 0.82 |
+
+¹ Two runs, different hosts and days, within ~4%.
+
+Notable in its own right: the A100 — six times the rental price — matches
+a 3090, and the 5090's lead over the 4090 is incremental (~37% for ~32%
+more power). This workload rewards neither HBM nor tensor throughput.
+(Raw logs: `bench-results/gpu/` in the repo.)
+
+But every number in that table was produced by a closed binary, in an
+unverifiable unit, that does not square with any plausible STARK-on-GPU
+speedup over the open CPU prover (typical published gains elsewhere are
+10–50×, not the ~10,000× a naive unit reading implies).
 That is not an accusation — it is an illustration. The only proving
 numbers for this chain that anyone can independently verify are the CPU
 benchmarks in the table above, because the workload, inputs, and artefacts
