@@ -10,7 +10,7 @@ mining workloads against a server-issued challenge, the registry checks
 every STARK, and your rate is computed from the server's own clock. The
 published number is a lower bound that nobody can inflate — including you.
 
-- Leaderboard: https://nockmark-registry-production.up.railway.app/leaderboard
+- Leaderboard: https://nockmark-registry-production.up.railway.app/ (JSON at `/leaderboard`)
 - Earnings estimates: https://nockmark-registry-production.up.railway.app/economics
 - Write-up with cross-hardware results (M1, Graviton4, EPYC, Xeon):
   [docs/writeups/2026-07-15-first-public-nockchain-proving-benchmarks.md](docs/writeups/2026-07-15-first-public-nockchain-proving-benchmarks.md)
