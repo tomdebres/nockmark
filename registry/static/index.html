@@ -88,6 +88,8 @@
   .state td { color: var(--faint); white-space: normal; }
 
   .econ { margin-top: .875rem; font-size: .8125rem; color: var(--faint); }
+  .econ .spark { vertical-align: -3px; margin-left: .35rem; }
+  .econ .spark polyline { stroke: var(--faint); }
 
   .submit { margin-top: 3rem; }
   pre {
@@ -142,6 +144,7 @@
   <p>nock/day is an estimate (attempt-lottery model at current difficulty
   and emission), shown when this instance has economics configured.</p>
   <p><a href="https://github.com/tomdebres/nockmark">How it works</a> ·
+  <a href="/api">API</a> ·
   <a href="/leaderboard">JSON</a> ·
   <a href="/economics">economics</a></p>
 </footer>
@@ -196,11 +199,37 @@ fetch('/leaderboard').then(r => r.json()).then(rows => {
   tb.innerHTML = '<tr class="state"><td colspan="8">Could not load the leaderboard — reload the page to retry, or read the <a href="/leaderboard">JSON</a> directly.</td></tr>';
 });
 
+// A compact "3.1M"-style figure for the estimated network proving rate.
+const human = v => {
+  for (const [n, s] of [[1e9, 'B'], [1e6, 'M'], [1e3, 'k']]) {
+    if (v >= n) return (v / n).toPrecision(3) + s;
+  }
+  return v.toPrecision(3);
+};
+
 fetch('/economics').then(r => r.ok ? r.json() : null).then(d => {
   if (!d || !d.difficulty) return;
   const el = document.getElementById('econ');
-  el.textContent = `economics: difficulty 2^${Math.log2(d.difficulty).toFixed(2)} · block reward ${d.block_reward_nock} NOCK`;
+  el.textContent = `economics: difficulty 2^${Math.log2(d.difficulty).toFixed(2)}` +
+    (d.est_network_pps ? ` · est network rate ${human(d.est_network_pps)} proofs/s` : '') +
+    ` · block reward ${d.block_reward_nock} NOCK`;
   el.hidden = false;
+  return fetch('/economics/history?hours=720').then(r => r.ok ? r.json() : null);
+}).then(h => {
+  // 30-day difficulty sparkline, appended once there are enough points
+  // to say something.
+  if (!h || !h.points || h.points.length < 2) return;
+  const ts = h.points.map(p => p[0]), ds = h.points.map(p => p[1]);
+  const [t0, t1] = [Math.min(...ts), Math.max(...ts)];
+  const [d0, d1] = [Math.min(...ds), Math.max(...ds)];
+  const W = 96, H = 16;
+  const pts = h.points.map(([t, d]) =>
+    `${(t1 > t0 ? (t - t0) / (t1 - t0) : 0.5) * W},${H - 1 - (d1 > d0 ? (d - d0) / (d1 - d0) : 0.5) * (H - 2)}`
+  ).join(' ');
+  document.getElementById('econ').insertAdjacentHTML('beforeend',
+    `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"` +
+    ` aria-label="difficulty over the last ${Math.round(h.hours / 24)} days">` +
+    `<polyline points="${pts}" fill="none" stroke-width="1"/></svg>`);
 }).catch(() => {});
 </script>
 </html>

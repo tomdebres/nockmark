@@ -20,6 +20,13 @@ impl RateLimiter {
 
     /// Record a hit for `key`; false = over the limit for this window.
     pub fn check(&self, key: &str) -> bool {
+        self.hit(key).is_ok()
+    }
+
+    /// Record a hit for `key`; Err(secs) = over the limit, retry after
+    /// that many whole seconds (≥ 1, so a Retry-After header is honest
+    /// even at the window's tail).
+    pub fn hit(&self, key: &str) -> Result<(), u64> {
         let now = Instant::now();
         let mut hits = self.hits.lock().unwrap();
         // Bound memory under key-spraying: drop expired windows once large.
@@ -45,7 +52,12 @@ impl RateLimiter {
             *entry = (now, 0);
         }
         entry.1 += 1;
-        entry.1 <= self.max_per_window
+        if entry.1 <= self.max_per_window {
+            Ok(())
+        } else {
+            let remaining = self.window.saturating_sub(now.duration_since(entry.0));
+            Err(remaining.as_secs().max(1))
+        }
     }
 
     #[cfg(test)]
@@ -65,6 +77,14 @@ mod tests {
         assert!(rl.check("a"));
         assert!(!rl.check("a"));
         assert!(rl.check("b"), "keys are independent");
+    }
+
+    #[test]
+    fn blocked_hit_reports_seconds_until_window_reset() {
+        let rl = RateLimiter::new(1, Duration::from_secs(60));
+        assert!(rl.hit("a").is_ok());
+        let retry = rl.hit("a").unwrap_err();
+        assert!((1..=60).contains(&retry), "got {retry}");
     }
 
     #[test]

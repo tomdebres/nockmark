@@ -39,8 +39,30 @@ const MAX_TIP5_ATOM: f64 = {
     p * p * p * p * p
 };
 
+/// Ideal ZK block interval, overridable via NOCKMARK_BLOCK_TIME_SECS.
+/// 150 s under aletheia; the Logos fork (height 126,000) re-anchors ZK
+/// ASERT to 214 s, so this must be operator-adjustable without a
+/// rebuild. Only used for the derived network-rate estimate, never for
+/// ranking.
+pub fn block_time_secs() -> f64 {
+    static V: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("NOCKMARK_BLOCK_TIME_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|v| *v > 0.0)
+            .unwrap_or(150.0)
+    })
+}
+
 pub fn nock_per_day(pps: f64, p: &EconParams) -> f64 {
     pps * 86_400.0 / p.difficulty * p.block_reward_nock
+}
+
+/// Estimated whole-network proving rate: difficulty is expected attempts
+/// per block, and ZK blocks arrive every block_time_secs() on average.
+pub fn network_pps(p: &EconParams) -> f64 {
+    p.difficulty / block_time_secs()
 }
 
 pub fn from_env() -> Option<EconParams> {
@@ -53,10 +75,13 @@ pub fn from_env() -> Option<EconParams> {
 
 /// Poll `url` every 10 minutes and update the shared params. Only
 /// refreshes an already-configured cache (the reward has no online
-/// source; it changes once per eon).
+/// source; it changes once per eon). Each successful observation is
+/// appended to `history` (JSONL on the persistent volume) so the board
+/// can show difficulty over time.
 pub async fn refresh_loop(
     url: String,
     api_key: Option<String>,
+    history: Option<std::path::PathBuf>,
     econ: Arc<RwLock<Option<EconParams>>>,
 ) {
     let client = reqwest::Client::builder()
@@ -78,11 +103,62 @@ pub async fn refresh_loop(
                     }
                     p.difficulty = d;
                 }
+                if let Some(path) = &history {
+                    if let Err(e) = append_history(path, unix_now(), d) {
+                        eprintln!("econ refresh: history append failed: {e}");
+                    }
+                }
             }
             Ok(d) => eprintln!("econ refresh: ignoring non-positive difficulty {d}"),
             Err(e) => eprintln!("econ refresh failed (keeping cached value): {e}"),
         }
     }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// One difficulty observation, `{"t":unix_secs,"difficulty":n}` per line.
+/// At one line per 10-minute poll this grows ~7 KB/day — no rotation
+/// needed on any horizon that matters.
+fn append_history(path: &std::path::Path, t: u64, difficulty: f64) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(f, "{}", serde_json::json!({ "t": t, "difficulty": difficulty }))
+}
+
+/// Read observations newer than `since` (unix secs), oldest first,
+/// thinned to at most `cap` evenly-spaced points. Unparseable lines
+/// (torn writes) are skipped.
+pub fn read_history(
+    path: &std::path::Path,
+    since: u64,
+    cap: usize,
+) -> std::io::Result<Vec<(u64, f64)>> {
+    let raw = match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        r => r?,
+    };
+    let pts: Vec<(u64, f64)> = raw
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| Some((v["t"].as_u64()?, v["difficulty"].as_f64()?)))
+        .filter(|(t, _)| *t >= since)
+        .collect();
+    if pts.len() <= cap || cap == 0 {
+        return Ok(pts);
+    }
+    // Evenly-spaced thinning that always keeps the newest point.
+    let last = *pts.last().unwrap();
+    let step = pts.len() as f64 / (cap - 1) as f64;
+    let mut out: Vec<(u64, f64)> =
+        (0..cap - 1).map(|i| pts[(i as f64 * step) as usize]).collect();
+    out.push(last);
+    Ok(out)
 }
 
 /// Plain-JSON source: GET `url`, read a top-level "difficulty" number
@@ -201,6 +277,41 @@ mod tests {
         let target = "857211898323310214279691199033669776696186506919492829732100799763647239070693679512270";
         let d = difficulty_from_target(target).unwrap();
         assert!((d - 2_491_784_163.0).abs() / 2_491_784_163.0 < 1e-9, "got {d}");
+    }
+
+    #[test]
+    fn network_pps_is_difficulty_per_block_time() {
+        // block_time_secs() is 150 unless NOCKMARK_BLOCK_TIME_SECS is set,
+        // which the test env never does.
+        let p = EconParams { difficulty: 1_500.0, block_reward_nock: 2_048.0 };
+        assert!((network_pps(&p) - 10.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn history_roundtrip_filters_and_thins() {
+        let path = std::env::temp_dir()
+            .join(format!("nockmark-econ-history-test-{}.jsonl", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(read_history(&path, 0, 100).unwrap(), vec![], "missing file is empty");
+        for i in 0..10u64 {
+            append_history(&path, 1000 + i, i as f64).unwrap();
+        }
+        // Torn/garbage line is skipped, not fatal.
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, b"{\"t\": 99\n"))
+            .unwrap();
+        let all = read_history(&path, 0, 100).unwrap();
+        assert_eq!(all.len(), 10);
+        assert_eq!(all[0], (1000, 0.0));
+        let since = read_history(&path, 1005, 100).unwrap();
+        assert_eq!(since.len(), 5, "since-filter keeps t >= since");
+        let thinned = read_history(&path, 0, 4).unwrap();
+        assert_eq!(thinned.len(), 4);
+        assert_eq!(thinned[0], (1000, 0.0), "thinning keeps the oldest point");
+        assert_eq!(*thinned.last().unwrap(), (1009, 9.0), "and the newest");
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
