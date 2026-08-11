@@ -23,6 +23,7 @@ async fn main() {
     if let Ok(url) = std::env::var("NOCKMARK_ECON_URL") {
         tokio::spawn(nockmark_registry::economics::refresh_loop(
             url,
+            std::env::var("NOCKMARK_ECON_API_KEY").ok(),
             state.econ.clone(),
         ));
     }
