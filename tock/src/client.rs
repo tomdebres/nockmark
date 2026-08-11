@@ -121,7 +121,7 @@ mod tests {
         let sub = Submission {
             nonce: "12345".into(),
             hardware: "hw".into(),
-            prover_version: "1372f270".into(),
+            prover_version: crate::miner::NOCKCHAIN_PIN.into(),
             elapsed_ms: 42,
             proofs: vec!["AA==".into()],
         };

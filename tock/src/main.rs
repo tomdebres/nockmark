@@ -60,7 +60,7 @@ enum Command {
         submit: Option<String>,
         /// Prover version string recorded on submission (the nockchain
         /// commit the kernel jams were built from).
-        #[arg(long, default_value = "31b8a015")]
+        #[arg(long, default_value = tock::miner::NOCKCHAIN_PIN)]
         prover_version: String,
     },
     /// Produce one STARK proof whose input incorporates an arbitrary nonce.
