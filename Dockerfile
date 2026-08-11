@@ -8,6 +8,7 @@
 FROM debian:bookworm-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential clang pkg-config libssl-dev git curl xz-utils ca-certificates \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # Pinned nightly toolchain, no rustup (same tarball install as tock/setup-bench.sh)
