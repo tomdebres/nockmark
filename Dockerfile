@@ -21,7 +21,7 @@ RUN mkdir -p /opt/rust /tmp/rust-dl && cd /tmp/rust-dl && \
 ENV PATH="/opt/rust/bin:${PATH}" RUST_MIN_STACK=8388608
 
 ARG NOCKCHAIN_REPO=https://github.com/tomdebres/nockchain.git
-ARG NOCKCHAIN_COMMIT=31b8a015
+ARG NOCKCHAIN_COMMIT=1372f270
 WORKDIR /build
 RUN git clone --filter=blob:none "$NOCKCHAIN_REPO" nockchain && \
     git -C nockchain checkout "$NOCKCHAIN_COMMIT"

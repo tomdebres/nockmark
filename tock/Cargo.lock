@@ -3796,7 +3796,7 @@ checksum = "b93853da6d84c2e3c7d730d6473e8817692dd89be387eb01b94d7f108ecb5b8c"
 
 [[package]]
 name = "nockapp"
-version = "0.1.0"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3856,7 +3856,7 @@ dependencies = [
 
 [[package]]
 name = "nockchain-math"
-version = "0.1.0"
+version = "0.1.15"
 dependencies = [
  "argon2",
  "arrayref",
@@ -3879,7 +3879,7 @@ dependencies = [
 
 [[package]]
 name = "nockchain-types"
-version = "0.1.0"
+version = "0.1.15"
 dependencies = [
  "alloy",
  "anyhow",
@@ -7288,7 +7288,7 @@ dependencies = [
 
 [[package]]
 name = "zkvm-jetpack"
-version = "0.1.0"
+version = "0.1.15"
 dependencies = [
  "argon2",
  "bitvec",

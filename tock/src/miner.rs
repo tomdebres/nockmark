@@ -18,8 +18,9 @@ use zkvm_jetpack::hot::produce_prover_hot_state;
 /// Mainnet PoW puzzle length (pow-len in hoon/common/ztd/eight.hoon).
 pub const DEFAULT_POW_LEN: u64 = 64;
 
-/// Current mainnet proof version tag in the miner-kernel cause (%2).
-pub const PROOF_VERSION: u64 = 2;
+/// Current mainnet proof version tag in the miner-kernel cause (%3 since
+/// the Zoe fork at height 119,400).
+pub const PROOF_VERSION: u64 = 3;
 
 /// max-tip5-atom = p^5 - 1 (p = 2^64 - 2^32 + 1, Goldilocks prime) as
 /// LSB-first 32-bit limbs — the bignum representation check-target expects
@@ -133,7 +134,9 @@ pub async fn run_prove(
         if flag != 0 {
             panic!("mine-result reported failure (%|) — target should always pass");
         }
-        // [hash %command %pow proof dig header nonce]
+        // [hash %command %pow %dumb-zkpow proof dig header nonce]
+        // (%dumb-zkpow selects the zk variant of the consensus kernel's
+        // pow-variant union; added alongside proof v3 in the Zoe fork.)
         let after_hash = each
             .tail()
             .as_cell()
@@ -144,7 +147,12 @@ pub async fn run_prove(
         assert!(after_hash.head().eq_bytes("command"), "expected %command");
         let after_pow = after_hash.tail().as_cell().expect("expected [%pow ...]");
         assert!(after_pow.head().eq_bytes("pow"), "expected %pow");
-        let proof_cell = after_pow.tail().as_cell().expect("expected [proof dig ...]");
+        let after_variant = after_pow.tail().as_cell().expect("expected [%dumb-zkpow ...]");
+        assert!(
+            after_variant.head().eq_bytes("dumb-zkpow"),
+            "expected %dumb-zkpow pow-variant tag"
+        );
+        let proof_cell = after_variant.tail().as_cell().expect("expected [proof dig ...]");
         proof = Some(proof_cell.head().noun());
         let dig = proof_cell
             .tail()
