@@ -32,6 +32,11 @@ pub struct LeaderboardEntry {
     pub self_reported_pps: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub est_nock_per_day: Option<f64>,
+    /// This run's share of the estimated whole-network proving rate
+    /// (difficulty / block time). Tiny by design — the network is pools
+    /// of GPUs; the board is single machines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_share: Option<f64>,
 }
 
 fn round4(x: f64) -> f64 {
@@ -45,7 +50,16 @@ fn to_entry(run: RunRecord, econ: Option<crate::economics::EconParams>) -> Leade
     let self_reported_pps = round4(run.k as f64 / (run.elapsed_ms as f64 / 1000.0));
     let est_nock_per_day =
         econ.map(|p| round4(crate::economics::nock_per_day(proofs_per_sec, &p)));
-    LeaderboardEntry { run, server_window_ms, proofs_per_sec, self_reported_pps, est_nock_per_day }
+    let network_share =
+        econ.map(|p| proofs_per_sec / crate::economics::network_pps(&p));
+    LeaderboardEntry {
+        run,
+        server_window_ms,
+        proofs_per_sec,
+        self_reported_pps,
+        est_nock_per_day,
+        network_share,
+    }
 }
 
 #[derive(Clone)]
@@ -55,6 +69,15 @@ pub struct AppState {
     pub limiter: Arc<RateLimiter>,
     pub k: u64,
     pub econ: Arc<tokio::sync::RwLock<Option<crate::economics::EconParams>>>,
+    pub data_dir: std::path::PathBuf,
+}
+
+impl AppState {
+    /// Difficulty observations live beside the kernel state on the
+    /// persistent volume.
+    pub fn econ_history_path(&self) -> std::path::PathBuf {
+        self.data_dir.join("econ-history.jsonl")
+    }
 }
 
 impl AppState {
@@ -73,6 +96,7 @@ impl AppState {
             limiter: Arc::new(RateLimiter::new(10, Duration::from_secs(60))),
             k,
             econ: Arc::new(tokio::sync::RwLock::new(crate::economics::from_env())),
+            data_dir: data_dir.to_path_buf(),
         })
     }
 }
@@ -90,10 +114,15 @@ async fn rate_limit_mw(State(st): State<AppState>, req: Request, next: Next) -> 
         .and_then(|s| s.split(',').next_back())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "direct".into());
-    if !st.limiter.check(&key) {
+    if let Err(retry_after_secs) = st.limiter.hit(&key) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({ "error": "rate limit exceeded — try again in a minute" })),
+            [(axum::http::header::RETRY_AFTER, retry_after_secs.to_string())],
+            Json(json!({
+                "error": "rate limit exceeded",
+                "reason": "per-IP window on proof-verifying routes",
+                "retry_after_secs": retry_after_secs,
+            })),
         )
             .into_response();
     }
@@ -107,9 +136,11 @@ pub fn router(state: AppState) -> Router {
         .route_layer(middleware::from_fn_with_state(state.clone(), rate_limit_mw));
     Router::new()
         .route("/", get(index_page))
+        .route("/api", get(api_page))
         .route("/leaderboard", get(leaderboard))
         .route("/runs/:id", get(run_by_id))
         .route("/economics", get(economics))
+        .route("/economics/history", get(economics_history))
         .merge(limited)
         // Explicit request-size bound (M2 carry-forward): k=8 proofs are
         // ~1.2 MiB base64, so 4 MiB is generous headroom.
@@ -219,6 +250,10 @@ async fn index_page() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
 
+async fn api_page() -> Html<&'static str> {
+    Html(include_str!("../static/api.html"))
+}
+
 async fn leaderboard(State(st): State<AppState>) -> (StatusCode, Json<Vec<LeaderboardEntry>>) {
     let econ = *st.econ.read().await;
     match st.kernel.lock().await.leaderboard().await {
@@ -262,12 +297,47 @@ async fn economics(
     let mut out = json!({
         "difficulty": p.difficulty,
         "block_reward_nock": p.block_reward_nock,
+        "block_time_secs": crate::economics::block_time_secs(),
+        "est_network_pps": crate::economics::network_pps(&p),
         "model": "est_nock_per_day = pps * 86400 / difficulty * block_reward_nock",
         "note": "difficulty = expected proof attempts per block; estimates only",
     });
     if let Some(pps) = q.get("pps").and_then(|s| s.parse::<f64>().ok()) {
         out["pps"] = json!(pps);
         out["est_nock_per_day"] = json!(crate::economics::nock_per_day(pps, &p));
+        out["network_share"] = json!(pps / crate::economics::network_pps(&p));
     }
     (StatusCode::OK, Json(out))
+}
+
+/// Difficulty observations from this instance's refresh loop, oldest
+/// first. `?hours=` bounds the lookback (default one week, max 90 days);
+/// responses are thinned to ≤ 1000 points.
+async fn economics_history(
+    State(st): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let hours = q
+        .get("hours")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(168)
+        .clamp(1, 24 * 90);
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+        .saturating_sub(hours * 3600);
+    match crate::economics::read_history(&st.econ_history_path(), since, 1000) {
+        Ok(points) => (
+            StatusCode::OK,
+            Json(json!({
+                "hours": hours,
+                "points": points.iter().map(|(t, d)| json!([t, d])).collect::<Vec<_>>(),
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("history read failed: {e}") })),
+        ),
+    }
 }

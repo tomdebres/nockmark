@@ -24,6 +24,7 @@ async fn main() {
         tokio::spawn(nockmark_registry::economics::refresh_loop(
             url,
             std::env::var("NOCKMARK_ECON_API_KEY").ok(),
+            Some(state.econ_history_path()),
             state.econ.clone(),
         ));
     }

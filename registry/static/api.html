@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nockmark API</title>
+<meta name="description" content="HTTP API of the Nockmark registry: challenges, verified submissions, leaderboard, and economics.">
+<link rel="canonical" href="https://nockmark.xyz/api">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext x='1' y='13' font-family='monospace' font-size='15' fill='%23555'%3E~%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --paper: #ffffff;
+    --ink: #161615;
+    --faint: #8b8a86;
+    --hair: #e4e3df;
+    --wash: #f6f6f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0d0d0c;
+      --ink: #e8e6e1;
+      --faint: #77756f;
+      --hair: #262523;
+      --wash: #151514;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 14px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 4rem 1.25rem 5rem;
+  }
+  a { color: inherit; text-underline-offset: 3px; }
+  a:hover { text-decoration-thickness: 2px; }
+  a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  header { margin-bottom: 3rem; }
+  .mark { font-size: 1.5rem; font-weight: 700; letter-spacing: -.02em; }
+  .mark .sig, .mark .page { color: var(--faint); font-weight: 400; }
+  .thesis { margin-top: 1rem; max-width: 36rem; }
+
+  .eyebrow {
+    font-size: .6875rem;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 2.5rem 0 1rem;
+  }
+  .endpoint { border-top: 1px solid var(--hair); padding: 1.25rem 0; }
+  .sigline { font-weight: 700; }
+  .sigline .verb { color: var(--faint); font-weight: 400; margin-right: .5rem; }
+  .endpoint p { margin-top: .5rem; max-width: 38rem; }
+  .endpoint p, .endpoint li { color: var(--ink); }
+  .fields { margin: .5rem 0 0 1.1rem; }
+  .fields li { margin-top: .15rem; }
+  .fields code, p code { background: var(--wash); padding: 0 .3em; }
+  pre {
+    border: 1px solid var(--hair);
+    padding: 1rem 1.25rem;
+    margin-top: .75rem;
+    overflow-x: auto;
+    font: inherit;
+    line-height: 1.5;
+  }
+  footer { margin-top: 3rem; font-size: .8125rem; color: var(--faint); border-top: 1px solid var(--hair); padding-top: 1.5rem; }
+  footer a { color: var(--ink); }
+</style>
+
+<header>
+  <div class="mark"><span class="sig">~</span>nockmark <span class="page">/ api</span></div>
+  <p class="thesis">Everything the <a href="/">board</a> shows comes from these
+  endpoints. No accounts, no keys: a valid STARK proof of the server's own
+  challenge is the only credential a submission needs.</p>
+</header>
+
+<div class="eyebrow">Read</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">GET</span>/leaderboard</div>
+  <p>All verified runs, ranked by server-observed proving rate.</p>
+  <ul class="fields">
+    <li><code>proofs_per_sec</code> — k / server-observed window; the ranked, trustless rate (a lower bound)</li>
+    <li><code>self_reported_pps</code> — k / client-reported elapsed time; informational only</li>
+    <li><code>est_nock_per_day</code>, <code>network_share</code> — economics estimates, present when configured</li>
+  </ul>
+  <pre>curl https://nockmark.xyz/leaderboard</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">GET</span>/runs/:id</div>
+  <p>One verified run by id, same shape as a leaderboard entry.</p>
+  <pre>curl https://nockmark.xyz/runs/1</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">GET</span>/economics</div>
+  <p>Current network difficulty (expected proof attempts per block,
+  auto-refreshed from the chain), block reward, and the estimated
+  whole-network proving rate. Pass <code>?pps=</code> to price a rate of
+  your own.</p>
+  <pre>curl 'https://nockmark.xyz/economics?pps=0.22'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">GET</span>/economics/history</div>
+  <p>Difficulty over time as <code>[unix_secs, difficulty]</code> pairs,
+  oldest first, thinned to ≤ 1000 points. <code>?hours=</code> bounds the
+  lookback (default 168, max 2160).</p>
+  <pre>curl 'https://nockmark.xyz/economics/history?hours=720'</pre>
+</div>
+
+<div class="eyebrow">Submit</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">POST</span>/challenge</div>
+  <p>Mint a proving challenge. Returns the <code>nonce</code> to prove
+  against, <code>k</code> (proofs required), <code>pow_len</code>, and the
+  nonce derivation rule. The ranked rate is measured from this moment to
+  submission, server-side.</p>
+  <pre>curl -X POST https://nockmark.xyz/challenge</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">POST</span>/run</div>
+  <p>Submit k base64-jammed STARK proofs for a challenge. Every proof is
+  checked (challenge binding, then full verification) before anything is
+  recorded; the practical path is the one-liner on the <a href="/">board</a>,
+  which mints, proves, and submits for you.</p>
+  <ul class="fields">
+    <li><code>nonce</code>, <code>proofs[k]</code> — the challenge and its proofs</li>
+    <li><code>hardware</code>, <code>prover_version</code> — self-described labels (rates are not self-described)</li>
+    <li><code>elapsed_ms</code> — client-measured proving time; displayed, never ranked</li>
+  </ul>
+  <pre>tock bench --kernel assets/miner.jam \
+  --submit https://nockmark.xyz</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">429</span>rate limits</div>
+  <p>The two POST routes are rate-limited per IP. Over-limit responses
+  carry a <code>Retry-After</code> header and
+  <code>{"retry_after_secs": …}</code> in the body — sleep that long and
+  retry.</p>
+</div>
+
+<footer>
+  <p><a href="/">Board</a> ·
+  <a href="https://github.com/tomdebres/nockmark">Source &amp; verification model</a></p>
+</footer>
+</html>
