@@ -13,6 +13,19 @@ nockvm = { path = "../../../nockchain/crates/nockvm/rust/nockvm" }
 zkvm-jetpack = { path = "../../../nockchain/crates/zkvm-jetpack" }
 noun-serde = { path = "../../../nockchain/crates/noun-serde" }
 roswell = { path = "../../../nockchain/crates/roswell" }
+# M5 AI-PoW track (Task 3): registry-side certificate verification via the
+# zk_bridge statement path — deps and features exactly as the Task-1 spike.
+# `zk` pulls ai-pow-zk + bincode into ai-pow's zk_bridge; `parallel` mirrors
+# the production rayon prover; `recursion` = compact batch-STARK cert APIs.
+ai-pow = { path = "../../../nockchain/crates/ai-pow", features = ["zk", "parallel"] }
+ai-pow-zk = { path = "../../../nockchain/crates/ai-pow-zk", features = ["recursion"] }
+# Wire codec of the AI submission blob (same codec family the compact
+# certificate uses upstream).
+postcard = { version = "1.1.3", features = ["alloc"] }
+# Same bincode major the upstream verifier-context serde uses.
+bincode = { version = "2.0.0-rc.3", features = ["serde"] }
+# Challenge derivation (already in the dep tree via ai-pow).
+blake3 = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 axum = "0.7"
 tower = "0.5"
@@ -27,3 +40,20 @@ tempfile = "3"
 
 [profile.release]
 opt-level = 3
+
+# The AI-track tests prove and verify real STARK certificates through the
+# ai-pow dependency tree; at dev's default opt-level 0 one compact
+# certificate prove takes tens of minutes. Optimize dependencies (NOT this
+# crate) in dev so plain `cargo test` stays in the measured envelope
+# (~24 s per prove, ~79 ms per verify). Also speeds up the existing
+# roswell-based verifier suite. debug-assertions must be off to match the
+# release semantics the upstream crates are validated under: ai-pow-zk's
+# trace builder eagerly computes `cr - 1` before discarding it on block 0
+# (composite_trace.rs:979), which is a harmless wrap in release but a
+# subtract-overflow panic with assertions on.
+[profile.dev.package."*"]
+opt-level = 3
+debug-assertions = false
+# Independent of debug-assertions in cargo (dev default: on) — must be
+# disabled explicitly or the composite_trace.rs:979 wrap still panics.
+overflow-checks = false

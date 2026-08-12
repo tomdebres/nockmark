@@ -76,6 +76,94 @@ pub async fn submit_run(base: &str, sub: &Submission) -> Result<u64, String> {
         .ok_or_else(|| format!("POST {url}: response missing run_id"))
 }
 
+// ---------------------------------------------------------------------------
+// AI track (M5): fetch an AI challenge, submit verified wins
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AiRegistryChallenge {
+    pub nonce: String,
+    /// hex32; plays the block_commitment role AND seeds the matrices.
+    pub challenge: String,
+    /// hex32 jackpot target T_b.
+    pub target: String,
+    /// Wins required.
+    pub k: u64,
+    pub nonce_rule: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AiWinSubmission {
+    pub extranonce: u64,
+    /// base64 postcard of [`crate::aipow::AiCertBlob`].
+    pub cert_b64: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AiSubmission {
+    pub nonce: String,
+    pub hardware: String,
+    pub prover_version: String,
+    pub grind_elapsed_ms: u64,
+    pub wins: Vec<AiWinSubmission>,
+}
+
+pub async fn fetch_ai_challenge(base: &str) -> Result<AiRegistryChallenge, String> {
+    let url = format!("{}/challenge?track=ai", base.trim_end_matches('/'));
+    let resp = http(Duration::from_secs(30))
+        .post(&url)
+        .send()
+        .await
+        .map_err(|e| format!("POST {url}: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("POST {url}: HTTP {}", resp.status()));
+    }
+    let ch = resp
+        .json::<AiRegistryChallenge>()
+        .await
+        .map_err(|e| format!("bad AI challenge JSON from {url}: {e}"))?;
+    if ch.nonce_rule != crate::aipow::AI_NONCE_RULE {
+        return Err(format!(
+            "registry nonce rule {:?} != client {:?} — update tock",
+            ch.nonce_rule,
+            crate::aipow::AI_NONCE_RULE
+        ));
+    }
+    Ok(ch)
+}
+
+/// Returns the recorded AI run id. First-submission latency can include the
+/// registry's one-time verifier-context build (~25 s), hence the generous
+/// timeout on top of k × ~80 ms verifies.
+pub async fn submit_ai_run(base: &str, sub: &AiSubmission) -> Result<u64, String> {
+    let url = format!("{}/run?track=ai", base.trim_end_matches('/'));
+    let resp = http(Duration::from_secs(180))
+        .post(&url)
+        .json(sub)
+        .send()
+        .await
+        .map_err(|e| format!("POST {url}: {e}"))?;
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("POST {url}: reading response body: {e}"))?;
+    if !status.is_success() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(msg) = v["error"].as_str() {
+                return Err(msg.to_string());
+            }
+        }
+        let snippet: String = text.chars().take(200).collect();
+        return Err(format!("POST {url}: HTTP {status}: {snippet}"));
+    }
+    let body: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("POST {url}: bad response JSON: {e}"))?;
+    body["run_id"]
+        .as_u64()
+        .ok_or_else(|| format!("POST {url}: response missing run_id"))
+}
+
 /// Compact self-reported hardware descriptor, capped to the registry's
 /// 128-byte limit (truncated on a char boundary).
 pub fn hardware_summary(hw: &crate::hardware::Hardware) -> String {

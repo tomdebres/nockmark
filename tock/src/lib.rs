@@ -1,3 +1,4 @@
+pub mod aipow;
 pub mod client;
 pub mod hardware;
 pub mod miner;

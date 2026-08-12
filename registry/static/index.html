@@ -131,6 +131,26 @@
   <p class="econ" id="econ" hidden></p>
 </section>
 
+<section id="ai" hidden>
+  <div class="eyebrow">AI-PoW — MAC-equivalents per second, CPU reference</div>
+  <div class="scroll">
+    <table id="ai-board">
+      <thead>
+        <tr>
+          <th>#</th><th>hardware</th>
+          <th class="num">verified MAC-equiv/s</th><th class="num">grind-window</th>
+          <th class="num">zk-attempt-equiv/s</th><th class="num">±σ</th><th>prover</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <p class="econ">The Logos AI-PoW puzzle (INT8 tiled matmul + recursive STARK
+  certificate), verified the same way: every rate computed by this server from
+  certificates it checked, of challenges it derived. Labeled CPU reference
+  until GPU kernels exist upstream.</p>
+</section>
+
 <section class="submit">
   <div class="eyebrow">Get on the board</div>
   <pre><b>tock bench</b> --kernel assets/miner.jam \
@@ -206,6 +226,26 @@ const human = v => {
   }
   return v.toPrecision(3);
 };
+
+// AI-PoW track (M5): shown only once the endpoint has verified rows.
+fetch('/leaderboard?track=ai').then(r => r.json()).then(rows => {
+  if (!Array.isArray(rows) || !rows.length) return;
+  const tb = document.querySelector('#ai-board tbody');
+  for (const [i, r] of rows.entries()) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td class="rank">${i + 1}</td>` +
+      `<td class="hw"></td>` +
+      `<td class="num verified">${human(r.verified_mac_per_sec_lb)}</td>` +
+      `<td class="num quiet">${human(r.grind_mac_per_sec)}</td>` +
+      `<td class="num quiet">${r.zk_attempt_equiv_per_sec.toExponential(2)}</td>` +
+      `<td class="num quiet">±${Math.round(r.sigma_frac * 100)}%</td>` +
+      `<td class="quiet">${r.prover_version}</td>`;
+    tr.querySelector('.hw').textContent = r.hardware;
+    tb.appendChild(tr);
+  }
+  document.getElementById('ai').hidden = false;
+}).catch(() => {});
 
 fetch('/economics').then(r => r.ok ? r.json() : null).then(d => {
   if (!d || !d.difficulty) return;

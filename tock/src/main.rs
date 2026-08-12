@@ -18,7 +18,7 @@ use nockvm::noun::{Atom, D, T};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use tock::{client, hardware, miner, nonce};
+use tock::{aipow, client, hardware, miner, nonce};
 use tock::miner::DEFAULT_POW_LEN;
 
 #[derive(Parser)]
@@ -62,6 +62,28 @@ enum Command {
         /// commit the kernel jams were built from).
         #[arg(long, default_value = tock::miner::NOCKCHAIN_PIN)]
         prover_version: String,
+    },
+    /// Benchmark the Logos AI-PoW puzzle (M5 track, CPU reference): grind
+    /// extranonces, prove a compact recursive certificate per jackpot win.
+    AiBench {
+        /// 32-byte challenge, hex (the registry challenge lands here later).
+        /// Defaults to a fixed dev constant for fully-local runs.
+        #[arg(long)]
+        challenge: Option<String>,
+        /// 32-byte jackpot target, hex. Defaults to all-FF (max target:
+        /// every attempt wins) so a local run grinds in milliseconds.
+        #[arg(long)]
+        target: Option<String>,
+        /// Jackpot wins to find (each win costs a ~24 s certificate prove).
+        #[arg(short, long, default_value_t = 1)]
+        k: u64,
+        /// Directory to write win certificates into (cert-<extranonce>.bin).
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
+        /// Registry base URL for the AI track. The submission wire format
+        /// lands with M5 Task 3 — this flag errors until then.
+        #[arg(long, value_name = "REGISTRY_URL")]
+        submit: Option<String>,
     },
     /// Produce one STARK proof whose input incorporates an arbitrary nonce.
     Prove {
@@ -117,6 +139,13 @@ async fn main() {
             )
             .await
         }
+        Command::AiBench {
+            challenge,
+            target,
+            k,
+            out_dir,
+            submit,
+        } => ai_bench(challenge, target, k, out_dir, submit).await,
         Command::Prove {
             nonce,
             kernel,
@@ -334,6 +363,133 @@ fn print_human(r: &BenchResult) {
         "  (× 86400 = proofs/day: {:.0})",
         r.proofs_per_sec * 86400.0
     );
+}
+
+async fn ai_bench(
+    challenge: Option<String>,
+    target: Option<String>,
+    k: u64,
+    out_dir: Option<PathBuf>,
+    submit: Option<String>,
+) {
+    assert!(k >= 1, "k must be at least 1");
+    // With --submit the registry supplies the whole challenge (its
+    // challenge/target/k override the local flags, like `bench`).
+    let registry_ch = match &submit {
+        Some(base) => Some(
+            client::fetch_ai_challenge(base)
+                .await
+                .unwrap_or_else(|e| panic!("fetch AI challenge: {e}")),
+        ),
+        None => None,
+    };
+    let (challenge, target, k) = match &registry_ch {
+        Some(rc) => (
+            aipow::parse_hex32(&rc.challenge)
+                .unwrap_or_else(|e| panic!("registry challenge: {e}")),
+            aipow::parse_hex32(&rc.target).unwrap_or_else(|e| panic!("registry target: {e}")),
+            rc.k,
+        ),
+        None => (
+            match &challenge {
+                Some(hex) => {
+                    aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --challenge: {e}"))
+                }
+                None => aipow::dev_challenge(),
+            },
+            match &target {
+                Some(hex) => aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --target: {e}")),
+                None => [0xff; 32], // max target: every attempt wins
+            },
+            k,
+        ),
+    };
+    let hw = hardware::detect();
+    let ch = aipow::AiChallenge {
+        challenge,
+        target,
+        k,
+    };
+
+    let summary = aipow::run(&ch);
+
+    println!("tock ai-bench — Logos AI-PoW, canonical single-tile shape (CPU reference)");
+    println!("  challenge:    {}", aipow::hex32(&ch.challenge));
+    println!("  target:       {}", aipow::hex32(&ch.target));
+    println!("  nonce rule:   {}", aipow::AI_NONCE_RULE);
+    println!(
+        "  hardware:     {} ({} cores)",
+        hw.cpu_model.as_deref().unwrap_or("unknown CPU"),
+        hw.logical_cores
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".into())
+    );
+    println!(
+        "  grind:        {} win(s) in {:.2}s, {} attempts",
+        summary.wins.len(),
+        summary.grind_elapsed_ms as f64 / 1000.0,
+        summary.total_attempts
+    );
+    println!(
+        "  grind rate:   {:.1} attempts/sec ({:.1} MMAC-equiv/s at F=2^16)",
+        summary.attempts_per_sec,
+        summary.attempts_per_sec * aipow::MAC_EQUIV_PER_ATTEMPT / 1e6
+    );
+    let prove_ms: Vec<u64> = summary.wins.iter().map(|w| w.prove_ms).collect();
+    let min = prove_ms.iter().min().copied().unwrap_or(0);
+    let max = prove_ms.iter().max().copied().unwrap_or(0);
+    let mean = prove_ms.iter().sum::<u64>() as f64 / prove_ms.len().max(1) as f64;
+    println!("  cert prove:   min {min} ms / mean {mean:.0} ms / max {max} ms (outside window)");
+    for w in &summary.wins {
+        println!(
+            "  win:          extranonce {} — cert {} bytes, proved in {} ms",
+            w.extranonce,
+            w.cert_bytes.len(),
+            w.prove_ms
+        );
+    }
+
+    if let Some(dir) = &out_dir {
+        std::fs::create_dir_all(dir).expect("could not create --out-dir");
+        for w in &summary.wins {
+            let path = dir.join(format!("cert-{}.bin", w.extranonce));
+            std::fs::write(&path, &w.cert_bytes).expect("could not write certificate");
+        }
+        println!(
+            "  certs:        {} written to {}",
+            summary.wins.len(),
+            dir.display()
+        );
+    }
+
+    if let (Some(base), Some(rc)) = (&submit, &registry_ch) {
+        use base64::Engine;
+        let sub = client::AiSubmission {
+            nonce: rc.nonce.clone(),
+            hardware: client::hardware_summary(&hw),
+            prover_version: miner::NOCKCHAIN_PIN.into(),
+            grind_elapsed_ms: summary.grind_elapsed_ms,
+            wins: summary
+                .wins
+                .iter()
+                .map(|w| client::AiWinSubmission {
+                    extranonce: w.extranonce,
+                    cert_b64: base64::engine::general_purpose::STANDARD
+                        .encode(&w.submission_bytes),
+                })
+                .collect(),
+        };
+        match client::submit_ai_run(base, &sub).await {
+            Ok(id) => {
+                println!("submitted: ai run {id}");
+                println!("  {}/runs/{id}?track=ai", base.trim_end_matches('/'));
+            }
+            Err(e) => {
+                eprintln!("submission failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
 }
 
 async fn prove(nonce_seed: &str, kernel: &PathBuf, out: &PathBuf, pow_len: u64, header_seed: &str) {
