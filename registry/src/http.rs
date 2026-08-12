@@ -520,17 +520,39 @@ async fn leaderboard(
 async fn run_by_id(
     State(st): State<AppState>,
     AxumPath(id): AxumPath<u64>,
-) -> (StatusCode, Json<Option<LeaderboardEntry>>) {
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if is_ai_track(&q) {
+        let entry = st
+            .ai
+            .lock()
+            .await
+            .runs()
+            .iter()
+            .find(|r| r.id == id)
+            .cloned()
+            .map(to_ai_entry);
+        return match entry {
+            Some(e) => (StatusCode::OK, Json(Some(e))).into_response(),
+            None => (
+                StatusCode::NOT_FOUND,
+                Json(None::<AiLeaderboardEntry>),
+            )
+                .into_response(),
+        };
+    }
     let econ = *st.econ.read().await;
     match st.kernel.lock().await.leaderboard().await {
         Ok(runs) => {
             let entry = runs.into_iter().find(|r| r.id == id).map(|run| to_entry(run, econ));
             match entry {
-                Some(e) => (StatusCode::OK, Json(Some(e))),
-                None => (StatusCode::NOT_FOUND, Json(None)),
+                Some(e) => (StatusCode::OK, Json(Some(e))).into_response(),
+                None => (StatusCode::NOT_FOUND, Json(None::<LeaderboardEntry>)).into_response(),
             }
         }
-        Err(_e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(None)),
+        Err(_e) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(None::<LeaderboardEntry>)).into_response()
+        }
     }
 }
 

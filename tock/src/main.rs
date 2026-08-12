@@ -145,7 +145,7 @@ async fn main() {
             k,
             out_dir,
             submit,
-        } => ai_bench(challenge, target, k, out_dir, submit),
+        } => ai_bench(challenge, target, k, out_dir, submit).await,
         Command::Prove {
             nonce,
             kernel,
@@ -365,25 +365,44 @@ fn print_human(r: &BenchResult) {
     );
 }
 
-fn ai_bench(
+async fn ai_bench(
     challenge: Option<String>,
     target: Option<String>,
     k: u64,
     out_dir: Option<PathBuf>,
     submit: Option<String>,
 ) {
-    if submit.is_some() {
-        eprintln!("--submit: registry ai track not yet deployed (lands with M5 Task 3)");
-        std::process::exit(1);
-    }
     assert!(k >= 1, "k must be at least 1");
-    let challenge = match &challenge {
-        Some(hex) => aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --challenge: {e}")),
-        None => aipow::dev_challenge(),
+    // With --submit the registry supplies the whole challenge (its
+    // challenge/target/k override the local flags, like `bench`).
+    let registry_ch = match &submit {
+        Some(base) => Some(
+            client::fetch_ai_challenge(base)
+                .await
+                .unwrap_or_else(|e| panic!("fetch AI challenge: {e}")),
+        ),
+        None => None,
     };
-    let target = match &target {
-        Some(hex) => aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --target: {e}")),
-        None => [0xff; 32], // max target: every attempt wins
+    let (challenge, target, k) = match &registry_ch {
+        Some(rc) => (
+            aipow::parse_hex32(&rc.challenge)
+                .unwrap_or_else(|e| panic!("registry challenge: {e}")),
+            aipow::parse_hex32(&rc.target).unwrap_or_else(|e| panic!("registry target: {e}")),
+            rc.k,
+        ),
+        None => (
+            match &challenge {
+                Some(hex) => {
+                    aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --challenge: {e}"))
+                }
+                None => aipow::dev_challenge(),
+            },
+            match &target {
+                Some(hex) => aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --target: {e}")),
+                None => [0xff; 32], // max target: every attempt wins
+            },
+            k,
+        ),
     };
     let hw = hardware::detect();
     let ch = aipow::AiChallenge {
@@ -441,6 +460,35 @@ fn ai_bench(
             summary.wins.len(),
             dir.display()
         );
+    }
+
+    if let (Some(base), Some(rc)) = (&submit, &registry_ch) {
+        use base64::Engine;
+        let sub = client::AiSubmission {
+            nonce: rc.nonce.clone(),
+            hardware: client::hardware_summary(&hw),
+            prover_version: miner::NOCKCHAIN_PIN.into(),
+            grind_elapsed_ms: summary.grind_elapsed_ms,
+            wins: summary
+                .wins
+                .iter()
+                .map(|w| client::AiWinSubmission {
+                    extranonce: w.extranonce,
+                    cert_b64: base64::engine::general_purpose::STANDARD
+                        .encode(&w.submission_bytes),
+                })
+                .collect(),
+        };
+        match client::submit_ai_run(base, &sub).await {
+            Ok(id) => {
+                println!("submitted: ai run {id}");
+                println!("  {}/runs/{id}?track=ai", base.trim_end_matches('/'));
+            }
+            Err(e) => {
+                eprintln!("submission failed: {e}");
+                std::process::exit(1);
+            }
+        }
     }
 }
 
