@@ -137,6 +137,51 @@
   --submit https://nockmark.xyz</pre>
 </div>
 
+<div class="eyebrow">AI-PoW track (CPU reference)</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">POST</span>/challenge?track=ai</div>
+  <p>Mint an AI-PoW challenge for the Logos puzzle (INT8 tiled matmul +
+  recursive STARK certificate). Returns the kernel-minted <code>nonce</code>,
+  the 32-byte <code>challenge</code> derived from it
+  (<code>blake3("nockmark-ai-v1" ‖ nonce_le8)</code> — it seeds the matrices),
+  the jackpot <code>target</code> T<sub>b</sub>, <code>k</code> (wins
+  required), the fixed canonical <code>params</code>
+  (m=8, k=1024, n=8, noise_rank=64, tile=8), and the extranonce rule.</p>
+  <pre>curl -X POST 'https://nockmark.xyz/challenge?track=ai'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">POST</span>/run?track=ai</div>
+  <p>Submit k jackpot wins. Each win's certificate is verified end-to-end
+  before anything is recorded: statement re-derived from
+  <code>(challenge, extranonce)</code> — matrices re-synthesized, every
+  public input re-checked, <code>HASH_JACKPOT ≤ target</code> — then the
+  compact STARK verify against the server's own setup.</p>
+  <ul class="fields">
+    <li><code>nonce</code> — the challenge's nonce (decimal string)</li>
+    <li><code>wins[k]</code> — <code>{extranonce, cert_b64}</code>, extranonces strictly ascending (ground 0, 1, 2, …)</li>
+    <li><code>hardware</code>, <code>prover_version</code> — self-described labels (rates are not self-described)</li>
+    <li><code>grind_elapsed_ms</code> — client-measured grind window (proving excluded); displayed, never ranked</li>
+  </ul>
+  <pre>tock ai-bench --submit https://nockmark.xyz</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">GET</span>/leaderboard?track=ai</div>
+  <p>AI runs ranked by <code>verified_mac_per_sec_lb</code>. Expected grind
+  attempts per win at target T are <code>2^256 / (T+1)</code>, and each
+  attempt is F = 2<sup>16</sup> MAC-equivalents (one canonical
+  8×1024×8 tile), so:</p>
+  <ul class="fields">
+    <li><code>verified_mac_per_sec_lb</code> — k · (2^256/(T+1)) · 2^16 / server window (issue → submit, proving included); the ranked lower bound</li>
+    <li><code>grind_mac_per_sec</code> — same numerator over the client grind window; informational only</li>
+    <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 25.75e9, the consensus MAC↔ZK-attempt exchange rate</li>
+    <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (k wins is Poisson: 1/√k)</li>
+  </ul>
+  <pre>curl 'https://nockmark.xyz/leaderboard?track=ai'</pre>
+</div>
+
 <div class="endpoint">
   <div class="sigline"><span class="verb">429</span>rate limits</div>
   <p>The two POST routes are rate-limited per IP. Over-limit responses

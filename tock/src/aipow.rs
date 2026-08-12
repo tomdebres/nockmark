@@ -25,7 +25,9 @@ use ai_pow::zk_bridge::{
     prove_ai_pow_compact_recursive_certificate_with_prover_cache,
     AiPowCompactRecursiveProverCache,
 };
+use ai_pow_zk::composite_public::CompositePublicInputs;
 use ai_pow_zk::recursion::encode_compact_batch_recursive_certificate;
+use serde::{Deserialize, Serialize};
 
 /// Canonical single-tile AI-PoW shape (m=8, k=1024, n=8, r=64, tile=8) —
 /// fixed by protocol version; clients must use exactly this. The registry's
@@ -61,11 +63,40 @@ pub struct AiChallenge {
     pub k: u64,
 }
 
+/// The per-win submission blob the registry verifies (M5 Task 3 wire
+/// format): the compact certificate plus its claimed statement metadata
+/// (found tile, trace height, Layer-0 public inputs). Everything here is a
+/// CLAIM — the registry re-derives every slot it can from
+/// `(challenge, extranonce)` and cryptographically binds the rest via the
+/// compact STARK verify. This is the Task-1 spike's `Submission` shape with
+/// the field order preserved: postcard encodes fields in declaration order,
+/// so reordering or retyping any field is a wire-format break.
+#[derive(Serialize, Deserialize)]
+pub struct AiCertBlob {
+    /// Attempt nonce bytes: the extranonce as exactly 8 LE bytes
+    /// ([`AI_NONCE_RULE`]).
+    pub nonce: Vec<u8>,
+    /// Claimed solved tile index (always 0 for the canonical single-tile
+    /// shape; the registry re-derives it).
+    pub found_idx: u32,
+    /// Claimed Layer-0 trace height (checked against the schedule-derived
+    /// value).
+    pub trace_height: usize,
+    /// Claimed Layer-0 public inputs (each re-derivable slot is compared).
+    pub pis: CompositePublicInputs,
+    /// Compact recursive certificate, canonical postcard bytes (< 150 KB
+    /// consensus cap).
+    pub cert_bytes: Vec<u8>,
+}
+
 /// One jackpot win with its compact recursive certificate.
 pub struct AiWin {
     pub extranonce: u64,
     /// Canonical postcard bytes of the compact certificate (< 150 KB cap).
     pub cert_bytes: Vec<u8>,
+    /// Postcard bytes of the full [`AiCertBlob`] (certificate + statement
+    /// metadata) — base64 this into `cert_b64` for `POST /run?track=ai`.
+    pub submission_bytes: Vec<u8>,
     pub prove_ms: u64,
 }
 
@@ -204,12 +235,21 @@ pub fn prove_wins(ch: &AiChallenge, win_extranonces: &[u64]) -> Vec<AiWin> {
             prove_ms as f64 / 1000.0,
             cert_bytes.len()
         );
+        let blob = AiCertBlob {
+            nonce: nonce.to_vec(),
+            found_idx,
+            trace_height: run.trace_height(),
+            pis: run.public_inputs().clone(),
+            cert_bytes: cert_bytes.clone(),
+        };
+        let submission_bytes = postcard::to_allocvec(&blob).expect("encode submission blob");
         if cache.is_none() {
             cache = run.into_prover_cache();
         }
         wins.push(AiWin {
             extranonce,
             cert_bytes,
+            submission_bytes,
             prove_ms,
         });
     }

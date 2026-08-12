@@ -55,6 +55,7 @@ dependencies = [
  "ai-pow-zk",
  "bincode",
  "blake3",
+ "rayon",
  "sha2",
  "thiserror 2.0.18",
 ]
@@ -5148,12 +5149,17 @@ dependencies = [
 name = "nockmark-registry"
 version = "0.1.0"
 dependencies = [
+ "ai-pow",
+ "ai-pow-zk",
  "axum 0.7.9",
  "base64",
+ "bincode",
+ "blake3",
  "clap",
  "nockapp",
  "nockvm",
  "noun-serde",
+ "postcard",
  "reqwest 0.12.28",
  "roswell",
  "serde",
@@ -8374,11 +8380,14 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 name = "tock"
 version = "0.1.0"
 dependencies = [
+ "ai-pow",
+ "ai-pow-zk",
  "base64",
  "clap",
  "nockapp",
  "nockvm",
  "nockvm_macros",
+ "postcard",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
