@@ -28,12 +28,25 @@ Build instructions (pinned toolchain, kernel jams) are in
 Ubuntu box end-to-end in about 15 minutes. The benchmark itself is ~3
 minutes of proving on an M1.
 
+There is a second track for Logos's AI-PoW puzzle (INT8 tiled matmul +
+recursive STARK certificate — the first nockchain mining path with an
+open-source miner). Same trustless model, labeled **CPU reference** until
+GPU miners are published upstream:
+
+```sh
+./target/release/tock ai-bench --submit https://nockmark.xyz
+```
+
+Rates are MAC-equivalents/sec, convertible to ZK-attempt-equivalents at
+the consensus exchange rate; details at https://nockmark.xyz/api.
+
 ## How submissions are verified
 
 1. `POST /challenge` returns a nonce; your proofs are derived from it, so
    nothing can be precomputed.
-2. `tock` proves k=8 real mainnet workloads (proof version 2, pow-len 64,
-   miner kernel pinned at nockchain `31b8a015` and fingerprinted by sha256).
+2. `tock` proves k=8 real mainnet workloads (proof version 3 since the Zoe
+   fork, pow-len 64, miner kernel pinned at nockchain `1372f270` and
+   fingerprinted by sha256).
 3. `POST /run` submits the proofs. The registry verifies each STARK with a
    verifier kernel compiled from the same pinned nockchain tree, and
    computes proofs/sec from `submitted_at − issued_at` on its own clock.
@@ -54,7 +67,7 @@ rate-related is.
 - `docs/` — write-up, design notes, deploy runbook
 - `deploy/`, `Dockerfile`, `railway.json` — the deployed instance
 
-Building requires a nockchain checkout at `31b8a015` (path dependencies —
+Building requires a nockchain checkout at `1372f270` (path dependencies —
 expected location and toolchain pinning in `tock/README.md`).
 
 Runs from hardware not yet on the board are the most useful contribution —
