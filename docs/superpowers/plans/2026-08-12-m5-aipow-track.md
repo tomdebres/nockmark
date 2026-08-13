@@ -59,7 +59,12 @@ and drag in the whole node feature tree. Reference implementation:
   changes beyond a track tag on the mint.
 - `target` — benchmark jackpot target `T_b` (hex, 32 bytes). Fixed by the
   server, NOT chain difficulty: calibrated so a reference CPU finds a win
-  every ~15–20 s of grinding (expected attempts/win = 2^256 / (T_b · F)).
+  every ~15–20 s of grinding. CORRECTED post-live-fire (2026-08-13): the
+  mine/verify comparison is `hash ≤ T_b` **little-endian, unscaled** —
+  T_b is the effective threshold, so expected attempts/win =
+  2^256/(T_b+1), NOT 2^256/(T_b·F). The first deployed target (BE-encoded
+  2^243, reads as 2^11 LE ⇒ 2^229 attempts/win) ground for 23 h without a
+  win; production value is LE 2^243 (`…0800`), ~8191 attempts/win.
 - `k` — wins required (start k = 8, same as ZK track).
 - `params` — the canonical single-tile shape (m=8, k=1024, n=8, r=64,
   tile=8), fixed by protocol version; clients must use exactly these.
