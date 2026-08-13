@@ -88,15 +88,24 @@ pub fn challenge32(nonce: u64) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
-/// Default benchmark jackpot target `T_b`: 2^248 (big-endian `0x01` then
-/// 31 zero bytes), i.e. an expected 2^256/(T+1) = 256 attempts per win —
-/// a win every ~0.4 s at the measured ~600 attempts/s CPU grind rate.
-/// Deliberately VERY generous for now; real calibration (a win every
-/// ~15–20 s of grinding on a reference CPU) lands in Task 5 with the
-/// deploy. Override via `NOCKMARK_AI_TARGET` (64 hex chars, big-endian).
+/// Default benchmark jackpot target `T_b`.
+///
+/// Semantics (matched to upstream `hash_le_target`, the comparison BOTH
+/// `mine_with_context_at_target` and the verify path use): the 32 bytes
+/// are a **little-endian** 256-bit integer, and a win is `jackpot ≤ T_b`
+/// with NO shape-factor scaling — our `T_b` is the effective threshold
+/// directly (unlike consensus targets, which are scaled by `Θ = T·F` in
+/// `attempt_wins`). Getting this wrong is not hypothetical: the first
+/// deploy shipped a big-endian-intended 2^243 that reads as 2^11 in LE —
+/// expected attempts 2^229 per win, a grind that never ends.
+///
+/// Default: 2^248 (`bytes[31] = 1`), an expected 2^256/(T+1) = 256
+/// attempts per win — generous, for tests and dev loops. Production
+/// overrides via `NOCKMARK_AI_TARGET` (64 hex chars, LE); the deployed
+/// value is 2^243 (`…0800` — `bytes[30] = 8`) ≈ 8191 attempts per win.
 pub fn default_target() -> [u8; 32] {
     let mut t = [0u8; 32];
-    t[0] = 0x01;
+    t[31] = 0x01;
     t
 }
 
@@ -139,13 +148,14 @@ pub fn unix_ms() -> u64 {
 // Economics: attempts → MAC-equivalents → rates
 // ---------------------------------------------------------------------------
 
-/// Expected grind attempts per jackpot win at big-endian target `T`:
-/// `2^256 / (T+1)` (the jackpot hash is uniform over 2^256 and a win is
-/// `hash ≤ T`). f64 precision (~1e-16 relative) is far below the ±1σ
-/// Poisson noise floor of a k-win sample.
+/// Expected grind attempts per jackpot win at **little-endian** target
+/// `T`: `2^256 / (T+1)` (the jackpot hash is uniform over 2^256 and a win
+/// is `hash ≤ T`, compared LE — see [`default_target`]). f64 precision
+/// (~1e-16 relative) is far below the ±1σ Poisson noise floor of a k-win
+/// sample.
 pub fn expected_attempts_per_win(target: &[u8; 32]) -> f64 {
     let mut t = 0.0f64;
-    for &b in target {
+    for &b in target.iter().rev() {
         t = t * 256.0 + b as f64;
     }
     2f64.powi(256) / (t + 1.0)
@@ -612,7 +622,7 @@ mod tests {
     #[test]
     fn economics_worked_example() {
         let mut target = [0xffu8; 32];
-        target[0] = 0x7f; // T = 2^255 − 1, so T+1 = 2^255 exactly
+        target[31] = 0x7f; // LE: T = 2^255 − 1, so T+1 = 2^255 exactly
         assert_eq!(expected_attempts_per_win(&target), 2.0);
         let r = rates(4, &target, 4_000, 2_000);
         // signif4 rounds to 4 significant digits: 131072 → 131100 etc.
@@ -627,6 +637,17 @@ mod tests {
         assert_eq!(expected_attempts_per_win(&default_target()), 256.0);
         let max = [0xffu8; 32]; // T+1 rounds to 2^256 in f64: 1 attempt/win
         assert_eq!(expected_attempts_per_win(&max), 1.0);
+        // The deployed production target (LE hex "…0800", bytes[30]=8) is
+        // 2^243 ⇒ ~8191 expected attempts per win. Locks the LE parse: the
+        // same hex read big-endian would be 2^11 ⇒ 2^245 attempts — the
+        // grind-that-never-ends the first deploy shipped.
+        let prod = tock::aipow::parse_hex32(
+            "0000000000000000000000000000000000000000000000000000000000000800",
+        )
+        .unwrap();
+        // f64 can't see the +1 at 2^243 magnitude: exactly 2^13.
+        let attempts = expected_attempts_per_win(&prod);
+        assert_eq!(attempts, 8192.0, "LE parse of the production target");
     }
 
     #[test]

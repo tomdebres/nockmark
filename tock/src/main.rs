@@ -80,8 +80,9 @@ enum Command {
         /// Directory to write win certificates into (cert-<extranonce>.bin).
         #[arg(long)]
         out_dir: Option<PathBuf>,
-        /// Registry base URL for the AI track. The submission wire format
-        /// lands with M5 Task 3 — this flag errors until then.
+        /// Registry base URL for the AI track. When set, fetches the AI
+        /// challenge (its challenge/target/k override the local flags)
+        /// and submits the wins after proving.
         #[arg(long, value_name = "REGISTRY_URL")]
         submit: Option<String>,
     },

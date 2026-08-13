@@ -57,7 +57,10 @@ pub const MAC_EQUIV_PER_ATTEMPT: f64 = 65536.0;
 pub struct AiChallenge {
     /// 32-byte challenge minted by the registry (or a dev constant locally).
     pub challenge: [u8; 32],
-    /// Benchmark jackpot target T_b, big-endian byte-lexicographic bound.
+    /// Benchmark jackpot target T_b: a **little-endian** 256-bit bound
+    /// (upstream `hash_le_target`); a win is `jackpot ≤ T_b`, unscaled —
+    /// this is the effective threshold, not a consensus-style `T` that
+    /// `attempt_wins` would multiply by the shape factor.
     pub target: [u8; 32],
     /// Wins required before the grind window closes.
     pub k: u64,
