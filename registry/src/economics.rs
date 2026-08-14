@@ -205,6 +205,19 @@ async fn fetch_difficulty_rpc(
     if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
         return Err(format!("RPC error from {url}: {err}"));
     }
+    // Post-Logos (dual-pow) the tip can be an AI-PoW block, whose target
+    // is on a different scale entirely — deriving ZK difficulty from it
+    // would poison the estimates. Only accept ZK tips; a skipped tick
+    // keeps the cached value (tips alternate, so the next ZK tip is
+    // minutes away). Pre-Logos responses have no powType field: accept.
+    match v["result"]["powType"].as_str() {
+        None | Some("zk-pow") => {}
+        Some(other) => {
+            return Err(format!(
+                "tip is a {other} block — keeping cached ZK difficulty"
+            ))
+        }
+    }
     let target = v["result"]["target"]
         .as_str()
         .ok_or_else(|| format!("no string \"result.target\" field at {url}"))?;
