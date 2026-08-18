@@ -96,6 +96,7 @@ dependencies = [
  "nockvm",
  "nockvm_macros",
  "num_cpus",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

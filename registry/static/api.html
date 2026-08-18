@@ -179,6 +179,11 @@
     <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 25.75e9, the consensus MAC↔ZK-attempt exchange rate</li>
     <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (k wins is Poisson: 1/√k)</li>
   </ul>
+  <p>Runs are era-labeled by <code>prover_version</code>. Entries proved
+  before pin <code>c8d6b13e</code> used the pre-Pearl-V3 statement, whose
+  AIR was later hardened upstream (urange8 lookup fix). Cross-era rate
+  comparisons are fine — the workload cost is the same — but era-1
+  certificates were verified under the older constraint system.</p>
   <pre>curl 'https://nockmark.xyz/leaderboard?track=ai'</pre>
 </div>
 
