@@ -20,7 +20,7 @@ pub const DEFAULT_POW_LEN: u64 = 64;
 
 /// The nockchain commit the kernel jams are built from — the single
 /// source of truth for the prover_version submitted with runs.
-pub const NOCKCHAIN_PIN: &str = "1372f270";
+pub const NOCKCHAIN_PIN: &str = "c8d6b13e";
 
 /// Current mainnet proof version tag in the miner-kernel cause (%3 since
 /// the Zoe fork at height 119,400).

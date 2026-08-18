@@ -145,3 +145,24 @@ libraries (path deps, same pattern as nockapp/zkvm-jetpack):
 Risks: recursion-fork proof format marked "subject to change" (pin
 insulates us); prove RAM (4.3 GB) × concurrent submissions on the client
 only — server never proves; Railway RAM for verify path TBD in Task 1.
+
+## M6 Phase A (2026-08-14)
+
+Re-pinned nockchain 1372f270 → **c8d6b13e** (fork branch
+`m6-pearl-v3-pin`), picking up the production Pearl V3 statement.
+
+- **V3 seed change**: `canonical_noise_seeds_from_matrix_commitments`
+  now salts the noise seeds with the matmul shape — two new trailing
+  args `(m, n)`; we pass `AI_PARAMS.m, AI_PARAMS.n`. Only signature
+  change in our call graph.
+- **AIR hardening**: upstream fixed the urange8 lookup constraint
+  between the pins. Era-1 runs (prover_version 1372f270) were verified
+  under the older constraint system; workload cost is unchanged, so
+  cross-era rate comparisons stand. Caveat documented on /api.
+- **Verifier-context rotation**: the compact context encodes the AIR,
+  so the old 1 GB blob must never be loaded at the new pin. The context
+  path is now pin-scoped (`aipow-verifier-context-<PIN>.bin`); a re-pin
+  misses the file and rebuilds by proving (~25 s) on the first
+  submission — rotation is automatic, no volume surgery.
+- **No ZK kernel rebuild**: zkvm-jetpack/roswell/hoon consensus is
+  unchanged since 1372f270; existing jams carry over.

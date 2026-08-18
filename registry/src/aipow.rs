@@ -383,8 +383,16 @@ pub struct AiVerifier {
 
 impl AiVerifier {
     /// Where the serialized context lives on the persistent volume.
+    /// Pin-scoped: the context encodes the AIR at the pinned nockchain
+    /// commit, so a re-pin must never load an old blob (the pre-Pearl-V3
+    /// one is for a different constraint system). A new pin simply misses
+    /// this path and rebuilds by proving (~25 s) on the first submission —
+    /// rotation is automatic, old blobs are inert leftovers.
     pub fn context_path(data_dir: &Path) -> PathBuf {
-        data_dir.join("aipow-verifier-context.bin")
+        data_dir.join(format!(
+            "aipow-verifier-context-{}.bin",
+            tock::miner::NOCKCHAIN_PIN
+        ))
     }
 
     /// Load the compact verifier context from `data_dir` (the ~505 ms
@@ -565,6 +573,8 @@ pub fn verify_submission(
         &kappa,
         &commitments.h_a_chunk,
         &commitments.h_b_chunk,
+        AI_PARAMS.m,
+        AI_PARAMS.n,
     );
     let block_public = BlockPublic {
         tile_i,
