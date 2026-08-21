@@ -51,6 +51,16 @@ itself uses to compare AI work of different tile shapes — convertible to
 ZK-attempt-equivalents at the consensus exchange rate; details at
 https://nockmark.xyz/api.
 
+`ai-bench` measures your machine for ~2 s first and asks the registry for a
+difficulty **tier** sized so the grind takes about a minute — otherwise fast
+hardware finishes grinding in milliseconds and its ranked rate is nothing but
+the fixed certificate-proving cost inside the measured window. Pass
+`--attempts <n>` to pick the tier yourself (expected grind attempts per win) or
+`--target <hex>` to pin the difficulty outright; either skips the calibration.
+Choosing a tier cannot inflate a rate: an easy one earns less credit against
+that same fixed proving cost, and a hard one has to actually be ground out,
+attempt by verified attempt.
+
 ## How submissions are verified
 
 1. `POST /challenge` returns a nonce; your proofs are derived from it, so

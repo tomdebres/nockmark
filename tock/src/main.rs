@@ -76,14 +76,25 @@ enum Command {
         /// Defaults to a fixed dev constant for fully-local runs.
         #[arg(long)]
         challenge: Option<String>,
-        /// 32-byte jackpot target, hex. Defaults to the loosest target the
-        /// statement admits (every attempt wins) so a local run grinds in
-        /// milliseconds. NOTE the two statements price targets differently:
-        /// dense compares the jackpot against the target raw, canonical-MoE
-        /// against target × 2^16.
+        /// 32-byte jackpot target, hex. Pinning it here is itself a difficulty
+        /// choice, so it SKIPS the self-calibration below. NOTE the two
+        /// statements price targets differently: dense compares the jackpot
+        /// against the target raw, canonical-MoE against target × 2^16.
         #[arg(long)]
         target: Option<String>,
+        /// Difficulty tier: expected grind attempts per win. Skips the
+        /// self-calibration and asks for exactly this (rounded to the nearest
+        /// power of two and clamped to [2^12, 2^30]). Without it, and without
+        /// --target, ai-bench measures this machine for ~2 s and picks a tier
+        /// sized for ~60 s of grinding across all k wins — which is what lets
+        /// fast hardware be measured on its grind rate instead of on the fixed
+        /// certificate-proving cost.
+        #[arg(long)]
+        attempts: Option<u64>,
         /// Jackpot wins to find (each win costs a ~24 s certificate prove).
+        /// Also what the self-calibrated tier is sized for; with --submit the
+        /// registry's own k takes over for the run itself, so pass the
+        /// registry's k here if you want the grind budget to land exactly.
         #[arg(short, long, default_value_t = 1)]
         k: u64,
         /// Directory to write win certificates into (cert-<extranonce>.bin).
@@ -153,16 +164,24 @@ async fn main() {
             statement,
             challenge,
             target,
+            attempts,
             k,
             out_dir,
             submit,
         } => {
             let statement = client::AiStatement::parse(&statement)
                 .unwrap_or_else(|e| panic!("bad --statement: {e}"));
+            // Resolve the difficulty tier FIRST, before anything that starts a
+            // clock: the calibration grind must not land inside the reported
+            // grind window, nor (with --submit) inside the server window, which
+            // opens the moment the challenge is minted.
+            let tier = resolve_tier(statement, attempts, target.is_some(), k);
             match statement {
-                client::AiStatement::Dense => ai_bench(challenge, target, k, out_dir, submit).await,
+                client::AiStatement::Dense => {
+                    ai_bench(challenge, target, tier, k, out_dir, submit).await
+                }
                 client::AiStatement::CanonicalMoe => {
-                    ai_bench_moe(challenge, target, k, out_dir, submit).await
+                    ai_bench_moe(challenge, target, tier, k, out_dir, submit).await
                 }
             }
         }
@@ -385,24 +404,120 @@ fn print_human(r: &BenchResult) {
     );
 }
 
+/// Decide which difficulty tier this `ai-bench` run grinds at — expected grind
+/// attempts per win — and say so on stderr. `None` means "the caller pinned the
+/// difficulty with `--target`; leave it alone".
+///
+/// Runs BEFORE the challenge is minted and before either grind window opens, so
+/// the ~2 s of calibration is charged to nothing. `--attempts` skips the
+/// measurement entirely.
+///
+/// The heuristic is one line — measure, then size the grind for
+/// [`aipow::AI_TIER_GRIND_BUDGET_SECS`] across all k wins — and the reason it
+/// is safe to let the client run it is that the tier is not a claim. The
+/// registry re-derives the target from the tier, verifies every win against it,
+/// and credits exactly the attempts that target implies. A machine that
+/// overestimates itself simply grinds longer; one that underestimates itself
+/// reports a looser lower bound than it deserved.
+fn resolve_tier(
+    statement: client::AiStatement,
+    attempts: Option<u64>,
+    explicit_target: bool,
+    k: u64,
+) -> Option<u64> {
+    if let Some(requested) = attempts {
+        let granted = aipow::grant_attempts(requested);
+        if granted != requested {
+            eprintln!(
+                "--attempts {requested} rounded/clamped to the nearest tier: \
+                 2^{} ({granted})",
+                granted.ilog2()
+            );
+        }
+        return Some(granted);
+    }
+    if explicit_target {
+        return None;
+    }
+    let budget = std::time::Duration::from_secs_f64(aipow::AI_CALIBRATION_SECS);
+    let rate = match statement {
+        client::AiStatement::Dense => aipow::calibrate_attempts_per_sec(budget),
+        client::AiStatement::CanonicalMoe => aipow_moe::calibrate_moe_attempts_per_sec(budget),
+    };
+    let tier = aipow::tier_for_rate(rate, k);
+    eprintln!(
+        "calibration: {rate:.0} attempts/sec measured over {:.0}s \
+         -> tier 2^{} ({tier} expected attempts/win, ~{:.0}s of grinding for k={k})",
+        aipow::AI_CALIBRATION_SECS,
+        tier.ilog2(),
+        tier as f64 * k as f64 / rate.max(1e-9),
+    );
+    Some(tier)
+}
+
+/// Warn when the registry's k differs from the one the tier was sized for.
+///
+/// The tier has to be chosen before the challenge exists (it is a parameter OF
+/// the challenge request), so with `--submit` it is sized for the local `-k`.
+/// If the registry wants a different k the grind simply scales — the run is
+/// still correct, just longer or shorter than the budget — so this is a note,
+/// not an error.
+fn note_k_mismatch(registry_ch: Option<&client::AiRegistryChallenge>, tier: Option<u64>, k: u64) {
+    let Some(rc) = registry_ch else { return };
+    if rc.k == k || tier.is_none() {
+        return;
+    }
+    eprintln!(
+        "note: the tier was sized for k={k} but the registry wants k={}; \
+         expect the grind to take {:.1}x the ~{:.0}s budget",
+        rc.k,
+        rc.k as f64 / k as f64,
+        aipow::AI_TIER_GRIND_BUDGET_SECS,
+    );
+}
+
+/// Report the tier a run ended up at, after the registry has had its say.
+/// Printed for both statements, from the target actually being ground.
+fn print_tier(
+    statement: client::AiStatement,
+    target: &[u8; 32],
+    tier: Option<u64>,
+    registry_ch: Option<&client::AiRegistryChallenge>,
+) {
+    let expected = statement.expected_attempts_per_win(target);
+    println!("  tier:         {expected:.0} expected attempts/win");
+    match (registry_ch.and_then(|rc| rc.attempts), tier) {
+        (Some(granted), _) => println!("  granted:      2^{} by the registry", granted.ilog2()),
+        // An older registry ignores `?attempts=` and echoes nothing; we grind
+        // whatever target it sent, exactly as a pre-tier client would have.
+        (None, Some(_)) if registry_ch.is_some() => {
+            println!("  granted:      registry does not support tiers — using its target")
+        }
+        _ => {}
+    }
+}
+
 async fn ai_bench(
     challenge: Option<String>,
     target: Option<String>,
+    tier: Option<u64>,
     k: u64,
     out_dir: Option<PathBuf>,
     submit: Option<String>,
 ) {
     assert!(k >= 1, "k must be at least 1");
     // With --submit the registry supplies the whole challenge (its
-    // challenge/target/k override the local flags, like `bench`).
+    // challenge/target/k override the local flags, like `bench`); the tier is
+    // the one thing we ask it for.
     let registry_ch = match &submit {
         Some(base) => Some(
-            client::fetch_ai_challenge(base, client::AiStatement::Dense)
+            client::fetch_ai_challenge(base, client::AiStatement::Dense, tier)
                 .await
                 .unwrap_or_else(|e| panic!("fetch AI challenge: {e}")),
         ),
         None => None,
     };
+    note_k_mismatch(registry_ch.as_ref(), tier, k);
     let (challenge, target, k) = match &registry_ch {
         Some(rc) => (
             aipow::parse_hex32(&rc.challenge)
@@ -419,7 +534,14 @@ async fn ai_bench(
             },
             match &target {
                 Some(hex) => aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --target: {e}")),
-                None => [0xff; 32], // max target: every attempt wins
+                // A local run grinds the tier's own target, derived exactly as
+                // the registry would derive it — so a local benchmark and a
+                // submitted one measure the same workload. Without a tier
+                // (i.e. --target was given and parsed above) this is
+                // unreachable; the max target stays the fallback.
+                None => tier
+                    .and_then(|t| client::AiStatement::Dense.target_for_attempts(t))
+                    .unwrap_or([0xff; 32]), // max target: every attempt wins
             },
             k,
         ),
@@ -436,6 +558,12 @@ async fn ai_bench(
     println!("tock ai-bench — Logos AI-PoW, canonical single-tile shape (CPU reference)");
     println!("  challenge:    {}", aipow::hex32(&ch.challenge));
     println!("  target:       {}", aipow::hex32(&ch.target));
+    print_tier(
+        client::AiStatement::Dense,
+        &ch.target,
+        tier,
+        registry_ch.as_ref(),
+    );
     println!("  nonce rule:   {}", aipow::AI_NONCE_RULE);
     println!(
         "  hardware:     {} ({} cores)",
@@ -525,6 +653,7 @@ async fn ai_bench(
 async fn ai_bench_moe(
     challenge: Option<String>,
     target: Option<String>,
+    tier: Option<u64>,
     k: u64,
     out_dir: Option<PathBuf>,
     submit: Option<String>,
@@ -532,12 +661,13 @@ async fn ai_bench_moe(
     assert!(k >= 1, "k must be at least 1");
     let registry_ch = match &submit {
         Some(base) => Some(
-            client::fetch_ai_challenge(base, client::AiStatement::CanonicalMoe)
+            client::fetch_ai_challenge(base, client::AiStatement::CanonicalMoe, tier)
                 .await
                 .unwrap_or_else(|e| panic!("fetch AI challenge: {e}")),
         ),
         None => None,
     };
+    note_k_mismatch(registry_ch.as_ref(), tier, k);
     let (challenge, target, k) = match &registry_ch {
         Some(rc) => (
             aipow::parse_hex32(&rc.challenge)
@@ -554,9 +684,13 @@ async fn ai_bench_moe(
             },
             match &target {
                 Some(hex) => aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --target: {e}")),
-                // The loosest target this shape can scale — NOT all-FF, which
-                // is fail-closed here (see aipow_moe::max_moe_target).
-                None => aipow_moe::max_moe_target(),
+                // The tier's own target, derived under THIS statement's scaled
+                // semantics (2^(240−a), not the dense 2^(256−a)). Falling back
+                // to the loosest target this shape can scale — NOT all-FF,
+                // which is fail-closed here (see aipow_moe::max_moe_target).
+                None => tier
+                    .and_then(|t| client::AiStatement::CanonicalMoe.target_for_attempts(t))
+                    .unwrap_or_else(aipow_moe::max_moe_target),
             },
             k,
         ),
@@ -567,7 +701,10 @@ async fn ai_bench_moe(
         target,
         k,
     };
-    let expected_attempts = aipow_moe::expected_attempts_per_moe_win(&ch.target)
+    // Fail before grinding on a target this shape cannot scale (`T·F` is
+    // computed fail-closed upstream). The value itself is reported by
+    // `print_tier` below.
+    aipow_moe::expected_attempts_per_moe_win(&ch.target)
         .unwrap_or_else(|e| panic!("target is outside the canonical shape's domain: {e}"));
 
     let summary = aipow_moe::run(&ch);
@@ -575,9 +712,17 @@ async fn ai_bench_moe(
     println!("tock ai-bench — Logos AI-PoW, canonical MoE block (CPU reference)");
     println!("  statement:    {}", aipow_moe::STATEMENT_CANONICAL_MOE);
     println!("  challenge:    {}", aipow::hex32(&ch.challenge));
+    // The attempt count is printed by `print_tier` below, under this
+    // statement's own scaled reading of the target.
     println!(
-        "  target:       {} (x F = 2^16; {expected_attempts:.0} attempts/win expected)",
+        "  target:       {} (x F = 2^16)",
         aipow::hex32(&ch.target)
+    );
+    print_tier(
+        client::AiStatement::CanonicalMoe,
+        &ch.target,
+        tier,
+        registry_ch.as_ref(),
     );
     println!("  nonce rule:   {}", aipow_moe::AI_MOE_NONCE_RULE);
     println!(
