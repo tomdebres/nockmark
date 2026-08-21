@@ -235,7 +235,11 @@ def ssh(hid, command, timeout_s=3600, quiet=False):
     if marker >= 0:
         tail = raw[marker + len("__NM_RC__"):]
         digits = tail.split("__", 1)[0].strip()
-        rc = int(digits) if digits.isdigit() else 0
+        # A non-digit here means the sentinel we matched is the PTY's ECHO of
+        # the command (literal `$?`), not its output — i.e. the shell never
+        # executed anything. Reporting 0 for that is how a bootstrap that ran
+        # nothing looks like a clean success; fail loudly instead.
+        rc = int(digits) if digits.isdigit() else 125
         begin = raw.rfind("__NM_BEGIN__", 0, marker)
         start = begin + len("__NM_BEGIN__") if begin >= 0 else 0
         body = _clean(raw[start:marker])
@@ -248,12 +252,20 @@ def ssh(hid, command, timeout_s=3600, quiet=False):
 
 
 def wait_for_ssh_ready(hid, timeout_s=420):
-    """The proxy answers before the container is up; poll until a command
-    actually round-trips."""
+    """Poll until the pod actually EXECUTES a command.
+
+    The probe must be something the shell computes, never a literal: a PTY
+    echoes whatever is typed, so `echo NOCKMARK_READY` satisfies a
+    `"NOCKMARK_READY" in out` check the moment the proxy echoes it — before
+    any shell is running. That false ready is how a bootstrap ends up
+    talking to a container that is still starting, returning in seconds
+    having run nothing. `$((6*7))` cannot appear in the echo; only real
+    execution produces `NOCKMARK_42_READY`.
+    """
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        rc, out = ssh(hid, "echo NOCKMARK_READY", timeout_s=45, quiet=True)
-        if rc == 0 and "NOCKMARK_READY" in out:
+        rc, out = ssh(hid, "echo NOCKMARK_$((6*7))_READY", timeout_s=45, quiet=True)
+        if rc == 0 and "NOCKMARK_42_READY" in out:
             return True
         time.sleep(10)
-    raise RunPodError(f"pod {hid} never accepted a command in {timeout_s}s")
+    raise RunPodError(f"pod {hid} never executed a command in {timeout_s}s")
