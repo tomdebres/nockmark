@@ -164,8 +164,15 @@ def remote(command, timeout_s=3600):
 
 BOOTSTRAP = f"""
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq --no-install-recommends \
+# DPkg::Lock::Timeout, not a bare apt-get: RunPod's SSH proxy answers via
+# its OWN agent, so a shell is reachable while the container's startup
+# command is still running its apt-get to install sshd. Racing that lock is
+# how the first sweep attempt died on every card —
+# "E: Could not get lock /var/lib/dpkg/lock-frontend ... held by process
+# 549 (apt-get)" — so wait for it instead. Ten minutes is far longer than
+# the ~40 s the startup install takes, and costs nothing when it is free.
+apt-get -o DPkg::Lock::Timeout=600 update -qq
+apt-get -o DPkg::Lock::Timeout=600 install -y -qq --no-install-recommends \
     git protobuf-compiler build-essential curl xz-utils pkg-config libssl-dev ca-certificates
 # Pinned nightly from static.rust-lang.org tarballs. The CUDA image has no
 # rustup and installing one would be a second, unpinned source of truth; this
