@@ -90,6 +90,39 @@ use crate::aipow_moe::{
 /// have had to write ourselves.
 pub const GPU_DEVICE_ORDINAL: usize = 0;
 
+/// The device's own name, for the submitted hardware descriptor.
+///
+/// Read from `nvidia-smi` rather than through a CUDA device-properties
+/// binding: the tool is present on every CUDA host (it is how the driver
+/// is verified in the first place), and pulling in a binding to read one
+/// string would add a dependency to the `gpu` feature for nothing.
+///
+/// Returns `None` if the query fails for any reason; the caller then falls
+/// back to the host descriptor rather than inventing a device name.
+pub fn device_descriptor() -> Option<String> {
+    let out = std::process::Command::new("nvidia-smi")
+        .arg("--query-gpu=name,memory.total")
+        .arg("--format=csv,noheader")
+        .arg(format!("--id={GPU_DEVICE_ORDINAL}"))
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    // "NVIDIA GeForce RTX 3090, 24576 MiB" -> "NVIDIA GeForce RTX 3090 24GB"
+    let line = String::from_utf8_lossy(&out.stdout);
+    let line = line.lines().next()?.trim();
+    let (name, mem) = line.split_once(',')?;
+    let gib = mem
+        .trim()
+        .split_whitespace()
+        .next()
+        .and_then(|m| m.parse::<u64>().ok())
+        .map(|mib| format!(" {}GB", (mib + 512) / 1024))
+        .unwrap_or_default();
+    Some(format!("{}{gib}", name.trim()))
+}
+
 /// Default attempts per CUDA launch (`ai-bench --gpu-batch`).
 ///
 /// `32_768` is what upstream's production miner image ships as

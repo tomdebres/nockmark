@@ -459,6 +459,20 @@ impl Backend {
             ),
         }
     }
+
+    /// The descriptor submitted with the run. A GPU row has to name the
+    /// GPU: the board ranks both backends in one unit, so a row carrying
+    /// only its host CPU reads as that CPU having done the work.
+    fn hardware_descriptor(self, hw: &hardware::Hardware) -> String {
+        match self {
+            Self::Cpu => client::hardware_summary(hw),
+            #[cfg(feature = "gpu")]
+            Self::Gpu { .. } => client::hardware_summary_with_device(
+                aipow_gpu::device_descriptor().as_deref(),
+                hw,
+            ),
+        }
+    }
 }
 
 /// Resolve `--gpu` / `--gpu-batch` into a [`Backend`], failing loudly rather
@@ -902,7 +916,7 @@ async fn ai_bench_moe(
         use base64::Engine;
         let sub = client::AiSubmission {
             nonce: rc.nonce.clone(),
-            hardware: client::hardware_summary(&hw),
+            hardware: backend.hardware_descriptor(&hw),
             prover_version: miner::NOCKCHAIN_PIN.into(),
             grind_elapsed_ms: summary.grind_elapsed_ms,
             wins: summary
