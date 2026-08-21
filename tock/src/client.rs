@@ -292,6 +292,36 @@ pub async fn submit_ai_run(base: &str, sub: &AiSubmission) -> Result<u64, String
         .ok_or_else(|| format!("POST {url}: response missing run_id"))
 }
 
+/// Hardware descriptor for a run whose work was done by an accelerator.
+///
+/// The board ranks CPU and GPU rows in one MAC-equivalent unit, so the
+/// descriptor is the only thing telling a reader which machine produced a
+/// number. A GPU row labelled with its host CPU is actively misleading —
+/// the first live GPU submission came back as "Threadripper PRO 5975WX",
+/// which reads as a CPU posting 44 GMAC/s. So the device leads, and the
+/// host is what gets truncated when the two do not fit the registry's
+/// 128-byte cap.
+pub fn hardware_summary_with_device(
+    device: Option<&str>,
+    hw: &crate::hardware::Hardware,
+) -> String {
+    let host = hardware_summary(hw);
+    let Some(device) = device else { return host };
+    cap_128(&format!("{device} · host {host}"))
+}
+
+/// Truncate to the registry's 128-byte limit on a char boundary.
+fn cap_128(s: &str) -> String {
+    if s.len() <= 128 {
+        return s.to_string();
+    }
+    let mut cut = 128;
+    while !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    s[..cut].to_string()
+}
+
 /// Compact self-reported hardware descriptor, capped to the registry's
 /// 128-byte limit (truncated on a char boundary).
 pub fn hardware_summary(hw: &crate::hardware::Hardware) -> String {

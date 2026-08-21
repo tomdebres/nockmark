@@ -30,8 +30,7 @@ minutes of proving on an M1.
 
 There is a second track for Logos's AI-PoW puzzle (INT8 tiled matmul +
 recursive STARK certificate — the first nockchain mining path with an
-open-source miner). Same trustless model, labeled **CPU reference** until
-GPU miners are published upstream:
+open-source miner). Same trustless model:
 
 ```sh
 ./target/release/tock ai-bench --submit https://nockmark.xyz
@@ -39,12 +38,30 @@ GPU miners are published upstream:
 
 That track benchmarks two statements, on one board. The default is the
 single-tile `dense` benchmark; `--statement canonical-moe` benchmarks the
-canonical MoE block the production gateway-free miner actually submits (and
-the one the upcoming CUDA backend accelerates):
+canonical MoE block the production gateway-free miner actually submits:
 
 ```sh
 ./target/release/tock ai-bench --statement canonical-moe --submit https://nockmark.xyz
 ```
+
+On an NVIDIA GPU, `--gpu` grinds the canonical-MoE statement on upstream's
+CUDA backend. It needs a build with the `gpu` feature, which requires `nvcc`
+(the feature is off by default so CPU-only machines build unchanged), and the
+arch flags for your card — `compute_86`/`sm_86` for Ampere, `compute_89`/
+`sm_89` for Ada, `compute_120`/`sm_120` for Blackwell:
+
+```sh
+AI_POW_CUDA_ARCH=compute_86 AI_POW_CUDA_CODE=sm_86 \
+  cargo build --release --features gpu
+./target/release/tock ai-bench --statement canonical-moe --gpu \
+  --submit https://nockmark.xyz
+```
+
+Only the jackpot **search** moves to the device. Every win the GPU proposes is
+re-checked against the scalar oracle and certified by the same CPU prover a
+`--gpu`-less run uses, so a GPU row is verified by the registry in exactly the
+same way as a CPU one — the device is a filter, never a source of trust.
+`scripts/gpu_pod.py` is the RunPod recipe this was developed and measured on.
 
 Both rank together because rates are MAC-equivalents/sec — the unit consensus
 itself uses to compare AI work of different tile shapes — convertible to
