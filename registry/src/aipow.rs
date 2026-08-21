@@ -578,6 +578,14 @@ impl AiVerifier {
 /// the current one, and a failed removal logs rather than aborting boot.
 pub fn sweep_stale_contexts(data_dir: &Path) {
     const PREFIXES: [&str; 2] = ["aipow-verifier-context-", "aipow-moe-verifier-context-"];
+    /// Pre-Phase-A contexts carry no pin segment at all (M5 wrote a bare
+    /// `aipow-verifier-context.bin`). They are stale by definition — the
+    /// pin they were built at predates pin-scoping — and the prefix rule
+    /// above skips them, since it expects a trailing hyphen. Named
+    /// explicitly so the one blob most worth reclaiming isn't the one the
+    /// sweep walks past: this is exactly what happened on the live volume,
+    /// where 1.03 GB survived the first sweep.
+    const LEGACY: [&str; 2] = ["aipow-verifier-context.bin", "aipow-moe-verifier-context.bin"];
     let pin = tock::miner::NOCKCHAIN_PIN;
     let Ok(entries) = std::fs::read_dir(data_dir) else {
         return;
@@ -585,16 +593,21 @@ pub fn sweep_stale_contexts(data_dir: &Path) {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        let Some(prefix) = PREFIXES.iter().find(|p| name.starts_with(**p)) else {
-            continue;
+        let this_pin = if LEGACY.contains(&name) {
+            "pre-scoping"
+        } else {
+            let Some(prefix) = PREFIXES.iter().find(|p| name.starts_with(**p)) else {
+                continue;
+            };
+            if !name.ends_with(".bin") {
+                continue;
+            }
+            let this_pin = &name[prefix.len()..name.len() - ".bin".len()];
+            if this_pin == pin {
+                continue;
+            }
+            this_pin
         };
-        if !name.ends_with(".bin") {
-            continue;
-        }
-        let this_pin = &name[prefix.len()..name.len() - ".bin".len()];
-        if this_pin == pin {
-            continue;
-        }
         let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
         match std::fs::remove_file(entry.path()) {
             Ok(()) => eprintln!(
@@ -855,6 +868,11 @@ mod tests {
         write(&current_moe);
         write("aipow-verifier-context-1372f270.bin");
         write("aipow-moe-verifier-context-1372f270.bin");
+        // The pre-Phase-A names, which have no pin segment. The live
+        // volume carried one of these for a week after the first sweep
+        // shipped, because the prefix rule expects a trailing hyphen.
+        write("aipow-verifier-context.bin");
+        write("aipow-moe-verifier-context.bin");
         // Neighbours that must survive: the store, econ history, and an
         // unrelated file that merely shares a word with the prefixes.
         write("aipow-track.jsonl");
@@ -878,6 +896,8 @@ mod tests {
         );
         assert!(!left.contains("aipow-verifier-context-1372f270.bin"), "stale dense swept");
         assert!(!left.contains("aipow-moe-verifier-context-1372f270.bin"), "stale MoE swept");
+        assert!(!left.contains("aipow-verifier-context.bin"), "legacy dense swept");
+        assert!(!left.contains("aipow-moe-verifier-context.bin"), "legacy MoE swept");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
