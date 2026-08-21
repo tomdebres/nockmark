@@ -17,6 +17,25 @@
 //! unique, entropy-backed 64-bit nonce the 32-byte AI challenge is derived
 //! from.
 //!
+//! ## One track, two statements (M6 Phase B1)
+//!
+//! The AI track carries TWO statements — the M5 `dense` single-tile benchmark
+//! and the `canonical-moe` block mainnet AI miners actually run — on ONE
+//! leaderboard. They are not two boards because MAC-equivalents per second is
+//! exactly the unit consensus uses to compare heterogeneous AI work: by
+//! `ai_pow::difficulty`'s invariant D2, expected MAC-equivalents per block is
+//! `2^256 / T` *whatever tile shape the miner picked*, which is what makes
+//! `+compute-work-ai` a meaningful fork-choice weight. A dense row and a
+//! canonical-MoE row are therefore directly comparable, and ranking them apart
+//! would be inventing a distinction consensus does not make.
+//!
+//! What the two do NOT share is their arithmetic. The dense path compares the
+//! jackpot against `T` raw; the canonical path compares it against `T · F`.
+//! [`Statement`] is the discriminator that keeps every per-statement rule —
+//! target, expected attempts, verifier, grind rule, blob format — on the right
+//! side of that line, and it is persisted on every run so a re-calibration or a
+//! new statement cannot rewrite how an old row was scored.
+//!
 //! One consequence, documented rather than closed: an AI-minted nonce is
 //! also a valid pending ZK challenge in the kernel, so a client could
 //! submit BOTH an AI run (here) and a ZK run (kernel) against one mint.
@@ -46,7 +65,85 @@ use ai_pow_zk::recursion::{
 };
 use ai_pow_zk::CircuitConfig;
 use serde::{Deserialize, Serialize};
-use tock::aipow::{nonce_extranonce, AiCertBlob, AI_PARAMS, MAC_EQUIV_PER_ATTEMPT};
+use tock::aipow::{nonce_extranonce, AiCertBlob, AI_PARAMS};
+
+// ---------------------------------------------------------------------------
+// Statement discriminator
+// ---------------------------------------------------------------------------
+
+/// Which AI-PoW statement a challenge, submission or stored run is for.
+///
+/// Serializes as the wire strings `"dense"` / `"canonical-moe"`, and DEFAULTS
+/// to `Dense` on deserialize: every row written before M6 Phase B1 predates the
+/// field and was a dense run, so replaying `aipow-track.jsonl` reproduces them
+/// correctly without a migration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Statement {
+    #[default]
+    #[serde(rename = "dense")]
+    Dense,
+    #[serde(rename = "canonical-moe")]
+    CanonicalMoe,
+}
+
+impl Statement {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dense => tock::aipow_moe::STATEMENT_DENSE,
+            Self::CanonicalMoe => tock::aipow_moe::STATEMENT_CANONICAL_MOE,
+        }
+    }
+
+    /// Parse a wire value. Unknown statements are rejected rather than silently
+    /// treated as dense — a client asking for a statement this registry does
+    /// not implement must be told so, not scored under different rules.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            x if x == tock::aipow_moe::STATEMENT_DENSE => Ok(Self::Dense),
+            x if x == tock::aipow_moe::STATEMENT_CANONICAL_MOE => Ok(Self::CanonicalMoe),
+            other => Err(format!(
+                "unknown statement {other:?} (expected \"dense\" or \"canonical-moe\")"
+            )),
+        }
+    }
+
+    /// The grind rule advertised on this statement's challenge.
+    pub fn nonce_rule(self) -> &'static str {
+        match self {
+            Self::Dense => tock::aipow::AI_NONCE_RULE,
+            Self::CanonicalMoe => tock::aipow_moe::AI_MOE_NONCE_RULE,
+        }
+    }
+
+    /// MAC-equivalents one grind attempt costs for this statement's shape.
+    /// Both shapes open an 8×8 tile over `k = 1024`, so both are `2^16` — but
+    /// they are derived independently (see
+    /// [`tock::aipow_moe::MAC_EQUIV_PER_MOE_ATTEMPT`]) and a re-pin could move
+    /// one without the other.
+    pub fn mac_equiv_per_attempt(self) -> f64 {
+        match self {
+            Self::Dense => tock::aipow::MAC_EQUIV_PER_ATTEMPT,
+            Self::CanonicalMoe => tock::aipow_moe::MAC_EQUIV_PER_MOE_ATTEMPT,
+        }
+    }
+
+    /// Expected grind attempts per win at this statement's target semantics:
+    /// `2^256/(T+1)` for dense (raw comparison), `2^256/(T·F+1)` for canonical
+    /// MoE (scaled comparison). Conflating the two is a factor-`F` error in
+    /// every rate the board prints.
+    pub fn expected_attempts_per_win(self, target: &[u8; 32]) -> f64 {
+        match self {
+            Self::Dense => expected_attempts_per_win(target),
+            // A target the canonical shape cannot scale is impossible on a
+            // stored run (the submission that wrote it was verified against
+            // it), so the unreachable branch degrades to "1 attempt", which can
+            // only UNDERSTATE a rate — never inflate one.
+            Self::CanonicalMoe => {
+                tock::aipow_moe::expected_attempts_per_moe_win(target).unwrap_or(1.0)
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Challenge derivation & track configuration
@@ -175,9 +272,11 @@ fn signif4(x: f64) -> f64 {
 /// The computed board figures for one AI run.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct AiRates {
-    /// k · (2^256/(T+1)) · F over the SERVER window (issue → submit,
+    /// k · attempts-per-win · F over the SERVER window (issue → submit,
     /// certificate proving included) — a hard lower bound; the ranked
-    /// number. F = 2^16 MAC-equivalents per attempt (canonical tile).
+    /// number, and the figure both statements are ranked by. F = 2^16
+    /// MAC-equivalents per attempt for both shapes; attempts-per-win is
+    /// statement-specific (see [`Statement::expected_attempts_per_win`]).
     pub verified_mac_per_sec_lb: f64,
     /// Same numerator over the client-reported grind window (proving
     /// excluded) — display-only, like the ZK track's self_reported_pps.
@@ -189,10 +288,23 @@ pub struct AiRates {
     pub sigma_frac: f64,
 }
 
-/// Rates for a run of `k` wins at `target`, over the server-observed and
-/// client-reported windows (both in ms, both ≥ 1 by construction).
-pub fn rates(k: u64, target: &[u8; 32], server_window_ms: u64, grind_elapsed_ms: u64) -> AiRates {
-    let mac_total = k as f64 * expected_attempts_per_win(target) * MAC_EQUIV_PER_ATTEMPT;
+/// Rates for a run of `k` wins of `statement` at `target`, over the
+/// server-observed and client-reported windows (both in ms, both ≥ 1 by
+/// construction).
+///
+/// `statement` enters ONLY through the MAC-equivalent numerator — the windows,
+/// the exchange rate and the Poisson error bar are statement-independent. That
+/// is the whole reason both statements can share a board.
+pub fn rates(
+    statement: Statement,
+    k: u64,
+    target: &[u8; 32],
+    server_window_ms: u64,
+    grind_elapsed_ms: u64,
+) -> AiRates {
+    let mac_total = k as f64
+        * statement.expected_attempts_per_win(target)
+        * statement.mac_equiv_per_attempt();
     let verified = mac_total / (server_window_ms.max(1) as f64 / 1000.0);
     let grind = mac_total / (grind_elapsed_ms.max(1) as f64 / 1000.0);
     AiRates {
@@ -217,6 +329,10 @@ pub struct AiRunRecord {
     pub nonce: u64,
     pub hardware: String,
     pub prover_version: String,
+    /// Which statement's rules these wins were verified under. Absent in
+    /// rows written before M6 Phase B1, which were all dense.
+    #[serde(default)]
+    pub statement: Statement,
     /// Wins verified (k at submission time).
     pub k: u64,
     /// hex32 of the jackpot target the wins were verified against —
@@ -325,6 +441,7 @@ impl AiStore {
     pub fn commit_run(
         &mut self,
         nonce: u64,
+        statement: Statement,
         hardware: &str,
         prover_version: &str,
         target: &[u8; 32],
@@ -341,6 +458,7 @@ impl AiStore {
             nonce,
             hardware: hardware.to_string(),
             prover_version: prover_version.to_string(),
+            statement,
             k: win_extranonces.len() as u64,
             target: tock::aipow::hex32(target),
             grind_elapsed_ms,
@@ -634,7 +752,7 @@ mod tests {
         let mut target = [0xffu8; 32];
         target[31] = 0x7f; // LE: T = 2^255 − 1, so T+1 = 2^255 exactly
         assert_eq!(expected_attempts_per_win(&target), 2.0);
-        let r = rates(4, &target, 4_000, 2_000);
+        let r = rates(Statement::Dense, 4, &target, 4_000, 2_000);
         // signif4 rounds to 4 significant digits: 131072 → 131100 etc.
         assert_eq!(r.verified_mac_per_sec_lb, 131_100.0);
         assert_eq!(r.grind_mac_per_sec, 262_100.0);
@@ -688,7 +806,16 @@ mod tests {
         );
 
         let run = store
-            .commit_run(7, "hw", "pin", &default_target(), 500, vec![0, 3], 61_000)
+            .commit_run(
+                7,
+                Statement::Dense,
+                "hw",
+                "pin",
+                &default_target(),
+                500,
+                vec![0, 3],
+                61_000,
+            )
             .unwrap()
             .unwrap();
         assert_eq!(run.id, 1);
@@ -702,7 +829,16 @@ mod tests {
         );
         assert_eq!(
             store
-                .commit_run(7, "hw", "pin", &default_target(), 500, vec![0], 62_000)
+                .commit_run(
+                    7,
+                    Statement::Dense,
+                    "hw",
+                    "pin",
+                    &default_target(),
+                    500,
+                    vec![0],
+                    62_000,
+                )
                 .unwrap(),
             Err("nonce-used".into())
         );
@@ -722,6 +858,125 @@ mod tests {
         assert_eq!(reloaded.challenge_status(7, 71_000), Err("nonce-used".into()));
 
         std::fs::remove_file(&path).unwrap();
+    }
+
+
+    /// The statement round-trips through JSON and through the store, and an
+    /// ABSENT field replays as dense — the property that makes every M5 row in
+    /// `aipow-track.jsonl` reproduce its original score.
+    #[test]
+    fn statement_round_trips_and_defaults_to_dense() {
+        assert_eq!(
+            serde_json::to_value(Statement::CanonicalMoe).unwrap(),
+            serde_json::json!("canonical-moe")
+        );
+        assert_eq!(
+            serde_json::to_value(Statement::Dense).unwrap(),
+            serde_json::json!("dense")
+        );
+        assert_eq!(Statement::parse("dense").unwrap(), Statement::Dense);
+        assert_eq!(
+            Statement::parse("canonical-moe").unwrap(),
+            Statement::CanonicalMoe
+        );
+        assert!(Statement::parse("sparse").is_err(), "unknown is rejected");
+        assert!(Statement::parse("Dense").is_err(), "wire values are exact");
+        assert_eq!(Statement::default(), Statement::Dense);
+
+        // A pre-M6 stored row (no `statement` key) replays as dense.
+        let legacy = serde_json::json!({
+            "id": 3, "nonce": 9, "hardware": "hw", "prover_version": "pin",
+            "k": 4, "target": "00".repeat(32), "grind_elapsed_ms": 10,
+            "win_extranonces": [0, 1, 2, 3],
+            "issued_at_ms": 1, "submitted_at_ms": 2,
+        });
+        let run: AiRunRecord = serde_json::from_value(legacy).unwrap();
+        assert_eq!(run.statement, Statement::Dense);
+        // …and a round-trip through the record now carries it explicitly.
+        let v = serde_json::to_value(&run).unwrap();
+        assert_eq!(v["statement"], "dense");
+        assert_eq!(serde_json::from_value::<AiRunRecord>(v).unwrap(), run);
+
+        // The grind rules the two statements advertise are distinct.
+        assert_ne!(
+            Statement::Dense.nonce_rule(),
+            Statement::CanonicalMoe.nonce_rule()
+        );
+    }
+
+    /// The store keeps the statement per row, and a mixed board holds both.
+    #[test]
+    fn store_records_the_statement_per_run() {
+        let dir = std::env::temp_dir().join(format!(
+            "nockmark-aipow-statement-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mixed.jsonl");
+        let _ = std::fs::remove_file(&path);
+
+        let mut store = AiStore::load(path.clone()).unwrap();
+        store.record_challenge(1, 0).unwrap();
+        store.record_challenge(2, 0).unwrap();
+        store
+            .commit_run(1, Statement::Dense, "hw", "pin", &default_target(), 10, vec![0], 100)
+            .unwrap()
+            .unwrap();
+        store
+            .commit_run(
+                2,
+                Statement::CanonicalMoe,
+                "hw",
+                "pin",
+                &tock::aipow_moe::calibrated_moe_target(),
+                10,
+                vec![7],
+                100,
+            )
+            .unwrap()
+            .unwrap();
+
+        let reloaded = AiStore::load(path.clone()).unwrap();
+        assert_eq!(reloaded.runs(), store.runs());
+        let statements: Vec<Statement> = reloaded.runs().iter().map(|r| r.statement).collect();
+        assert_eq!(statements, vec![Statement::Dense, Statement::CanonicalMoe]);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    /// **The two statements price the same 32 bytes differently, and the board
+    /// must not conflate them.**
+    ///
+    /// At `T = 2^224` the dense rule expects `2^32` attempts per win and the
+    /// canonical rule `2^16` — a factor of exactly `F`. Scoring a canonical run
+    /// with the dense formula would inflate its rate 65 536×, which is the one
+    /// way a shared leaderboard could actually lie.
+    #[test]
+    fn statements_score_the_same_target_differently_by_exactly_f() {
+        let t = tock::aipow_moe::calibrated_moe_target(); // 2^224
+        let dense = Statement::Dense.expected_attempts_per_win(&t);
+        let moe = Statement::CanonicalMoe.expected_attempts_per_win(&t);
+        assert_eq!(dense, 2f64.powi(32));
+        assert_eq!(moe, 65_536.0);
+        assert_eq!(dense / moe, tock::aipow_moe::MAC_EQUIV_PER_MOE_ATTEMPT);
+
+        // Same k, same windows, same target: the rates differ by F too.
+        let d = rates(Statement::Dense, 4, &t, 4_000, 2_000);
+        let m = rates(Statement::CanonicalMoe, 4, &t, 4_000, 2_000);
+        // signif4 rounds both figures, so compare within its 4-digit slack.
+        let ratio = d.verified_mac_per_sec_lb / m.verified_mac_per_sec_lb;
+        let f = tock::aipow_moe::MAC_EQUIV_PER_MOE_ATTEMPT;
+        assert!((ratio - f).abs() <= 0.001 * f, "ratio {ratio} vs F {f}");
+        // Everything statement-independent is identical — that is what makes
+        // one board legitimate.
+        assert_eq!(d.sigma_frac, m.sigma_frac);
+
+        // Worked canonical example: k=2 wins at the shipped target over a 4 s
+        // server window = 2 · 65536 · 65536 MAC-equiv / 4 s.
+        let r = rates(Statement::CanonicalMoe, 2, &t, 4_000, 4_000);
+        assert_eq!(
+            r.verified_mac_per_sec_lb,
+            signif4(2.0 * 65_536.0 * 65_536.0 / 4.0)
+        );
     }
 
     #[test]

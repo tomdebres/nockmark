@@ -19,6 +19,9 @@ roswell = { path = "../../../nockchain/crates/roswell" }
 # the production rayon prover; `recursion` = compact batch-STARK cert APIs.
 ai-pow = { path = "../../../nockchain/crates/ai-pow", features = ["zk", "parallel"] }
 ai-pow-zk = { path = "../../../nockchain/crates/ai-pow-zk", features = ["recursion"] }
+# M6 Phase B: canonical-MoE statement re-derivation (`canonical_moe_statement_parts`)
+# lives behind ai-pow-miner's `node` feature, same as the client's grind path.
+ai-pow-miner = { path = "../../../nockchain/crates/ai-pow-miner", features = ["node"] }
 # Wire codec of the AI submission blob (same codec family the compact
 # certificate uses upstream).
 postcard = { version = "1.1.3", features = ["alloc"] }

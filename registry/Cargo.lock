@@ -5151,6 +5151,7 @@ name = "nockmark-registry"
 version = "0.1.0"
 dependencies = [
  "ai-pow",
+ "ai-pow-miner",
  "ai-pow-zk",
  "axum 0.7.9",
  "base64",
@@ -8382,6 +8383,7 @@ name = "tock"
 version = "0.1.0"
 dependencies = [
  "ai-pow",
+ "ai-pow-miner",
  "ai-pow-zk",
  "base64",
  "clap",

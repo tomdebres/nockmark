@@ -80,6 +80,13 @@ pub struct AppState {
     /// Benchmark jackpot target T_b (NOCKMARK_AI_TARGET; generous default
     /// until Task 5 calibrates it).
     pub ai_target: [u8; 32],
+    /// Canonical-MoE compact-STARK verifier context — a SEPARATE lazily-built,
+    /// pin-scoped setup from the dense one (see `aipow_moe::AiMoeVerifier`).
+    pub ai_moe_verifier: Arc<tokio::sync::OnceCell<Arc<crate::aipow_moe::AiMoeVerifier>>>,
+    /// Canonical-MoE jackpot target (NOCKMARK_AI_MOE_TARGET). Priced in
+    /// MAC-equivalents and scaled by F at compare time, so it is NOT
+    /// interchangeable with `ai_target`.
+    pub ai_moe_target: [u8; 32],
 }
 
 impl AppState {
@@ -113,6 +120,8 @@ impl AppState {
             ai_verifier: Arc::new(tokio::sync::OnceCell::new()),
             ai_k: crate::aipow::k_from_env(),
             ai_target: crate::aipow::target_from_env(),
+            ai_moe_verifier: Arc::new(tokio::sync::OnceCell::new()),
+            ai_moe_target: crate::aipow_moe::moe_target_from_env(),
         })
     }
 }
@@ -167,15 +176,38 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// `?track=ai` selects the M5 AI-PoW track on the shared routes.
+/// `?track=ai` selects the AI-PoW track on the shared routes.
 fn is_ai_track(q: &std::collections::HashMap<String, String>) -> bool {
     q.get("track").map(String::as_str) == Some("ai")
+}
+
+/// `?statement=` selects which AI-PoW statement, within the one AI track.
+/// Absent means `dense`, so every M5 request keeps its exact meaning.
+fn statement_from_query(
+    q: &std::collections::HashMap<String, String>,
+) -> Result<crate::aipow::Statement, String> {
+    match q.get("statement") {
+        Some(s) => crate::aipow::Statement::parse(s),
+        None => Ok(crate::aipow::Statement::Dense),
+    }
 }
 
 async fn new_challenge(
     State(st): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
+    // Validate the query BEFORE minting: an unknown statement must not consume
+    // a nonce (or, worse, silently hand back a dense one). Only meaningful on
+    // the AI track — the ZK path ignores `?statement=` exactly as it always
+    // has.
+    let statement = if is_ai_track(&q) {
+        match statement_from_query(&q) {
+            Ok(s) => s,
+            Err(e) => return bad(e),
+        }
+    } else {
+        crate::aipow::Statement::Dense
+    };
     let nonce = st
         .kernel
         .lock()
@@ -194,25 +226,61 @@ async fn new_challenge(
             .await
             .record_challenge(nonce, crate::aipow::unix_ms())
             .expect("ai store append failed");
-        let p = &tock::aipow::AI_PARAMS;
-        return Json(json!({
-            "nonce": nonce.to_string(),
-            "challenge": tock::aipow::hex32(&challenge),
-            "target": tock::aipow::hex32(&st.ai_target),
-            "k": st.ai_k,
-            "params": {
-                "m": p.m, "k": p.k, "n": p.n,
-                "noise_rank": p.noise_rank, "tile": p.tile,
-            },
-            "nonce_rule": tock::aipow::AI_NONCE_RULE,
-        }));
+        // Per-statement workload parameters. The challenge, k and window are
+        // shared; the shape, the target and the grind rule are not.
+        let (params, target) = match statement {
+            crate::aipow::Statement::Dense => {
+                let p = &tock::aipow::AI_PARAMS;
+                (
+                    json!({
+                        "m": p.m, "k": p.k, "n": p.n,
+                        "noise_rank": p.noise_rank, "tile": p.tile,
+                    }),
+                    st.ai_target,
+                )
+            }
+            crate::aipow::Statement::CanonicalMoe => {
+                let p = &tock::aipow_moe::AI_MOE_PARAMS;
+                (
+                    json!({
+                        "m": p.m, "k": p.k, "n": p.n,
+                        "noise_rank": p.noise_rank, "tile": p.tile,
+                        // The MoE half of the shape: the opened tile side and
+                        // the expert routing. Clients must use exactly these.
+                        "hw": tock::aipow_moe::AI_MOE_HW,
+                        "e": tock::aipow_moe::AI_MOE_E,
+                        "top_k": tock::aipow_moe::AI_MOE_TOP_K,
+                        // The jackpot is compared against target * F, not
+                        // against target — say so on the wire.
+                        "shape_work_factor": tock::aipow_moe::MAC_EQUIV_PER_MOE_ATTEMPT,
+                        "target_is_scaled_by_shape_work_factor": true,
+                    }),
+                    st.ai_moe_target,
+                )
+            }
+        };
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "nonce": nonce.to_string(),
+                "challenge": tock::aipow::hex32(&challenge),
+                "target": tock::aipow::hex32(&target),
+                "k": st.ai_k,
+                "statement": statement.as_str(),
+                "params": params,
+                "nonce_rule": statement.nonce_rule(),
+            })),
+        );
     }
-    Json(json!({
-        "nonce": nonce.to_string(),
-        "pow_len": tock::miner::DEFAULT_POW_LEN,
-        "k": st.k,
-        "nonce_rule": tock::nonce::NONCE_RULE,
-    }))
+    (
+        StatusCode::OK,
+        Json(json!({
+            "nonce": nonce.to_string(),
+            "pow_len": tock::miner::DEFAULT_POW_LEN,
+            "k": st.k,
+            "nonce_rule": tock::nonce::NONCE_RULE,
+        })),
+    )
 }
 
 #[derive(serde::Deserialize)]
@@ -236,7 +304,11 @@ async fn submit_run(
     use base64::Engine;
 
     if is_ai_track(&q) {
-        return submit_ai_run(st, body).await;
+        let statement = match statement_from_query(&q) {
+            Ok(s) => s,
+            Err(e) => return bad(e),
+        };
+        return submit_ai_run(st, statement, body).await;
     }
     let sub: RunSubmission = match serde_json::from_value(body) {
         Ok(sub) => sub,
@@ -321,12 +393,27 @@ struct AiRunSubmission {
     prover_version: String,
     grind_elapsed_ms: u64,
     wins: Vec<AiWinSubmission>,
+    /// Which statement these wins are for. Absent means dense, so an M5
+    /// client's body is still a valid dense submission. Takes precedence over
+    /// `?statement=` when both are present — the body is what the client
+    /// actually proved.
+    #[serde(default)]
+    statement: Option<String>,
 }
 
 /// `POST /run?track=ai` — same shape as the ZK path: validate cheaply,
 /// verify every certificate BEFORE touching any state, then commit.
+///
+/// `statement` (body field, or `?statement=`, default dense) selects the verify
+/// rules, the target and the blob format. It is chosen at SUBMIT time rather
+/// than pinned at mint time on purpose: the challenge is nothing but 32 bytes
+/// of server entropy, both statements bind it, and each is scored against its
+/// own target over the same server-observed window — so a client that mints
+/// once and proves either statement is doing full, honestly-measured work
+/// either way.
 async fn submit_ai_run(
     st: AppState,
+    query_statement: crate::aipow::Statement,
     body: serde_json::Value,
 ) -> (StatusCode, Json<serde_json::Value>) {
     use base64::Engine;
@@ -334,6 +421,17 @@ async fn submit_ai_run(
     let sub: AiRunSubmission = match serde_json::from_value(body) {
         Ok(sub) => sub,
         Err(e) => return bad(format!("bad submission body: {e}")),
+    };
+    let statement = match &sub.statement {
+        Some(s) => match crate::aipow::Statement::parse(s) {
+            Ok(s) => s,
+            Err(e) => return bad(e),
+        },
+        None => query_statement,
+    };
+    let target = match statement {
+        crate::aipow::Statement::Dense => st.ai_target,
+        crate::aipow::Statement::CanonicalMoe => st.ai_moe_target,
     };
     let Ok(nonce) = sub.nonce.parse::<u64>() else {
         return bad("nonce must be a decimal u64".into());
@@ -356,17 +454,27 @@ async fn submit_ai_run(
     if !crate::aipow::extranonces_strictly_ascending(&extranonces) {
         return bad("win extranonces must be strictly ascending".into());
     }
+    // The canonical-MoE grind rule numbers attempts with a u32 ordinal; a
+    // wider value cannot name an attempt and must not reach the verifier.
+    if statement == crate::aipow::Statement::CanonicalMoe
+        && extranonces.iter().any(|x| *x > u64::from(u32::MAX))
+    {
+        return bad("canonical-moe ordinals must fit in u32".into());
+    }
     // Decode + size-cap every blob before any expensive work.
+    let blob_max = match statement {
+        crate::aipow::Statement::Dense => crate::aipow::AI_SUBMISSION_BLOB_MAX,
+        crate::aipow::Statement::CanonicalMoe => crate::aipow_moe::AI_MOE_SUBMISSION_BLOB_MAX,
+    };
     let mut blobs: Vec<Vec<u8>> = Vec::with_capacity(sub.wins.len());
     for (i, win) in sub.wins.iter().enumerate() {
         let Ok(blob) = base64::engine::general_purpose::STANDARD.decode(&win.cert_b64) else {
             return bad(format!("win {i}: invalid base64"));
         };
-        if blob.len() > crate::aipow::AI_SUBMISSION_BLOB_MAX {
+        if blob.len() > blob_max {
             return bad(format!(
-                "win {i}: blob {} bytes exceeds {}",
+                "win {i}: blob {} bytes exceeds {blob_max}",
                 blob.len(),
-                crate::aipow::AI_SUBMISSION_BLOB_MAX
             ));
         }
         blobs.push(blob);
@@ -381,43 +489,80 @@ async fn submit_ai_run(
     {
         return bad(reason);
     }
-    // Verifier context: built/loaded once, lazily, on the blocking pool
-    // (first submission pays ~505 ms from the persisted blob or ~25 s
-    // build-by-proving; every later submission reuses the OnceCell).
-    let verifier = {
-        let data_dir = st.data_dir.clone();
-        match st
-            .ai_verifier
-            .get_or_try_init(|| async move {
-                tokio::task::spawn_blocking(move || {
-                    crate::aipow::AiVerifier::load_or_build(&data_dir).map(Arc::new)
+    // Verifier context: built/loaded once per statement, lazily, on the
+    // blocking pool (first submission of a statement pays the load from its
+    // persisted blob or a build-by-proving; every later one reuses the
+    // OnceCell). The two statements own separate contexts.
+    enum AnyVerifier {
+        Dense(Arc<crate::aipow::AiVerifier>),
+        Moe(Arc<crate::aipow_moe::AiMoeVerifier>),
+    }
+    let verifier = match statement {
+        crate::aipow::Statement::Dense => {
+            let data_dir = st.data_dir.clone();
+            match st
+                .ai_verifier
+                .get_or_try_init(|| async move {
+                    tokio::task::spawn_blocking(move || {
+                        crate::aipow::AiVerifier::load_or_build(&data_dir).map(Arc::new)
+                    })
+                    .await
+                    .map_err(|e| format!("verifier init task failed: {e}"))?
                 })
                 .await
-                .map_err(|e| format!("verifier init task failed: {e}"))?
-            })
-            .await
-        {
-            Ok(v) => v.clone(),
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("ai verifier unavailable: {e}") })),
-                )
+            {
+                Ok(v) => AnyVerifier::Dense(v.clone()),
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": format!("ai verifier unavailable: {e}") })),
+                    )
+                }
+            }
+        }
+        crate::aipow::Statement::CanonicalMoe => {
+            let data_dir = st.data_dir.clone();
+            match st
+                .ai_moe_verifier
+                .get_or_try_init(|| async move {
+                    tokio::task::spawn_blocking(move || {
+                        crate::aipow_moe::AiMoeVerifier::load_or_build(&data_dir).map(Arc::new)
+                    })
+                    .await
+                    .map_err(|e| format!("moe verifier init task failed: {e}"))?
+                })
+                .await
+            {
+                Ok(v) => AnyVerifier::Moe(v.clone()),
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": format!("ai moe verifier unavailable: {e}") })),
+                    )
+                }
             }
         }
     };
-    // Verify every win (CPU-bound, ~79 ms each) on the blocking pool. The
-    // challenge is re-derived from the stored nonce — nothing
-    // challenge-shaped is taken from the client.
+    // Verify every win (CPU-bound) on the blocking pool. The challenge is
+    // re-derived from the stored nonce — nothing challenge-shaped is taken
+    // from the client.
     let challenge = crate::aipow::challenge32(nonce);
     for (i, (win, blob)) in sub.wins.iter().zip(blobs).enumerate() {
-        let verifier = verifier.clone();
-        let target = st.ai_target;
-        let extranonce = win.extranonce;
-        let verify_result = tokio::task::spawn_blocking(move || {
-            verifier.verify(&challenge, &target, extranonce, &blob)
-        })
-        .await;
+        let attempt = win.extranonce;
+        let verify_result = match &verifier {
+            AnyVerifier::Dense(v) => {
+                let v = v.clone();
+                tokio::task::spawn_blocking(move || v.verify(&challenge, &target, attempt, &blob))
+                    .await
+            }
+            AnyVerifier::Moe(v) => {
+                let v = v.clone();
+                // Range-checked above, so the cast is exact.
+                let ordinal = attempt as u32;
+                tokio::task::spawn_blocking(move || v.verify(&challenge, &target, ordinal, &blob))
+                    .await
+            }
+        };
         match verify_result {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return bad(format!("win {i}: {e}")),
@@ -433,9 +578,10 @@ async fn submit_ai_run(
     // marks the nonce used, appends the run.
     match st.ai.lock().await.commit_run(
         nonce,
+        statement,
         &sub.hardware,
         &sub.prover_version,
-        &st.ai_target,
+        &target,
         sub.grind_elapsed_ms,
         extranonces,
         crate::aipow::unix_ms(),
@@ -475,7 +621,13 @@ fn to_ai_entry(run: crate::aipow::AiRunRecord) -> AiLeaderboardEntry {
     // The per-run persisted target; an unparseable one (torn line) falls
     // back to the max target, which can only UNDERSTATE the rate.
     let target = tock::aipow::parse_hex32(&run.target).unwrap_or([0xff; 32]);
-    let rates = crate::aipow::rates(run.k, &target, server_window_ms, run.grind_elapsed_ms);
+    let rates = crate::aipow::rates(
+        run.statement,
+        run.k,
+        &target,
+        server_window_ms,
+        run.grind_elapsed_ms,
+    );
     AiLeaderboardEntry {
         run,
         server_window_ms,

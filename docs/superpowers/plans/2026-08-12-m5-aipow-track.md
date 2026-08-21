@@ -166,3 +166,72 @@ Re-pinned nockchain 1372f270 → **c8d6b13e** (fork branch
   submission — rotation is automatic, no volume surgery.
 - **No ZK kernel rebuild**: zkvm-jetpack/roswell/hoon consensus is
   unchanged since 1372f270; existing jams carry over.
+
+## M6 Phase B1 (2026-08-21) — canonical-MoE statement, CPU-validated
+
+The AI track now benchmarks the statement mainnet GPU miners actually run,
+alongside the M5 dense one, on **one leaderboard**. Not a third board:
+`ai_pow::difficulty` invariant D2 says expected MAC-equivalents per block is
+`2^256/T` *independent of the tile shape the miner picked*, so
+MAC-equivalents/s is the unit in which the two are commensurable — the same
+unit consensus uses for AI fork-choice weight. Ranking them apart would invent
+a distinction consensus does not make.
+
+- **Shape** (upstream `CANONICAL_MATMUL_PARAMS` + `CANONICAL_HW/E/TOP_K`,
+  `crates/ai-pow-miner/src/run.rs`): m=64, k=1024, n=64, r=64, tile=8, hw=8,
+  e=2, top_k=1 — an 8×8 opened tile, 2 experts, top-1 routing.
+- **Work factor F = 2^16**, derived not guessed:
+  `dot_product_length(1024, 64) = 1024 − (1024 mod 64) = 1024`, so
+  `F = h·w·dot = 8·8·1024 = 65 536`. `tock::aipow_moe::moe_shape_work_factor`
+  recomputes it from `ai_pow::difficulty`, and unit tests pin it against BOTH
+  `PearlMiningConfig::shape_work_factor` (the miner's route) and
+  `PearlPublicProofParams::difficulty_adjustment_factor` (the verifier's), so a
+  re-pin that moves the shape breaks loudly.
+- **Threshold semantics: SCALED, unlike the dense path.**
+  `canonical_grind_threshold(T) = effective_jackpot_threshold(T, F) = T·F`, and
+  equals the consensus verifier's `nockchain_adjusted_target(T)`. The dense
+  benchmark compares `jackpot ≤ T` raw. So the same 32 bytes mean `F = 2^16`
+  times more grinding on the dense statement, and expected attempts per win is
+  `2^256/(T·F+1)` here. A test pins the gap explicitly. Corollary: an all-FF
+  MoE target is not "everything wins", it is a fail-closed ERROR
+  (`tock::aipow_moe::max_moe_target` is the loosest usable one).
+- **Grind rule `canonical-ordinal-v3`** (`AI_MOE_NONCE_RULE`), kept clearly
+  apart from the dense `extranonce-le8-v1`: the attempt selector is a u32
+  ordinal that offsets the synthetic Pearl header timestamp — there is no
+  8-byte nonce anywhere on this path (upstream asserts the nonce-folded jackpot
+  key must NOT appear).
+- **Target calibration**: measured 0.2947 ms/attempt (3394 attempts/s, M1 Max,
+  one thread, release — `tock::aipow_moe::tests::moe_grind_rate`, the peer of
+  upstream's `canonical_mining_costs`). 2^16 = 65 536 attempts ≈ 19.3 s, so
+  `T_b = Θ/F = 2^240/2^16 = 2^224` (byte 28 = 0x01). Env
+  `NOCKMARK_AI_MOE_TARGET`; deliberately a separate variable from the dense
+  `NOCKMARK_AI_TARGET` because the two are not interchangeable.
+- **Verify route**: `zk_bridge::verify_pearl_moe_compact_recursive_certificate`
+  — the public proof half of the consensus accept path
+  (`certificate_noun::verify_decoded_ai_pow_pearl_merge_compact_moe_artifact_…`,
+  which is `pub(crate)` and takes the noun/jam wire form). The registry
+  reassembles the rest of that recipe around it: `verify_pearl_moe_compatible_work`
+  (envelope + routing binding + the `jackpot ≤ T·F` gate) and the
+  `pis.hash_jackpot == statement.hash_jackpot` binding. **Stronger than the
+  node's**: the node authenticates a submitted statement via Pearl aux
+  inclusion; we never receive one — the whole statement is re-derived from
+  `(challenge, ordinal)` via `canonical_moe_statement_parts`, and the blob
+  carries only the certificate and its Layer-0 public inputs.
+- **Verifier context**: a second, separate, lazily-built, pin-scoped setup
+  (`aipow-moe-verifier-context-<PIN>.bin`, ~1.0 GB, ~27 s to build by proving).
+  Built through `prove_pearl_moe_compact_recursive_certificate` because
+  `prove_canonical_moe_block_at` discards its context and the variant that
+  returns it is `#[cfg(test)] pub(crate)`; the assembled inputs are unit-tested
+  against the crate's own ticket AND the build self-verifies its own
+  certificate before persisting. Volume cost is now ~2 GB of contexts.
+- **Wire**: `statement` (`"dense"` | `"canonical-moe"`) on the challenge, the
+  submission, the stored run and the board row. Absent = dense everywhere, so
+  M5 clients and M5 `aipow-track.jsonl` rows are unchanged and replay
+  identically.
+- **Build cost**: `ai-pow-miner`'s `canonical`/`run` modules are behind its
+  `node` feature, so both crates now link the gRPC/node tree. tock therefore
+  needs `protoc` at build time — added to `tock/setup-bench.sh`; the registry
+  Dockerfile already installed `protobuf-compiler`.
+- **Out of scope, Phase B2**: the CUDA backend. Nothing here touches it; the
+  grind goes through `PreparedCanonicalMoeTemplate` + the scalar-oracle
+  recheck, which is exactly the seam a GPU `SearchBackend` slots into.

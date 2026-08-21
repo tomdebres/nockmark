@@ -37,8 +37,19 @@ GPU miners are published upstream:
 ./target/release/tock ai-bench --submit https://nockmark.xyz
 ```
 
-Rates are MAC-equivalents/sec, convertible to ZK-attempt-equivalents at
-the consensus exchange rate; details at https://nockmark.xyz/api.
+That track benchmarks two statements, on one board. The default is the
+single-tile `dense` benchmark; `--statement canonical-moe` benchmarks the
+canonical MoE block the production gateway-free miner actually submits (and
+the one the upcoming CUDA backend accelerates):
+
+```sh
+./target/release/tock ai-bench --statement canonical-moe --submit https://nockmark.xyz
+```
+
+Both rank together because rates are MAC-equivalents/sec — the unit consensus
+itself uses to compare AI work of different tile shapes — convertible to
+ZK-attempt-equivalents at the consensus exchange rate; details at
+https://nockmark.xyz/api.
 
 ## How submissions are verified
 

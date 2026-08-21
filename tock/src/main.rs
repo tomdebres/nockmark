@@ -18,7 +18,7 @@ use nockvm::noun::{Atom, D, T};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use tock::{aipow, client, hardware, miner, nonce};
+use tock::{aipow, aipow_moe, client, hardware, miner, nonce};
 use tock::miner::DEFAULT_POW_LEN;
 
 #[derive(Parser)]
@@ -63,15 +63,24 @@ enum Command {
         #[arg(long, default_value = tock::miner::NOCKCHAIN_PIN)]
         prover_version: String,
     },
-    /// Benchmark the Logos AI-PoW puzzle (M5 track, CPU reference): grind
-    /// extranonces, prove a compact recursive certificate per jackpot win.
+    /// Benchmark the Logos AI-PoW puzzle (CPU reference): grind attempts,
+    /// prove a compact recursive certificate per jackpot win. `--statement`
+    /// picks which AI-PoW statement to benchmark; both rank on the one AI
+    /// board, in MAC-equivalents per second.
     AiBench {
+        /// Which statement to benchmark: `dense` (M5, single-tile) or
+        /// `canonical-moe` (the block mainnet AI miners actually run).
+        #[arg(long, default_value = "dense")]
+        statement: String,
         /// 32-byte challenge, hex (the registry challenge lands here later).
         /// Defaults to a fixed dev constant for fully-local runs.
         #[arg(long)]
         challenge: Option<String>,
-        /// 32-byte jackpot target, hex. Defaults to all-FF (max target:
-        /// every attempt wins) so a local run grinds in milliseconds.
+        /// 32-byte jackpot target, hex. Defaults to the loosest target the
+        /// statement admits (every attempt wins) so a local run grinds in
+        /// milliseconds. NOTE the two statements price targets differently:
+        /// dense compares the jackpot against the target raw, canonical-MoE
+        /// against target × 2^16.
         #[arg(long)]
         target: Option<String>,
         /// Jackpot wins to find (each win costs a ~24 s certificate prove).
@@ -141,12 +150,22 @@ async fn main() {
             .await
         }
         Command::AiBench {
+            statement,
             challenge,
             target,
             k,
             out_dir,
             submit,
-        } => ai_bench(challenge, target, k, out_dir, submit).await,
+        } => {
+            let statement = client::AiStatement::parse(&statement)
+                .unwrap_or_else(|e| panic!("bad --statement: {e}"));
+            match statement {
+                client::AiStatement::Dense => ai_bench(challenge, target, k, out_dir, submit).await,
+                client::AiStatement::CanonicalMoe => {
+                    ai_bench_moe(challenge, target, k, out_dir, submit).await
+                }
+            }
+        }
         Command::Prove {
             nonce,
             kernel,
@@ -378,7 +397,7 @@ async fn ai_bench(
     // challenge/target/k override the local flags, like `bench`).
     let registry_ch = match &submit {
         Some(base) => Some(
-            client::fetch_ai_challenge(base)
+            client::fetch_ai_challenge(base, client::AiStatement::Dense)
                 .await
                 .unwrap_or_else(|e| panic!("fetch AI challenge: {e}")),
         ),
@@ -479,6 +498,150 @@ async fn ai_bench(
                         .encode(&w.submission_bytes),
                 })
                 .collect(),
+            // Omitted on the wire: an M5-identical dense submission.
+            statement: None,
+        };
+        match client::submit_ai_run(base, &sub).await {
+            Ok(id) => {
+                println!("submitted: ai run {id}");
+                println!("  {}/runs/{id}?track=ai", base.trim_end_matches('/'));
+            }
+            Err(e) => {
+                eprintln!("submission failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+/// `tock ai-bench --statement canonical-moe`: the same shape of run as
+/// [`ai_bench`], against the canonical MoE block mainnet AI miners submit.
+///
+/// The two differ only in the workload and the target semantics (see
+/// `tock::aipow_moe`): the ordinal grind rule replaces the LE8 extranonce rule,
+/// and the jackpot is compared against `target · F`, not `target`. Everything
+/// downstream — the server window, the MAC-equivalent arithmetic, the board —
+/// is shared, which is the point: both statements rank together.
+async fn ai_bench_moe(
+    challenge: Option<String>,
+    target: Option<String>,
+    k: u64,
+    out_dir: Option<PathBuf>,
+    submit: Option<String>,
+) {
+    assert!(k >= 1, "k must be at least 1");
+    let registry_ch = match &submit {
+        Some(base) => Some(
+            client::fetch_ai_challenge(base, client::AiStatement::CanonicalMoe)
+                .await
+                .unwrap_or_else(|e| panic!("fetch AI challenge: {e}")),
+        ),
+        None => None,
+    };
+    let (challenge, target, k) = match &registry_ch {
+        Some(rc) => (
+            aipow::parse_hex32(&rc.challenge)
+                .unwrap_or_else(|e| panic!("registry challenge: {e}")),
+            aipow::parse_hex32(&rc.target).unwrap_or_else(|e| panic!("registry target: {e}")),
+            rc.k,
+        ),
+        None => (
+            match &challenge {
+                Some(hex) => {
+                    aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --challenge: {e}"))
+                }
+                None => aipow_moe::dev_challenge(),
+            },
+            match &target {
+                Some(hex) => aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --target: {e}")),
+                // The loosest target this shape can scale — NOT all-FF, which
+                // is fail-closed here (see aipow_moe::max_moe_target).
+                None => aipow_moe::max_moe_target(),
+            },
+            k,
+        ),
+    };
+    let hw = hardware::detect();
+    let ch = aipow_moe::AiMoeChallenge {
+        challenge,
+        target,
+        k,
+    };
+    let expected_attempts = aipow_moe::expected_attempts_per_moe_win(&ch.target)
+        .unwrap_or_else(|e| panic!("target is outside the canonical shape's domain: {e}"));
+
+    let summary = aipow_moe::run(&ch);
+
+    println!("tock ai-bench — Logos AI-PoW, canonical MoE block (CPU reference)");
+    println!("  statement:    {}", aipow_moe::STATEMENT_CANONICAL_MOE);
+    println!("  challenge:    {}", aipow::hex32(&ch.challenge));
+    println!(
+        "  target:       {} (x F = 2^16; {expected_attempts:.0} attempts/win expected)",
+        aipow::hex32(&ch.target)
+    );
+    println!("  nonce rule:   {}", aipow_moe::AI_MOE_NONCE_RULE);
+    println!(
+        "  hardware:     {} ({} cores)",
+        hw.cpu_model.as_deref().unwrap_or("unknown CPU"),
+        hw.logical_cores
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".into())
+    );
+    println!(
+        "  grind:        {} win(s) in {:.2}s, {} attempts",
+        summary.wins.len(),
+        summary.grind_elapsed_ms as f64 / 1000.0,
+        summary.total_attempts
+    );
+    println!(
+        "  grind rate:   {:.1} attempts/sec ({:.1} MMAC-equiv/s at F=2^16)",
+        summary.attempts_per_sec,
+        summary.attempts_per_sec * aipow_moe::MAC_EQUIV_PER_MOE_ATTEMPT / 1e6
+    );
+    let prove_ms: Vec<u64> = summary.wins.iter().map(|w| w.prove_ms).collect();
+    let min = prove_ms.iter().min().copied().unwrap_or(0);
+    let max = prove_ms.iter().max().copied().unwrap_or(0);
+    let mean = prove_ms.iter().sum::<u64>() as f64 / prove_ms.len().max(1) as f64;
+    println!("  cert prove:   min {min} ms / mean {mean:.0} ms / max {max} ms (outside window)");
+    for w in &summary.wins {
+        println!(
+            "  win:          ordinal {} — cert {} bytes, proved in {} ms",
+            w.ordinal,
+            w.cert_bytes.len(),
+            w.prove_ms
+        );
+    }
+
+    if let Some(dir) = &out_dir {
+        std::fs::create_dir_all(dir).expect("could not create --out-dir");
+        for w in &summary.wins {
+            let path = dir.join(format!("moe-cert-{}.bin", w.ordinal));
+            std::fs::write(&path, &w.cert_bytes).expect("could not write certificate");
+        }
+        println!(
+            "  certs:        {} written to {}",
+            summary.wins.len(),
+            dir.display()
+        );
+    }
+
+    if let (Some(base), Some(rc)) = (&submit, &registry_ch) {
+        use base64::Engine;
+        let sub = client::AiSubmission {
+            nonce: rc.nonce.clone(),
+            hardware: client::hardware_summary(&hw),
+            prover_version: miner::NOCKCHAIN_PIN.into(),
+            grind_elapsed_ms: summary.grind_elapsed_ms,
+            wins: summary
+                .wins
+                .iter()
+                .map(|w| client::AiWinSubmission {
+                    extranonce: w.ordinal as u64,
+                    cert_b64: base64::engine::general_purpose::STANDARD
+                        .encode(&w.submission_bytes),
+                })
+                .collect(),
+            statement: Some(aipow_moe::STATEMENT_CANONICAL_MOE),
         };
         match client::submit_ai_run(base, &sub).await {
             Ok(id) => {
