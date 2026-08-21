@@ -10,6 +10,9 @@ See also: [M2 Registry Deployment Runbook](../docs/superpowers/specs/2026-07-15-
 ## Prerequisites
 
 - The nockchain checkout at `../../../nockchain` (this crate uses path deps).
+- `protoc` on PATH (`brew install protobuf` / `apt install protobuf-compiler`).
+  The AI track's canonical-MoE client links `ai-pow-miner`'s `node` feature —
+  the canonical grind/prove path lives behind it — which pulls `nockapp-grpc`.
 - The pinned nightly toolchain (`nightly-2026-04-03`). On this machine it
   lives at `~/.rustup/toolchains/nightly-2026-04-03-aarch64-apple-darwin/bin`
   (installed from static.rust-lang.org tarballs; there is no rustup here).

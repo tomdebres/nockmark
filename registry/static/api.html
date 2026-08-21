@@ -144,11 +144,32 @@
   <p>Mint an AI-PoW challenge for the Logos puzzle (INT8 tiled matmul +
   recursive STARK certificate). Returns the kernel-minted <code>nonce</code>,
   the 32-byte <code>challenge</code> derived from it
-  (<code>blake3("nockmark-ai-v1" ‖ nonce_le8)</code> — it seeds the matrices),
-  the jackpot <code>target</code> T<sub>b</sub>, <code>k</code> (wins
-  required), the fixed canonical <code>params</code>
-  (m=8, k=1024, n=8, noise_rank=64, tile=8), and the extranonce rule.</p>
-  <pre>curl -X POST 'https://nockmark.xyz/challenge?track=ai'</pre>
+  (<code>blake3("nockmark-ai-v1" ‖ nonce_le8)</code>), the jackpot
+  <code>target</code> T<sub>b</sub>, <code>k</code> (wins required), the fixed
+  <code>params</code>, the <code>statement</code>, and the grind rule.</p>
+  <p><code>?statement=</code> selects which AI-PoW statement to be challenged
+  on. It defaults to <code>dense</code>, so a request without it means exactly
+  what it always did.</p>
+  <ul class="fields">
+    <li><code>dense</code> — the single-tile statement (m=8, k=1024, n=8,
+      noise_rank=64, tile=8), matrices seeded from the challenge. Grind rule
+      <code>extranonce-le8-v1</code>: attempts are extranonces 0, 1, 2, …
+      encoded as 8 little-endian bytes, and a win is
+      <code>jackpot ≤ target</code>, unscaled.</li>
+    <li><code>canonical-moe</code> — the canonical MoE (GROUPED_GEMM) block the
+      production gateway-free miner submits, and the one the upcoming CUDA
+      backend accelerates: m=64, k=1024, n=64, noise_rank=64, tile=8, with
+      <code>hw=8</code>, <code>e=2</code>, <code>top_k=1</code>. The challenge
+      binds through the Pearl header's aux commitment. Grind rule
+      <code>canonical-ordinal-v3</code>: attempts are u32 ordinals 0, 1, 2, …
+      that offset the header timestamp — <b>not</b> an 8-byte nonce. A win is
+      <code>jackpot ≤ target × F</code> with F = 2<sup>16</sup>, so the same
+      32-byte target means F times less grinding here than on the dense
+      statement. The response says so explicitly:
+      <code>params.shape_work_factor</code> and
+      <code>params.target_is_scaled_by_shape_work_factor</code>.</li>
+  </ul>
+  <pre>curl -X POST 'https://nockmark.xyz/challenge?track=ai&amp;statement=canonical-moe'</pre>
 </div>
 
 <div class="endpoint">
@@ -160,21 +181,36 @@
   compact STARK verify against the server's own setup.</p>
   <ul class="fields">
     <li><code>nonce</code> — the challenge's nonce (decimal string)</li>
-    <li><code>wins[k]</code> — <code>{extranonce, cert_b64}</code>, extranonces strictly ascending (ground 0, 1, 2, …)</li>
+    <li><code>statement</code> — <code>dense</code> (default when absent) or <code>canonical-moe</code>; picks the verify rules, the target and the blob format</li>
+    <li><code>wins[k]</code> — <code>{extranonce, cert_b64}</code>, strictly ascending (ground 0, 1, 2, …). For <code>canonical-moe</code> the field carries the u32 ordinal.</li>
     <li><code>hardware</code>, <code>prover_version</code> — self-described labels (rates are not self-described)</li>
     <li><code>grind_elapsed_ms</code> — client-measured grind window (proving excluded); displayed, never ranked</li>
   </ul>
-  <pre>tock ai-bench --submit https://nockmark.xyz</pre>
+  <p>For <code>canonical-moe</code> the submission carries nothing but the
+  certificate and its public inputs: the whole statement — Pearl header,
+  mining config, matrix commitments, routing, opened indices, jackpot — is
+  re-derived here from <code>(challenge, ordinal)</code> and the jackpot is
+  gated at <code>target × F</code> before the compact STARK verify.</p>
+  <pre>tock ai-bench --statement canonical-moe --submit https://nockmark.xyz</pre>
 </div>
 
 <div class="endpoint">
   <div class="sigline"><span class="verb">GET</span>/leaderboard?track=ai</div>
-  <p>AI runs ranked by <code>verified_mac_per_sec_lb</code>. Expected grind
-  attempts per win at target T are <code>2^256 / (T+1)</code>, and each
-  attempt is F = 2<sup>16</sup> MAC-equivalents (one canonical
-  8×1024×8 tile), so:</p>
+  <p>Both statements rank on this one board, by
+  <code>verified_mac_per_sec_lb</code>. They share it because MAC-equivalents
+  is precisely the unit consensus uses to compare AI work of different shapes:
+  expected MAC-equivalents per block is <code>2^256 / T</code> whatever tile
+  shape the miner picked, which is what makes the AI puzzle's fork-choice
+  weight meaningful in the first place. Each attempt is F = 2<sup>16</sup>
+  MAC-equivalents (an 8×8 tile over k=1024) on both statements; what differs is
+  the attempt count, because the target semantics differ — <code>2^256/(T+1)</code>
+  for <code>dense</code>, <code>2^256/(T·F+1)</code> for
+  <code>canonical-moe</code>. Every row carries its own <code>statement</code>
+  and its own <code>target</code>, so a re-calibration cannot rewrite how an
+  older row was scored.</p>
   <ul class="fields">
-    <li><code>verified_mac_per_sec_lb</code> — k · (2^256/(T+1)) · 2^16 / server window (issue → submit, proving included); the ranked lower bound</li>
+    <li><code>statement</code> — <code>dense</code> or <code>canonical-moe</code></li>
+    <li><code>verified_mac_per_sec_lb</code> — k · attempts-per-win · 2^16 / server window (issue → submit, proving included); the ranked lower bound</li>
     <li><code>grind_mac_per_sec</code> — same numerator over the client grind window; informational only</li>
     <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 25.75e9, the consensus MAC↔ZK-attempt exchange rate</li>
     <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (k wins is Poisson: 1/√k)</li>

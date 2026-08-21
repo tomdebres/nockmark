@@ -4,6 +4,7 @@
 //! M5 adds the AI-PoW track (`aipow`): challenge derivation, certificate
 //! verification, run store, and MAC-equivalent economics.
 pub mod aipow;
+pub mod aipow_moe;
 pub mod binding;
 pub mod economics;
 pub mod http;

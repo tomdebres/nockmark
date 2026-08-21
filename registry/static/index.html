@@ -137,7 +137,7 @@
     <table id="ai-board">
       <thead>
         <tr>
-          <th>#</th><th>hardware</th>
+          <th>#</th><th>hardware</th><th>statement</th>
           <th class="num">verified MAC-equiv/s</th><th class="num">grind-window</th>
           <th class="num">zk-attempt-equiv/s</th><th class="num">±σ</th><th>prover</th>
         </tr>
@@ -147,8 +147,11 @@
   </div>
   <p class="econ">The Logos AI-PoW puzzle (INT8 tiled matmul + recursive STARK
   certificate), verified the same way: every rate computed by this server from
-  certificates it checked, of challenges it derived. Labeled CPU reference
-  until GPU kernels exist upstream.</p>
+  certificates it checked, of challenges it derived. Two statements share this
+  board — <b>dense</b>, the single-tile benchmark, and <b>canonical MoE</b>, the
+  block mainnet AI miners actually run — because MAC-equivalents is the unit
+  consensus itself uses to compare work of different shapes. Labeled CPU
+  reference until GPU kernels exist upstream.</p>
 </section>
 
 <section class="submit">
@@ -236,12 +239,16 @@ fetch('/leaderboard?track=ai').then(r => r.json()).then(rows => {
     tr.innerHTML =
       `<td class="rank">${i + 1}</td>` +
       `<td class="hw"></td>` +
+      `<td class="quiet stmt"></td>` +
       `<td class="num verified">${human(r.verified_mac_per_sec_lb)}</td>` +
       `<td class="num quiet">${human(r.grind_mac_per_sec)}</td>` +
       `<td class="num quiet">${r.zk_attempt_equiv_per_sec.toExponential(2)}</td>` +
       `<td class="num quiet">±${Math.round(r.sigma_frac * 100)}%</td>` +
       `<td class="quiet">${r.prover_version}</td>`;
     tr.querySelector('.hw').textContent = r.hardware;
+    // Rows written before the statement existed were all dense.
+    tr.querySelector('.stmt').textContent =
+      (r.statement || 'dense') === 'canonical-moe' ? 'canonical MoE' : 'dense';
     tb.appendChild(tr);
   }
   document.getElementById('ai').hidden = false;

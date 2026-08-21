@@ -31,7 +31,11 @@ case "$ARCH" in
 esac
 
 sudo apt-get update -qq
-sudo apt-get install -y -qq build-essential clang pkg-config libssl-dev git curl xz-utils
+# protobuf-compiler: the AI track's canonical-MoE client links ai-pow-miner's
+# `node` feature (the canonical grind/prove path lives behind it), which pulls
+# nockapp-grpc — whose build.rs requires protoc.
+sudo apt-get install -y -qq build-essential clang pkg-config libssl-dev git curl xz-utils \
+  protobuf-compiler
 
 # --- pinned nightly toolchain, standalone (no rustup) --------------------
 TC="$HOME/rust-nightly"

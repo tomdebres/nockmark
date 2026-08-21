@@ -17,6 +17,8 @@ struct Cli {
 async fn main() {
     let cli = Cli::parse();
     std::fs::create_dir_all(&cli.data_dir).expect("create data dir");
+    // Reclaim ~1 GB per stale pin before anything else touches the volume.
+    nockmark_registry::aipow::sweep_stale_contexts(&cli.data_dir);
     let state = nockmark_registry::http::AppState::boot_with_k(&cli.kernel, &cli.data_dir, cli.k)
         .await
         .expect("boot registry");

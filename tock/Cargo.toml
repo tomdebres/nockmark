@@ -16,6 +16,12 @@ zkvm-jetpack = { path = "../../../nockchain/crates/zkvm-jetpack" }
 # final-layer batch-STARK certificate APIs.
 ai-pow = { path = "../../../nockchain/crates/ai-pow", features = ["zk", "parallel"] }
 ai-pow-zk = { path = "../../../nockchain/crates/ai-pow-zk", features = ["recursion"] }
+# M6 Phase B: the canonical-MoE statement mainnet GPU miners actually run.
+# `node` is the feature gate on upstream's `canonical` + `run` modules (the
+# grind template, the jackpot evaluator, the block prover and the grind
+# threshold all live behind it); it also pulls the gRPC/nockapp tree, which
+# tock already links for the ZK track.
+ai-pow-miner = { path = "../../../nockchain/crates/ai-pow-miner", features = ["node"] }
 # Wire codec of the AI-track submission blob (same codec family the compact
 # certificate uses upstream).
 postcard = { version = "1.1.3", features = ["alloc"] }
