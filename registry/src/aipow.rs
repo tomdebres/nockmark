@@ -505,7 +505,9 @@ impl AiVerifier {
     /// commit, so a re-pin must never load an old blob (the pre-Pearl-V3
     /// one is for a different constraint system). A new pin simply misses
     /// this path and rebuilds by proving (~25 s) on the first submission —
-    /// rotation is automatic, old blobs are inert leftovers.
+    /// rotation is automatic, old blobs are inert leftovers — which
+    /// [`sweep_stale_contexts`] deletes at boot, because they are ~1 GB
+    /// each and two accumulate per re-pin.
     pub fn context_path(data_dir: &Path) -> PathBuf {
         data_dir.join(format!(
             "aipow-verifier-context-{}.bin",
@@ -559,6 +561,48 @@ impl AiVerifier {
             extranonce,
             blob_bytes,
         )
+    }
+}
+
+/// Delete verifier-context blobs left behind by earlier pins.
+///
+/// Contexts are pin-scoped (~1 GB each, two per pin once the MoE
+/// statement is in play), so without a sweep every re-pin adds ~2 GB to
+/// a 5 GB volume. Stale blobs are inert: nothing re-verifies a stored
+/// run — verification happens once, at submission — and a context for
+/// any pin can be rebuilt by proving. Deleting is therefore safe and
+/// the only thing standing between us and a full disk.
+///
+/// Conservative by construction: only files matching the two known
+/// prefixes are considered, only when their pin segment differs from
+/// the current one, and a failed removal logs rather than aborting boot.
+pub fn sweep_stale_contexts(data_dir: &Path) {
+    const PREFIXES: [&str; 2] = ["aipow-verifier-context-", "aipow-moe-verifier-context-"];
+    let pin = tock::miner::NOCKCHAIN_PIN;
+    let Ok(entries) = std::fs::read_dir(data_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(prefix) = PREFIXES.iter().find(|p| name.starts_with(**p)) else {
+            continue;
+        };
+        if !name.ends_with(".bin") {
+            continue;
+        }
+        let this_pin = &name[prefix.len()..name.len() - ".bin".len()];
+        if this_pin == pin {
+            continue;
+        }
+        let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => eprintln!(
+                "aipow: swept stale verifier context {name} ({:.0} MB, pin {this_pin})",
+                bytes as f64 / (1024.0 * 1024.0)
+            ),
+            Err(e) => eprintln!("aipow: could not sweep {name}: {e}"),
+        }
     }
 }
 
@@ -784,6 +828,58 @@ mod tests {
         assert_eq!(signif4(0.000123456), 0.0001235);
         assert_eq!(signif4(0.0), 0.0);
         assert_eq!(signif4(1.0), 1.0);
+    }
+
+    #[test]
+    /// The sweep must remove exactly the other-pin context blobs and
+    /// nothing else — it runs at boot against the live volume, where the
+    /// neighbours are kernel state and the leaderboard's own JSONL.
+    #[test]
+    fn sweep_removes_only_other_pins_contexts() {
+        let pin = tock::miner::NOCKCHAIN_PIN;
+        // Thread id as well as pid: the harness can run this binary's
+        // tests on several threads, and a pid-only name would have two
+        // runs sweeping each other's fixture directory.
+        let dir = std::env::temp_dir().join(format!(
+            "nockmark-sweep-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |n: &str| std::fs::write(dir.join(n), b"x").unwrap();
+
+        let current = format!("aipow-verifier-context-{pin}.bin");
+        let current_moe = format!("aipow-moe-verifier-context-{pin}.bin");
+        write(&current);
+        write(&current_moe);
+        write("aipow-verifier-context-1372f270.bin");
+        write("aipow-moe-verifier-context-1372f270.bin");
+        // Neighbours that must survive: the store, econ history, and an
+        // unrelated file that merely shares a word with the prefixes.
+        write("aipow-track.jsonl");
+        write("econ-history.jsonl");
+        write("aipow-verifier-context-notes.txt");
+
+        sweep_stale_contexts(&dir);
+
+        let left: std::collections::BTreeSet<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(left.contains(&current), "current dense context kept");
+        assert!(left.contains(&current_moe), "current MoE context kept");
+        assert!(left.contains("aipow-track.jsonl"), "run store untouched");
+        assert!(left.contains("econ-history.jsonl"), "econ history untouched");
+        assert!(
+            left.contains("aipow-verifier-context-notes.txt"),
+            "non-.bin lookalike untouched"
+        );
+        assert!(!left.contains("aipow-verifier-context-1372f270.bin"), "stale dense swept");
+        assert!(!left.contains("aipow-moe-verifier-context-1372f270.bin"), "stale MoE swept");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
