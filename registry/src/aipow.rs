@@ -143,6 +143,22 @@ impl Statement {
             }
         }
     }
+
+    /// The jackpot target realizing a requested difficulty TIER — `attempts`
+    /// expected grind attempts per win — under this statement's own threshold
+    /// semantics. `None` unless `attempts` is a granted tier (see
+    /// [`tock::aipow::grant_attempts`]).
+    ///
+    /// Derived by inverting [`Self::expected_attempts_per_win`] itself, so a
+    /// tier cannot mean one thing when the challenge is issued and another when
+    /// the row is scored: the target the client grinds against, the target the
+    /// wins are verified against, and the attempt count the board credits all
+    /// come out of the same function. Given the factor-`F` asymmetry between the
+    /// two statements, that is worth more than the four lines of arithmetic it
+    /// replaces.
+    pub fn target_for_attempts(self, attempts: u64) -> Option<[u8; 32]> {
+        tock::aipow::target_for_attempts(attempts, |t| self.expected_attempts_per_win(t))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -250,12 +266,13 @@ pub fn unix_ms() -> u64 {
 /// is `hash ≤ T`, compared LE — see [`default_target`]). f64 precision
 /// (~1e-16 relative) is far below the ±1σ Poisson noise floor of a k-win
 /// sample.
+///
+/// Re-exported from [`tock::aipow`] rather than restated: the client derives
+/// difficulty tiers by inverting this exact function
+/// ([`tock::aipow::target_for_attempts`]), and two copies of it are two ways
+/// for a locally-run tier and a registry-issued one to drift apart.
 pub fn expected_attempts_per_win(target: &[u8; 32]) -> f64 {
-    let mut t = 0.0f64;
-    for &b in target.iter().rev() {
-        t = t * 256.0 + b as f64;
-    }
-    2f64.powi(256) / (t + 1.0)
+    tock::aipow::expected_attempts_per_win(target)
 }
 
 /// Round to 4 significant digits — rate magnitudes here span ~1e-6
@@ -286,6 +303,17 @@ pub struct AiRates {
     pub zk_attempt_equiv_per_sec: f64,
     /// ±1σ as a fraction of the rate: k wins is Poisson, so 1/√k.
     pub sigma_frac: f64,
+    /// Expected grind attempts per win at this run's statement and target —
+    /// the difficulty TIER the run was measured at, and the multiplier on the
+    /// MAC-equivalent numerator above.
+    ///
+    /// Surfaced because a rate is only comparable alongside it: two runs on the
+    /// same hardware at different tiers report different lower bounds, the
+    /// harder tier being the tighter one (it spends more of the server window
+    /// grinding and less of it proving). Derived from the stored target rather
+    /// than from a stored tier, so every row written before tiers existed
+    /// carries it too — the M5 dense rows come out at 2^13.
+    pub expected_attempts_per_win: f64,
 }
 
 /// Rates for a run of `k` wins of `statement` at `target`, over the
@@ -302,9 +330,8 @@ pub fn rates(
     server_window_ms: u64,
     grind_elapsed_ms: u64,
 ) -> AiRates {
-    let mac_total = k as f64
-        * statement.expected_attempts_per_win(target)
-        * statement.mac_equiv_per_attempt();
+    let expected_attempts_per_win = statement.expected_attempts_per_win(target);
+    let mac_total = k as f64 * expected_attempts_per_win * statement.mac_equiv_per_attempt();
     let verified = mac_total / (server_window_ms.max(1) as f64 / 1000.0);
     let grind = mac_total / (grind_elapsed_ms.max(1) as f64 / 1000.0);
     AiRates {
@@ -312,6 +339,9 @@ pub fn rates(
         grind_mac_per_sec: signif4(grind),
         zk_attempt_equiv_per_sec: signif4(verified / MAC_EQUIV_PER_ZK_ATTEMPT),
         sigma_frac: signif4(1.0 / (k as f64).sqrt()),
+        // NOT rounded: a granted tier is an exact power of two and the board
+        // renders it as `2^N`, which four significant digits would spoil.
+        expected_attempts_per_win,
     }
 }
 
@@ -347,14 +377,32 @@ pub struct AiRunRecord {
     pub submitted_at_ms: u64,
 }
 
+/// A minted, not-yet-consumed AI challenge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingChallenge {
+    /// Server-observed mint time; the AI window runs from here.
+    pub issued_at_ms: u64,
+    /// The jackpot target this challenge was ISSUED at, when the client
+    /// requested a difficulty tier (`?attempts=`).
+    ///
+    /// `None` for a challenge minted without one — including every challenge
+    /// minted before M6 Phase B2a, which is why it is an `Option` and not a
+    /// defaulted value. The submission path then falls back to the instance's
+    /// configured target, exactly as it always did. Recording it matters
+    /// because a tier'd challenge must be verified against the target the
+    /// client was told to grind, not against whatever the instance is
+    /// configured for now.
+    pub target: Option<[u8; 32]>,
+}
+
 /// Pending/used challenges + verified runs, one JSON event per line:
 /// `{"ev":"challenge",…}` on mint, `{"ev":"run",…}` on a verified
 /// submission. Unparseable lines (torn writes) are skipped at load, same
 /// policy as `economics::read_history`.
 pub struct AiStore {
     path: PathBuf,
-    /// nonce → issued_at_ms, for challenges minted but not yet consumed.
-    pending: HashMap<u64, u64>,
+    /// nonce → mint record, for challenges minted but not yet consumed.
+    pending: HashMap<u64, PendingChallenge>,
     used: HashSet<u64>,
     runs: Vec<AiRunRecord>,
     next_id: u64,
@@ -388,7 +436,20 @@ impl AiStore {
                 Some("challenge") => {
                     if let (Some(nonce), Some(t)) = (v["nonce"].as_u64(), v["issued_at_ms"].as_u64())
                     {
-                        store.pending.insert(nonce, t);
+                        // `target` is absent on every challenge minted before
+                        // M6 Phase B2a and on every untiered one since; an
+                        // unparseable one is treated the same way, which only
+                        // falls back to the configured target.
+                        let target = v["target"]
+                            .as_str()
+                            .and_then(|s| tock::aipow::parse_hex32(s).ok());
+                        store.pending.insert(
+                            nonce,
+                            PendingChallenge {
+                                issued_at_ms: t,
+                                target,
+                            },
+                        );
                     }
                 }
                 Some("run") => {
@@ -413,26 +474,46 @@ impl AiStore {
         writeln!(f, "{v}")
     }
 
-    /// Record a freshly minted challenge (server-observed issue time).
-    pub fn record_challenge(&mut self, nonce: u64, issued_at_ms: u64) -> std::io::Result<()> {
-        self.append(&serde_json::json!({
+    /// Record a freshly minted challenge (server-observed issue time), with the
+    /// target it was issued at when the client requested a difficulty tier.
+    ///
+    /// Untiered mints pass `None` and write no `target` key at all, so the
+    /// event line is byte-identical to the one M5 wrote — an important property
+    /// for an append-only log that is replayed at every boot.
+    pub fn record_challenge(
+        &mut self,
+        nonce: u64,
+        issued_at_ms: u64,
+        target: Option<[u8; 32]>,
+    ) -> std::io::Result<()> {
+        let mut ev = serde_json::json!({
             "ev": "challenge", "nonce": nonce, "issued_at_ms": issued_at_ms,
-        }))?;
-        self.pending.insert(nonce, issued_at_ms);
+        });
+        if let Some(t) = &target {
+            ev["target"] = serde_json::json!(tock::aipow::hex32(t));
+        }
+        self.append(&ev)?;
+        self.pending.insert(
+            nonce,
+            PendingChallenge {
+                issued_at_ms,
+                target,
+            },
+        );
         Ok(())
     }
 
-    /// Is `nonce` pending, unexpired and unused at `now_ms`? Returns its
-    /// issue time; error strings mirror the kernel's ZK reject reasons.
-    pub fn challenge_status(&self, nonce: u64, now_ms: u64) -> Result<u64, String> {
+    /// Is `nonce` pending, unexpired and unused at `now_ms`? Returns its mint
+    /// record; error strings mirror the kernel's ZK reject reasons.
+    pub fn challenge_status(&self, nonce: u64, now_ms: u64) -> Result<PendingChallenge, String> {
         if self.used.contains(&nonce) {
             return Err("nonce-used".into());
         }
-        let issued_at_ms = *self.pending.get(&nonce).ok_or("unknown-nonce")?;
-        if now_ms.saturating_sub(issued_at_ms) > AI_WINDOW_MS {
+        let pending = *self.pending.get(&nonce).ok_or("unknown-nonce")?;
+        if now_ms.saturating_sub(pending.issued_at_ms) > AI_WINDOW_MS {
             return Err("stale-nonce".into());
         }
-        Ok(issued_at_ms)
+        Ok(pending)
     }
 
     /// Atomically (under the caller's lock) re-check the challenge, mark
@@ -450,7 +531,7 @@ impl AiStore {
         now_ms: u64,
     ) -> std::io::Result<Result<AiRunRecord, String>> {
         let issued_at_ms = match self.challenge_status(nonce, now_ms) {
-            Ok(t) => t,
+            Ok(p) => p.issued_at_ms,
             Err(reason) => return Ok(Err(reason)),
         };
         let run = AiRunRecord {
@@ -913,8 +994,14 @@ mod tests {
         assert!(store.runs().is_empty(), "missing file is an empty store");
         assert_eq!(store.challenge_status(7, 0), Err("unknown-nonce".into()));
 
-        store.record_challenge(7, 1_000).unwrap();
-        assert_eq!(store.challenge_status(7, 2_000), Ok(1_000));
+        store.record_challenge(7, 1_000, None).unwrap();
+        assert_eq!(
+            store.challenge_status(7, 2_000),
+            Ok(PendingChallenge {
+                issued_at_ms: 1_000,
+                target: None
+            })
+        );
         assert_eq!(
             store.challenge_status(7, 1_000 + AI_WINDOW_MS + 1),
             Err("stale-nonce".into()),
@@ -960,8 +1047,12 @@ mod tests {
         );
 
         // A second pending challenge and a torn trailing line survive the
-        // reload; state is identical after replay.
-        store.record_challenge(9, 70_000).unwrap();
+        // reload; state is identical after replay. The second one carries a
+        // tier'd target, which must survive the replay too — otherwise a
+        // restart between mint and submit would verify the wins against the
+        // instance default instead of the target the client was told to grind.
+        let tiered = Statement::Dense.target_for_attempts(1 << 20).unwrap();
+        store.record_challenge(9, 70_000, Some(tiered)).unwrap();
         std::fs::OpenOptions::new()
             .append(true)
             .open(&path)
@@ -970,7 +1061,13 @@ mod tests {
         let reloaded = AiStore::load(path.clone()).unwrap();
         assert_eq!(reloaded.runs(), store.runs());
         assert_eq!(reloaded.next_id, 2);
-        assert_eq!(reloaded.challenge_status(9, 71_000), Ok(70_000));
+        assert_eq!(
+            reloaded.challenge_status(9, 71_000),
+            Ok(PendingChallenge {
+                issued_at_ms: 70_000,
+                target: Some(tiered)
+            })
+        );
         assert_eq!(reloaded.challenge_status(7, 71_000), Err("nonce-used".into()));
 
         std::fs::remove_file(&path).unwrap();
@@ -1032,8 +1129,8 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         let mut store = AiStore::load(path.clone()).unwrap();
-        store.record_challenge(1, 0).unwrap();
-        store.record_challenge(2, 0).unwrap();
+        store.record_challenge(1, 0, None).unwrap();
+        store.record_challenge(2, 0, None).unwrap();
         store
             .commit_run(1, Statement::Dense, "hw", "pin", &default_target(), 10, vec![0], 100)
             .unwrap()
@@ -1093,6 +1190,115 @@ mod tests {
             r.verified_mac_per_sec_lb,
             signif4(2.0 * 65_536.0 * 65_536.0 / 4.0)
         );
+    }
+
+    /// **Tier → target → tier round-trips exactly, for BOTH statements, across
+    /// the whole clamp range.**
+    ///
+    /// This is the property the whole feature rests on. A client asks for `n`
+    /// expected attempts per win; the registry derives a target from it and
+    /// sends only the target; the board later re-derives the attempt count from
+    /// that target and multiplies it into the MAC-equivalent numerator. If the
+    /// two directions disagreed by so much as a factor of two, every tier'd row
+    /// would be scored for work it did not do — in either direction.
+    #[test]
+    fn tier_round_trips_for_both_statements_across_the_clamp_range() {
+        let min = tock::aipow::AI_ATTEMPTS_MIN.ilog2();
+        let max = tock::aipow::AI_ATTEMPTS_MAX.ilog2();
+        assert_eq!((min, max), (12, 30));
+        for a in min..=max {
+            let tier = 1u64 << a;
+            for st in [Statement::Dense, Statement::CanonicalMoe] {
+                let target = st
+                    .target_for_attempts(tier)
+                    .unwrap_or_else(|| panic!("no target for {} tier 2^{a}", st.as_str()));
+                assert_eq!(
+                    st.expected_attempts_per_win(&target),
+                    tier as f64,
+                    "{} tier 2^{a}",
+                    st.as_str()
+                );
+                // …and it is the value the board actually credits.
+                let r = rates(st, 1, &target, 1_000, 1_000);
+                assert_eq!(r.expected_attempts_per_win, tier as f64);
+            }
+            // The same tier is a DIFFERENT target on the two statements —
+            // exactly F apart, because one comparison is scaled and one is not.
+            let dense = Statement::Dense.target_for_attempts(tier).unwrap();
+            let moe = Statement::CanonicalMoe.target_for_attempts(tier).unwrap();
+            assert_ne!(dense, moe, "tier 2^{a}");
+            assert_eq!(
+                Statement::Dense.expected_attempts_per_win(&moe) / tier as f64,
+                tock::aipow_moe::MAC_EQUIV_PER_MOE_ATTEMPT,
+                "tier 2^{a}: the MoE target read with the dense rule"
+            );
+        }
+    }
+
+    /// Clamping at both ends, and the fact that a clamped request is granted
+    /// (not rejected) — the client sees what it got from the echoed `attempts`.
+    #[test]
+    fn tier_requests_are_clamped_at_both_ends() {
+        use tock::aipow::{grant_attempts, AI_ATTEMPTS_MAX, AI_ATTEMPTS_MIN};
+        assert_eq!(grant_attempts(1), AI_ATTEMPTS_MIN);
+        assert_eq!(grant_attempts(u64::MAX), AI_ATTEMPTS_MAX);
+        for st in [Statement::Dense, Statement::CanonicalMoe] {
+            let easiest = st.target_for_attempts(grant_attempts(1)).unwrap();
+            let hardest = st.target_for_attempts(grant_attempts(u64::MAX)).unwrap();
+            assert_eq!(st.expected_attempts_per_win(&easiest), 4096.0);
+            assert_eq!(st.expected_attempts_per_win(&hardest), (1u64 << 30) as f64);
+            // A request outside the range yields no target at all if it is not
+            // put through `grant_attempts` first — the registry always does.
+            assert_eq!(st.target_for_attempts(1), None);
+            assert_eq!(st.target_for_attempts(u64::MAX), None);
+        }
+    }
+
+    /// **The non-gameability argument, as arithmetic.**
+    ///
+    /// Same machine, same fixed proving overhead, three tiers. The easy tier
+    /// scores LOWER (less MAC credit against the same overhead), so there is no
+    /// incentive to ask for one; the hard tier scores higher only because the
+    /// machine spent the window doing the extra work, and its ranked rate
+    /// converges from below on the honest grind rate rather than exceeding it.
+    #[test]
+    fn a_harder_tier_measures_closer_to_the_truth_and_never_above_it() {
+        // A machine that really does 3 M attempts/s, k=4 wins, ~25 s of
+        // certificate proving per win (outside the grind, inside the window).
+        let rate = 3.0e6;
+        let k = 4u64;
+        let prove_ms = k * 25_000;
+        let truth = rate * tock::aipow::MAC_EQUIV_PER_ATTEMPT;
+        let mut previous = 0.0;
+        for a in [13u32, 20, 28] {
+            let tier = 1u64 << a;
+            let target = Statement::Dense.target_for_attempts(tier).unwrap();
+            let grind_ms = ((k * tier) as f64 / rate * 1000.0).ceil() as u64;
+            let r = rates(Statement::Dense, k, &target, grind_ms + prove_ms, grind_ms);
+            // Never above the machine's real throughput…
+            assert!(
+                r.verified_mac_per_sec_lb <= truth * 1.001,
+                "tier 2^{a} reported {} above the true {truth}",
+                r.verified_mac_per_sec_lb
+            );
+            // …monotonically closer to it as the tier hardens…
+            assert!(
+                r.verified_mac_per_sec_lb > previous,
+                "tier 2^{a} did not improve on the easier tier"
+            );
+            previous = r.verified_mac_per_sec_lb;
+            // …while the grind-window figure sits at the machine's real rate at
+            // EVERY tier (a hair under, because the client rounds its window
+            // up). That is what "a tier only moves the grind/prove ratio inside
+            // the window" means: it changes how much of the truth the ranked
+            // lower bound can see, not the truth.
+            assert!(r.grind_mac_per_sec <= truth * 1.001, "tier 2^{a}");
+            assert!(r.grind_mac_per_sec >= truth * 0.99, "tier 2^{a}");
+        }
+        // The 2^13 tier — the order the CPU-calibrated target issues — recovers
+        // ~0.01% of this machine's real rate, which is the measurement failure
+        // tiers exist to fix. 2^28 recovers ~78% of it.
+        assert!(previous > 0.7 * truth, "2^28 recovers most of the rate");
     }
 
     #[test]

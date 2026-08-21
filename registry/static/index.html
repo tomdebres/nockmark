@@ -137,7 +137,7 @@
     <table id="ai-board">
       <thead>
         <tr>
-          <th>#</th><th>hardware</th><th>statement</th>
+          <th>#</th><th>hardware</th><th>statement</th><th class="num">tier</th>
           <th class="num">verified MAC-equiv/s</th><th class="num">grind-window</th>
           <th class="num">zk-attempt-equiv/s</th><th class="num">±σ</th><th>prover</th>
         </tr>
@@ -150,8 +150,13 @@
   certificates it checked, of challenges it derived. Two statements share this
   board — <b>dense</b>, the single-tile benchmark, and <b>canonical MoE</b>, the
   block mainnet AI miners actually run — because MAC-equivalents is the unit
-  consensus itself uses to compare work of different shapes. Labeled CPU
-  reference until GPU kernels exist upstream.</p>
+  consensus itself uses to compare work of different shapes. <b>Tier</b> is the
+  expected grind attempts per win the run was measured at — clients pick it, so
+  fast hardware can grind long enough to be measured rather than being drowned
+  out by the fixed certificate-proving cost inside the window. Picking a tier
+  cannot inflate a number: an easy tier earns less credit against that same
+  fixed cost, and a hard one has to actually be ground out, attempt by verified
+  attempt. Labeled CPU reference until GPU kernels exist upstream.</p>
 </section>
 
 <section class="submit">
@@ -230,6 +235,16 @@ const human = v => {
   return v.toPrecision(3);
 };
 
+// The difficulty tier a run was measured at, as expected grind attempts per
+// win. Granted tiers are powers of two, so they read as 2^N; a hand-set
+// target (and every row from before tiers existed) falls back to a figure.
+// Missing means a registry too old to report it at all.
+const tier = v => {
+  if (v == null) return '—';
+  const lg = Math.log2(v);
+  return Number.isInteger(lg) ? `2^${lg}` : human(v);
+};
+
 // AI-PoW track (M5): shown only once the endpoint has verified rows.
 fetch('/leaderboard?track=ai').then(r => r.json()).then(rows => {
   if (!Array.isArray(rows) || !rows.length) return;
@@ -240,6 +255,7 @@ fetch('/leaderboard?track=ai').then(r => r.json()).then(rows => {
       `<td class="rank">${i + 1}</td>` +
       `<td class="hw"></td>` +
       `<td class="quiet stmt"></td>` +
+      `<td class="num quiet">${tier(r.expected_attempts_per_win)}</td>` +
       `<td class="num verified">${human(r.verified_mac_per_sec_lb)}</td>` +
       `<td class="num quiet">${human(r.grind_mac_per_sec)}</td>` +
       `<td class="num quiet">${r.zk_attempt_equiv_per_sec.toExponential(2)}</td>` +

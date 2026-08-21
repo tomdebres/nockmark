@@ -51,7 +51,7 @@
 //! Certificate proving stays OUTSIDE the measured grind window, exactly as on
 //! the dense path (~25-30 s per win on CPU; a fixed overhead, not throughput).
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ai_pow::difficulty::{dot_product_length, shape_work_factor};
 use ai_pow::params::MatmulParams;
@@ -393,6 +393,40 @@ pub fn grind_moe(ch: &AiMoeChallenge) -> MoeGrindResult {
         total_attempts: attempts,
         attempts_per_sec: attempts as f64 / elapsed_s.max(1e-9),
     }
+}
+
+/// Measure this machine's canonical-MoE attempt rate: evaluate a throwaway
+/// template for `budget` and count attempts.
+///
+/// The peer of [`crate::aipow::calibrate_attempts_per_sec`] and subject to the
+/// same rule — run it BEFORE minting a challenge, because the server window
+/// opens at mint and a calibration inside it would be charged to the rate it
+/// exists to measure. No jackpot comparison at all here: on this path
+/// `template.evaluate` IS the attempt, so its cost is the whole measurement
+/// (and skipping the comparison removes any chance of a throwaway win reaching
+/// the prover).
+pub fn calibrate_moe_attempts_per_sec(budget: Duration) -> f64 {
+    let template = PreparedCanonicalMoeTemplate::new(
+        &AI_MOE_PARAMS,
+        AI_MOE_HW,
+        AI_MOE_E,
+        AI_MOE_TOP_K,
+        dev_challenge(),
+    )
+    .expect("PreparedCanonicalMoeTemplate::new");
+    let mut scratch = template.scratch();
+    let t0 = Instant::now();
+    let mut attempts: u64 = 0;
+    let mut ordinal: u32 = 0;
+    while t0.elapsed() < budget {
+        let _ = template.evaluate(ordinal, &mut scratch);
+        attempts += 1;
+        // Wrapping, not checked: a calibration that ran through the whole u32
+        // ordinal space would simply measure the same attempts again, which is
+        // still an honest rate.
+        ordinal = ordinal.wrapping_add(1);
+    }
+    attempts as f64 / t0.elapsed().as_secs_f64().max(1e-9)
 }
 
 // ---------------------------------------------------------------------------
@@ -789,6 +823,56 @@ mod tests {
                 "routing offsets"
             );
         }
+    }
+
+    /// **The same tier is a different 32 bytes on this statement.**
+    ///
+    /// tier → target → tier must round-trip across the whole clamp range here
+    /// too, and the target must sit exactly `log2(F) = 16` bits BELOW the dense
+    /// target for the same tier — because the canonical threshold is `T · F`,
+    /// not `T`. If these two ever coincided, one of the statements would be
+    /// grinding `F` times the work it was credited for.
+    #[test]
+    fn moe_tier_target_round_trip_across_the_clamp_range() {
+        use crate::aipow::{
+            expected_attempts_per_win, pow2_target, target_for_attempts, AI_ATTEMPTS_MAX,
+            AI_ATTEMPTS_MIN,
+        };
+        let moe_expected = |t: &[u8; 32]| expected_attempts_per_moe_win(t).unwrap_or(1.0);
+        for a in AI_ATTEMPTS_MIN.ilog2()..=AI_ATTEMPTS_MAX.ilog2() {
+            let tier = 1u64 << a;
+            let target = target_for_attempts(tier, moe_expected)
+                .unwrap_or_else(|| panic!("no target for canonical-MoE tier 2^{a}"));
+            assert_eq!(
+                expected_attempts_per_moe_win(&target).unwrap(),
+                tier as f64,
+                "canonical-MoE tier 2^{a} does not round-trip"
+            );
+            // Θ = T·F, so the tier's target is 2^(240−a), not 2^(256−a).
+            assert_eq!(target, pow2_target(240 - a).unwrap(), "MoE tier 2^{a}");
+            let dense = target_for_attempts(tier, expected_attempts_per_win).unwrap();
+            assert_ne!(dense, target, "the two statements must not share a target");
+            // Scoring the MoE tier's target with the dense formula overstates
+            // the work by exactly F — the M5 mistake, pinned here per tier.
+            assert_eq!(
+                expected_attempts_per_win(&target) / tier as f64,
+                MAC_EQUIV_PER_MOE_ATTEMPT
+            );
+        }
+        // The shipped calibrated target is itself the 2^16 tier.
+        assert_eq!(
+            target_for_attempts(1 << 16, moe_expected).unwrap(),
+            calibrated_moe_target()
+        );
+    }
+
+    /// The MoE calibration measures attempt cost and reports a positive rate.
+    /// Short budget — this is a unit test, not the measurement (that is
+    /// `moe_grind_rate`).
+    #[test]
+    fn moe_calibration_measures_a_positive_rate() {
+        let rate = calibrate_moe_attempts_per_sec(Duration::from_millis(150));
+        assert!(rate > 0.0 && rate.is_finite(), "rate {rate}");
     }
 
     /// A generous target wins on the first ordinals, and the winners survive

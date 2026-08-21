@@ -169,7 +169,35 @@
       <code>params.shape_work_factor</code> and
       <code>params.target_is_scaled_by_shape_work_factor</code>.</li>
   </ul>
-  <pre>curl -X POST 'https://nockmark.xyz/challenge?track=ai&amp;statement=canonical-moe'</pre>
+  <p><code>?attempts=</code> requests a difficulty <b>tier</b>: the expected
+  grind attempts per win you want to be targeted at. The server derives the
+  <code>target</code> from it — respecting each statement's own semantics, so
+  the same tier is a different 32 bytes on <code>dense</code> and on
+  <code>canonical-moe</code> — and echoes the granted value back as
+  <code>attempts</code>. Clients still read <code>target</code>; omitting the
+  parameter reproduces the previous behaviour exactly, target and response
+  alike.</p>
+  <ul class="fields">
+    <li>Rounded to the nearest power of two internally, so the target is a
+      single set bit and tier → target → score round-trips exactly and
+      reproducibly.</li>
+    <li>Clamped to [2<sup>12</sup>, 2<sup>30</sup>]; compare the echoed
+      <code>attempts</code> against what you asked for to see the clamp. The
+      ceiling is the challenge expiry: at ~3 M attempts/s, 2<sup>30</sup> is
+      ~6 min of grinding per win, and a challenge goes stale 1 h after it is
+      minted.</li>
+  </ul>
+  <p><b>Why letting the client choose cannot inflate a rate.</b> The ranked
+  figure divides real MAC-equivalents by a window this server observed, and a
+  tier only changes how much of that window is grinding rather than the fixed
+  ~25 s-per-win of certificate proving: an <em>easy</em> tier earns less credit
+  against that same fixed overhead and therefore scores <em>lower</em>, so
+  there is nothing to gain by asking for one. A <em>hard</em> tier cannot lift a
+  machine above its true throughput either, because every attempt it is credited
+  for is genuinely performed — the credit is exactly the expected attempts at
+  the target the wins were verified against, and a win only exists if a jackpot
+  really cleared it.</p>
+  <pre>curl -X POST 'https://nockmark.xyz/challenge?track=ai&amp;statement=canonical-moe&amp;attempts=1048576'</pre>
 </div>
 
 <div class="endpoint">
@@ -210,6 +238,7 @@
   older row was scored.</p>
   <ul class="fields">
     <li><code>statement</code> — <code>dense</code> or <code>canonical-moe</code></li>
+    <li><code>expected_attempts_per_win</code> — the difficulty tier this run was measured at, derived from its own stored <code>target</code> (so rows from before tiers existed carry it too). A tighter lower bound comes with a harder tier, because more of the window was grinding and less of it proving.</li>
     <li><code>verified_mac_per_sec_lb</code> — k · attempts-per-win · 2^16 / server window (issue → submit, proving included); the ranked lower bound</li>
     <li><code>grind_mac_per_sec</code> — same numerator over the client grind window; informational only</li>
     <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 25.75e9, the consensus MAC↔ZK-attempt exchange rate</li>

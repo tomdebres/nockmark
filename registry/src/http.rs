@@ -192,21 +192,65 @@ fn statement_from_query(
     }
 }
 
+/// `?attempts=` requests a difficulty TIER on the AI track: the expected grind
+/// attempts per WIN the client wants to be targeted at. Absent means the
+/// instance's configured target, i.e. exactly M5/B1 behaviour.
+///
+/// A malformed value is rejected rather than ignored. A client that believes it
+/// is grinding a 2^24 tier while the server quietly handed it 2^13 would report
+/// a rate three orders of magnitude wrong, and would have no way to tell.
+fn attempts_from_query(
+    q: &std::collections::HashMap<String, String>,
+) -> Result<Option<u64>, String> {
+    match q.get("attempts") {
+        None => Ok(None),
+        Some(s) => s
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|e| format!("attempts must be a decimal u64: {e}")),
+    }
+}
+
 async fn new_challenge(
     State(st): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // Validate the query BEFORE minting: an unknown statement must not consume
-    // a nonce (or, worse, silently hand back a dense one). Only meaningful on
-    // the AI track — the ZK path ignores `?statement=` exactly as it always
-    // has.
-    let statement = if is_ai_track(&q) {
-        match statement_from_query(&q) {
+    // Validate the query and derive everything pure BEFORE minting: an unknown
+    // statement or a malformed tier must not consume a nonce (or, worse,
+    // silently hand back a dense one). Only meaningful on the AI track — the ZK
+    // path ignores both parameters exactly as it always has.
+    let (statement, tier) = if is_ai_track(&q) {
+        let statement = match statement_from_query(&q) {
             Ok(s) => s,
             Err(e) => return bad(e),
-        }
+        };
+        let requested = match attempts_from_query(&q) {
+            Ok(a) => a,
+            Err(e) => return bad(e),
+        };
+        // The tier's target is a pure function of (statement, granted tier), so
+        // deriving it here — before the mint — keeps a derivation failure from
+        // stranding a nonce. `grant_attempts` clamps and rounds first, so the
+        // derivation cannot actually fail; the error arm is the honest way to
+        // say so without an `expect` in a request handler.
+        let tier = match requested {
+            None => None,
+            Some(n) => {
+                let granted = tock::aipow::grant_attempts(n);
+                match statement.target_for_attempts(granted) {
+                    Some(target) => Some((granted, target)),
+                    None => {
+                        return bad(format!(
+                            "no {} target for a tier of {granted} expected attempts per win",
+                            statement.as_str()
+                        ))
+                    }
+                }
+            }
+        };
+        (statement, tier)
     } else {
-        crate::aipow::Statement::Dense
+        (crate::aipow::Statement::Dense, None)
     };
     let nonce = st
         .kernel
@@ -221,14 +265,9 @@ async fn new_challenge(
         // nonce, and the AI store records the server-observed issue time
         // (the AI window runs on the server clock, not kernel @da state).
         let challenge = crate::aipow::challenge32(nonce);
-        st.ai
-            .lock()
-            .await
-            .record_challenge(nonce, crate::aipow::unix_ms())
-            .expect("ai store append failed");
         // Per-statement workload parameters. The challenge, k and window are
         // shared; the shape, the target and the grind rule are not.
-        let (params, target) = match statement {
+        let (params, instance_target) = match statement {
             crate::aipow::Statement::Dense => {
                 let p = &tock::aipow::AI_PARAMS;
                 (
@@ -259,18 +298,34 @@ async fn new_challenge(
                 )
             }
         };
-        return (
-            StatusCode::OK,
-            Json(json!({
-                "nonce": nonce.to_string(),
-                "challenge": tock::aipow::hex32(&challenge),
-                "target": tock::aipow::hex32(&target),
-                "k": st.ai_k,
-                "statement": statement.as_str(),
-                "params": params,
-                "nonce_rule": statement.nonce_rule(),
-            })),
-        );
+        // A requested tier overrides the instance's configured target, and is
+        // recorded on the challenge so the wins are later verified against the
+        // target the client was actually told to grind — not against whatever
+        // the instance is configured for at submit time.
+        let target = tier.map_or(instance_target, |(_, t)| t);
+        st.ai
+            .lock()
+            .await
+            .record_challenge(nonce, crate::aipow::unix_ms(), tier.map(|(_, t)| t))
+            .expect("ai store append failed");
+        let mut body = json!({
+            "nonce": nonce.to_string(),
+            "challenge": tock::aipow::hex32(&challenge),
+            "target": tock::aipow::hex32(&target),
+            "k": st.ai_k,
+            "statement": statement.as_str(),
+            "params": params,
+            "nonce_rule": statement.nonce_rule(),
+        });
+        // The GRANTED tier, echoed only when one was asked for — so a request
+        // without `?attempts=` produces byte-for-byte the response it always
+        // did, and a request with it can always see what the clamp/rounding
+        // actually gave. Clients still read `target`; this is the human- and
+        // board-legible form of the same thing.
+        if let Some((granted, _)) = tier {
+            body["attempts"] = json!(granted);
+        }
+        return (StatusCode::OK, Json(body));
     }
     (
         StatusCode::OK,
@@ -429,10 +484,6 @@ async fn submit_ai_run(
         },
         None => query_statement,
     };
-    let target = match statement {
-        crate::aipow::Statement::Dense => st.ai_target,
-        crate::aipow::Statement::CanonicalMoe => st.ai_moe_target,
-    };
     let Ok(nonce) = sub.nonce.parse::<u64>() else {
         return bad("nonce must be a decimal u64".into());
     };
@@ -481,14 +532,33 @@ async fn submit_ai_run(
     }
     // Challenge must be pending, unexpired, unused — checked cheaply now
     // (before burning verifier CPU) and re-checked at commit.
-    if let Err(reason) = st
+    let pending = match st
         .ai
         .lock()
         .await
         .challenge_status(nonce, crate::aipow::unix_ms())
     {
-        return bad(reason);
-    }
+        Ok(p) => p,
+        Err(reason) => return bad(reason),
+    };
+    // The target these wins are verified AND scored against is the one this
+    // challenge was issued at, when the client requested a difficulty tier.
+    // Otherwise the instance's configured target, which is what every
+    // pre-B2a challenge (and every untiered one since) is measured at.
+    //
+    // Note the challenge does NOT pin the statement — that is chosen at submit
+    // time by design (see this function's docs) — so a tier'd challenge minted
+    // for one statement and submitted under the other is scored with the other
+    // statement's reading of the same 32 bytes. That is not a way to be
+    // credited for work not done: the credit is always `2^256/(Θ+1)` expected
+    // attempts at the target the wins were actually verified against, so a
+    // cross-statement reading changes how hard the grind was, and the credit
+    // moves with it in lockstep. (In practice the dense→MoE direction is
+    // fail-closed anyway: `T·F` overflows for the easier tiers.)
+    let target = pending.target.unwrap_or(match statement {
+        crate::aipow::Statement::Dense => st.ai_target,
+        crate::aipow::Statement::CanonicalMoe => st.ai_moe_target,
+    });
     // Verifier context: built/loaded once per statement, lazily, on the
     // blocking pool (first submission of a statement pays the load from its
     // persisted blob or a build-by-proving; every later one reuses the

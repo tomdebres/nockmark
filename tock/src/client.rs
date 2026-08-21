@@ -120,6 +120,35 @@ impl AiStatement {
             Self::CanonicalMoe => crate::aipow_moe::AI_MOE_NONCE_RULE,
         }
     }
+
+    /// Expected grind attempts per win at `target` under THIS statement's
+    /// threshold semantics: `2^256/(T+1)` raw for dense, `2^256/(T·F+1)` scaled
+    /// for canonical MoE. The client-side peer of the registry's
+    /// `Statement::expected_attempts_per_win`, and the same asymmetry: reading
+    /// one target with the other's rule is a factor-`F` error.
+    ///
+    /// A target the canonical shape cannot scale degrades to "1 attempt", which
+    /// can only UNDERSTATE the work — never overstate it.
+    pub fn expected_attempts_per_win(self, target: &[u8; 32]) -> f64 {
+        match self {
+            Self::Dense => crate::aipow::expected_attempts_per_win(target),
+            Self::CanonicalMoe => {
+                crate::aipow_moe::expected_attempts_per_moe_win(target).unwrap_or(1.0)
+            }
+        }
+    }
+
+    /// The jackpot target realizing a difficulty TIER — `attempts` expected
+    /// grind attempts per win — under this statement's own semantics.
+    ///
+    /// Used for fully-local runs (`tock ai-bench` without `--submit`), so a
+    /// local benchmark grinds exactly the workload a registry would have issued
+    /// for the same tier. With `--submit` the registry derives the target the
+    /// same way, by inverting its own scoring function, and the client simply
+    /// uses what it sent back. `None` unless `attempts` is a granted tier.
+    pub fn target_for_attempts(self, attempts: u64) -> Option<[u8; 32]> {
+        crate::aipow::target_for_attempts(attempts, |t| self.expected_attempts_per_win(t))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -136,6 +165,13 @@ pub struct AiRegistryChallenge {
     /// which only ever issued dense challenges.
     #[serde(default)]
     pub statement: Option<String>,
+    /// The difficulty tier the registry GRANTED, in expected grind attempts per
+    /// win — present only when the request asked for one, and possibly clamped
+    /// or rounded from what was asked. Absent means either "we did not ask" or
+    /// "this registry predates tiers"; both are handled the same way, by
+    /// grinding whatever `target` it sent.
+    #[serde(default)]
+    pub attempts: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -162,19 +198,30 @@ pub struct AiSubmission {
     pub statement: Option<&'static str>,
 }
 
+/// The AI challenge URL for a statement and an optional difficulty tier.
+///
+/// Each parameter is appended only when it says something, so a dense request
+/// with no tier is the M5 URL character for character — which is what keeps an
+/// old registry answering it exactly as it always did.
+fn ai_challenge_url(base: &str, statement: AiStatement, attempts: Option<u64>) -> String {
+    let mut url = format!("{}/challenge?track=ai", base.trim_end_matches('/'));
+    if statement != AiStatement::Dense {
+        url.push_str(&format!("&statement={}", statement.as_str()));
+    }
+    if let Some(n) = attempts {
+        url.push_str(&format!("&attempts={n}"));
+    }
+    url
+}
+
+/// Mint an AI challenge. `attempts` requests a difficulty TIER (expected grind
+/// attempts per win); `None` takes the registry's configured target.
 pub async fn fetch_ai_challenge(
     base: &str,
     statement: AiStatement,
+    attempts: Option<u64>,
 ) -> Result<AiRegistryChallenge, String> {
-    // Dense omits the parameter entirely: the M5 request byte-for-byte.
-    let url = match statement {
-        AiStatement::Dense => format!("{}/challenge?track=ai", base.trim_end_matches('/')),
-        other => format!(
-            "{}/challenge?track=ai&statement={}",
-            base.trim_end_matches('/'),
-            other.as_str()
-        ),
-    };
+    let url = ai_challenge_url(base, statement, attempts);
     let resp = http(Duration::from_secs(30))
         .post(&url)
         .send()
@@ -352,7 +399,8 @@ mod tests {
     }
 
     /// A registry challenge parses with or without the statement field: absent
-    /// means a pre-M6 registry, which only ever issued dense challenges.
+    /// means a pre-M6 registry, which only ever issued dense challenges. The
+    /// same is true of the granted tier, which a pre-B2a registry never echoes.
     #[test]
     fn ai_challenge_statement_is_optional() {
         let legacy: AiRegistryChallenge = serde_json::from_str(
@@ -361,12 +409,59 @@ mod tests {
         )
         .unwrap();
         assert_eq!(legacy.statement, None);
+        assert_eq!(legacy.attempts, None, "a pre-B2a registry echoes no tier");
         let moe: AiRegistryChallenge = serde_json::from_str(
             r#"{"nonce":"1","challenge":"00","target":"ff","k":4,
-                "nonce_rule":"canonical-ordinal-v3","statement":"canonical-moe"}"#,
+                "nonce_rule":"canonical-ordinal-v3","statement":"canonical-moe",
+                "attempts":65536}"#,
         )
         .unwrap();
         assert_eq!(moe.statement.as_deref(), Some("canonical-moe"));
+        assert_eq!(moe.attempts, Some(65_536));
+    }
+
+    /// **The tier parameter must not change the M5 request.** A dense mint with
+    /// no tier is the URL M5 shipped; everything else appends.
+    #[test]
+    fn ai_challenge_url_is_backward_compatible() {
+        assert_eq!(
+            ai_challenge_url("https://nockmark.xyz/", AiStatement::Dense, None),
+            "https://nockmark.xyz/challenge?track=ai"
+        );
+        assert_eq!(
+            ai_challenge_url("https://nockmark.xyz", AiStatement::Dense, Some(1 << 20)),
+            "https://nockmark.xyz/challenge?track=ai&attempts=1048576"
+        );
+        assert_eq!(
+            ai_challenge_url("https://nockmark.xyz", AiStatement::CanonicalMoe, None),
+            "https://nockmark.xyz/challenge?track=ai&statement=canonical-moe"
+        );
+        assert_eq!(
+            ai_challenge_url("https://nockmark.xyz", AiStatement::CanonicalMoe, Some(4096)),
+            "https://nockmark.xyz/challenge?track=ai&statement=canonical-moe&attempts=4096"
+        );
+    }
+
+    /// The client's two statements derive DIFFERENT targets for the same tier,
+    /// and each round-trips through its own expected-attempts rule — the
+    /// client-side half of the property the registry pins server-side.
+    #[test]
+    fn client_statements_derive_their_own_tier_targets() {
+        for tier in [1u64 << 12, 1 << 16, 1 << 24, 1 << 30] {
+            let dense = AiStatement::Dense.target_for_attempts(tier).unwrap();
+            let moe = AiStatement::CanonicalMoe.target_for_attempts(tier).unwrap();
+            assert_ne!(dense, moe, "tier {tier}");
+            assert_eq!(
+                AiStatement::Dense.expected_attempts_per_win(&dense),
+                tier as f64
+            );
+            assert_eq!(
+                AiStatement::CanonicalMoe.expected_attempts_per_win(&moe),
+                tier as f64
+            );
+        }
+        // Ungranted tiers derive nothing rather than something close.
+        assert_eq!(AiStatement::Dense.target_for_attempts(5_000), None);
     }
 
     #[test]

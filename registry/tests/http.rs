@@ -282,6 +282,109 @@ async fn default_k_is_eight_and_test_states_override_it() {
     assert_eq!(v["k"], 2);
 }
 
+/// `?attempts=` on the AI challenge: the granted tier is echoed, the target it
+/// derives is the statement's own, clamping is visible, and — the property that
+/// matters most for an already-deployed API — omitting the parameter reproduces
+/// the previous response exactly.
+#[tokio::test]
+async fn ai_challenge_difficulty_tiers() {
+    use nockmark_registry::aipow::Statement;
+    let _guard = test_lock().lock().await;
+    let app = nockmark_registry::http::router(state().await);
+
+    let mint = |path: String| {
+        let app = app.clone();
+        async move {
+            let res = app
+                .oneshot(Request::post(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = res.status();
+            let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            (status, v)
+        }
+    };
+
+    // --- Backward compatibility: no `attempts` means no change, at all. ---
+    let (status, plain) = mint("/challenge?track=ai".into()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        plain["target"].as_str().unwrap(),
+        tock::aipow::hex32(&nockmark_registry::aipow::default_target()),
+        "an untiered challenge still carries the instance's configured target"
+    );
+    let mut keys: Vec<&String> = plain.as_object().unwrap().keys().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        vec![
+            "challenge",
+            "k",
+            "nonce",
+            "nonce_rule",
+            "params",
+            "statement",
+            "target"
+        ],
+        "an untiered response must carry no new keys — not even an echoed tier"
+    );
+
+    // --- A requested tier: echoed, and the target realizes it exactly. ---
+    let (status, tiered) = mint("/challenge?track=ai&attempts=1048576".into()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(tiered["attempts"], 1_048_576u64);
+    let target = tock::aipow::parse_hex32(tiered["target"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        Statement::Dense.expected_attempts_per_win(&target),
+        1_048_576.0
+    );
+    assert_eq!(target, Statement::Dense.target_for_attempts(1 << 20).unwrap());
+    assert_ne!(
+        tiered["target"], plain["target"],
+        "a tier must actually move the target"
+    );
+
+    // --- Clamping at both ends is granted, not refused, and is visible. ---
+    let (status, floor) = mint("/challenge?track=ai&attempts=1".into()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(floor["attempts"], tock::aipow::AI_ATTEMPTS_MIN);
+    let (status, ceiling) = mint("/challenge?track=ai&attempts=99999999999999".into()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ceiling["attempts"], tock::aipow::AI_ATTEMPTS_MAX);
+    // …as is the rounding to the nearest power of two.
+    let (_, rounded) = mint("/challenge?track=ai&attempts=5000".into()).await;
+    assert_eq!(rounded["attempts"], 4096u64, "5000 rounds down to 2^12");
+
+    // --- The same tier is a DIFFERENT target on the canonical-MoE statement,
+    //     because that statement compares the jackpot against target · F. ---
+    let (status, moe) = mint("/challenge?track=ai&statement=canonical-moe&attempts=1048576".into())
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(moe["attempts"], 1_048_576u64);
+    let moe_target = tock::aipow::parse_hex32(moe["target"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        Statement::CanonicalMoe.expected_attempts_per_win(&moe_target),
+        1_048_576.0
+    );
+    assert_ne!(
+        moe_target, target,
+        "one tier, two statements, two targets — off by exactly F"
+    );
+
+    // --- A malformed tier is rejected outright, before a nonce is minted. ---
+    let (status, err) = mint("/challenge?track=ai&attempts=lots".into()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(err["error"].as_str().unwrap().contains("attempts"), "{err}");
+
+    // --- The ZK track ignores the parameter exactly as it ignores ?statement=.
+    let (status, zk) = mint("/challenge?attempts=1048576".into()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(zk.get("attempts").is_none());
+    assert!(zk.get("target").is_none());
+    assert_eq!(zk["nonce_rule"], "fnv1a-splitmix64-v1");
+}
+
 #[tokio::test]
 async fn economics_unconfigured_returns_503() {
     let _guard = test_lock().lock().await;

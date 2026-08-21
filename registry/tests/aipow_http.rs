@@ -1,7 +1,17 @@
 //! AI-track golden path with a REAL grind + prove (M5 Task 3): mint an AI
-//! challenge (all-FF target via env override, k=2), produce the wins with
-//! the actual client module (`tock::aipow`), submit, and check the board
-//! math; then check that a tampered certificate and a replay are rejected.
+//! challenge, produce the wins with the actual client module (`tock::aipow`),
+//! submit, and check the board math; then check that a tampered certificate and
+//! a replay are rejected.
+//!
+//! M6 Phase B2a: the run is made against a REQUESTED DIFFICULTY TIER
+//! (`?attempts=`) rather than the instance's configured target, so the whole
+//! chain — tier → server-derived target → real grind → verify against that
+//! target → the attempt count the board credits — is exercised end to end on
+//! one real workload. The floor tier 2^12 keeps the extra cost to ~8 k dense
+//! attempts (well under a second) instead of a second pair of certificate
+//! proves. The instance's configured target is still all-FF via env override,
+//! and an untiered mint is checked against it first, so this test also pins the
+//! backward-compatible path.
 //!
 //! Takes ~1–2 min: two compact-certificate proves (~24 s + cached) plus
 //! the verifier-context build-by-proving (~25 s, first submission only —
@@ -15,6 +25,12 @@ use base64::Engine;
 use tower::ServiceExt;
 
 const K: u64 = 2;
+
+/// The tier this run requests: the floor, 2^12 = 4096 expected attempts per
+/// win. Small enough that k=2 wins cost ~8 k dense attempts, large enough that
+/// the grind is real and the credited MAC-equivalents are 4096× what the
+/// every-attempt-wins target would have granted.
+const TIER: u64 = 4096;
 
 async fn req_json(
     app: axum::Router,
@@ -65,13 +81,28 @@ async fn ai_golden_path_tamper_and_replay() {
     std::mem::forget(dir);
     let app = nockmark_registry::http::router(st.clone());
 
-    // 1. Mint an AI challenge: derived challenge + track parameters.
-    let (status, ch) = req_json(app.clone(), "POST", "/challenge?track=ai", Some(serde_json::json!({}))).await;
+    // 0. An untiered mint is untouched by B2a: it still hands back the
+    //    instance's configured target and echoes no tier. (The nonce is simply
+    //    abandoned — an unused pending challenge costs nothing.)
+    let (status, plain) =
+        req_json(app.clone(), "POST", "/challenge?track=ai", Some(serde_json::json!({}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(plain["target"].as_str().unwrap(), &"f".repeat(64));
+    assert!(plain.get("attempts").is_none(), "no tier asked, none echoed");
+
+    // 1. Mint an AI challenge AT A REQUESTED TIER: derived challenge, track
+    //    parameters, and a target the registry derived from `attempts`.
+    let (status, ch) = req_json(
+        app.clone(),
+        "POST",
+        &format!("/challenge?track=ai&attempts={TIER}"),
+        Some(serde_json::json!({})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let nonce: u64 = ch["nonce"].as_str().unwrap().parse().unwrap();
     let challenge_hex = ch["challenge"].as_str().unwrap();
     assert_eq!(challenge_hex.len(), 64);
-    assert_eq!(ch["target"].as_str().unwrap(), &"f".repeat(64));
     assert_eq!(ch["k"], K);
     assert_eq!(ch["nonce_rule"], tock::aipow::AI_NONCE_RULE);
     assert_eq!(ch["params"]["m"], 8);
@@ -79,6 +110,19 @@ async fn ai_golden_path_tamper_and_replay() {
     assert_eq!(ch["params"]["n"], 8);
     assert_eq!(ch["params"]["noise_rank"], 64);
     assert_eq!(ch["params"]["tile"], 8);
+    // The granted tier is echoed, and the target it derived realizes it exactly
+    // under the dense (raw) comparison. This is the target the client grinds,
+    // the registry verifies against, and the board scores from.
+    assert_eq!(ch["attempts"], TIER);
+    let target = tock::aipow::parse_hex32(ch["target"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        nockmark_registry::aipow::Statement::Dense.expected_attempts_per_win(&target),
+        TIER as f64
+    );
+    assert_ne!(
+        ch["target"], plain["target"],
+        "the tier must override the instance's configured target"
+    );
     // The challenge is exactly the documented derivation of the nonce.
     assert_eq!(
         challenge_hex,
@@ -86,17 +130,26 @@ async fn ai_golden_path_tamper_and_replay() {
     );
 
     // 2. Grind + prove with the real client module (~50 s: first prove
-    //    builds the STARK setup, the second reuses the prover cache).
+    //    builds the STARK setup, the second reuses the prover cache; the tier
+    //    adds ~8 k dense attempts of grinding, well under a second).
     let ai_ch = tock::aipow::AiChallenge {
         challenge: tock::aipow::parse_hex32(challenge_hex).unwrap(),
-        target: [0xff; 32],
+        target,
         k: K,
     };
     let summary = tokio::task::spawn_blocking(move || tock::aipow::run(&ai_ch))
         .await
         .unwrap();
     let extranonces: Vec<u64> = summary.wins.iter().map(|w| w.extranonce).collect();
-    assert_eq!(extranonces, vec![0, 1], "max target wins on every attempt");
+    // At a 2^12 tier the wins land wherever the jackpot lottery puts them —
+    // ascending, and (Poisson) somewhere around 2 · 4096 attempts in.
+    assert_eq!(extranonces.len(), K as usize);
+    assert!(extranonces.windows(2).all(|w| w[0] < w[1]), "{extranonces:?}");
+    assert!(
+        summary.total_attempts > 100,
+        "a real tier must take a real grind, got {} attempts",
+        summary.total_attempts
+    );
     let wins_json: Vec<serde_json::Value> = summary
         .wins
         .iter()
@@ -156,8 +209,10 @@ async fn ai_golden_path_tamper_and_replay() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(res["error"], "nonce-used");
 
-    // 6. Board math: with T = 2^256−1 (all-FF), expected attempts/win
-    //    rounds to 1, so MAC-equivalents = k · 1 · 2^16 over each window.
+    // 6. Board math at the requested tier: expected attempts per win is the
+    //    granted 2^12, so MAC-equivalents = k · 4096 · 2^16 over each window —
+    //    4096× what the every-attempt-wins target would have credited, for
+    //    4096× the attempts actually performed.
     let (status, board) = req_json(app.clone(), "GET", "/leaderboard?track=ai", None).await;
     assert_eq!(status, StatusCode::OK);
     let rows = board.as_array().unwrap();
@@ -166,11 +221,18 @@ async fn ai_golden_path_tamper_and_replay() {
     assert_eq!(row["id"].as_u64().unwrap(), run_id);
     assert_eq!(row["hardware"], "aipow-e2e");
     assert_eq!(row["k"], K);
-    assert_eq!(row["win_extranonces"], serde_json::json!([0, 1]));
+    assert_eq!(row["target"].as_str().unwrap(), tock::aipow::hex32(&target));
+    assert_eq!(
+        row["win_extranonces"],
+        serde_json::json!(extranonces),
+        "the board records the extranonces that actually won"
+    );
+    // The tier is legible on the row, re-derived from its own stored target.
+    assert_eq!(row["expected_attempts_per_win"].as_f64().unwrap(), TIER as f64);
     let window_ms = row["server_window_ms"].as_u64().unwrap();
     // The window covers grind + ~2 proves + the tamper/reorder round trips.
     assert!(window_ms >= summary.grind_elapsed_ms, "window {window_ms} ms");
-    let mac_total = K as f64 * 65536.0;
+    let mac_total = K as f64 * TIER as f64 * 65536.0;
     let verified = row["verified_mac_per_sec_lb"].as_f64().unwrap();
     let expect = mac_total / (window_ms as f64 / 1000.0);
     assert!(
