@@ -685,7 +685,7 @@ async fn ai_bench(
 
     let summary = aipow::run(&ch);
 
-    println!("tock ai-bench — Logos AI-PoW, canonical single-tile shape (CPU reference)");
+    println!("tock ai-bench — Logos AI-PoW, canonical single-tile shape (CPU; --gpu is canonical-moe only)");
     println!("  challenge:    {}", aipow::hex32(&ch.challenge));
     println!("  target:       {}", aipow::hex32(&ch.target));
     print_tier(
