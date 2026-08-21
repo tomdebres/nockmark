@@ -18,6 +18,8 @@ use nockvm::noun::{Atom, D, T};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "gpu")]
+use tock::aipow_gpu;
 use tock::{aipow, aipow_moe, client, hardware, miner, nonce};
 use tock::miner::DEFAULT_POW_LEN;
 
@@ -63,10 +65,11 @@ enum Command {
         #[arg(long, default_value = tock::miner::NOCKCHAIN_PIN)]
         prover_version: String,
     },
-    /// Benchmark the Logos AI-PoW puzzle (CPU reference): grind attempts,
-    /// prove a compact recursive certificate per jackpot win. `--statement`
-    /// picks which AI-PoW statement to benchmark; both rank on the one AI
-    /// board, in MAC-equivalents per second.
+    /// Benchmark the Logos AI-PoW puzzle: grind attempts, prove a compact
+    /// recursive certificate per jackpot win. `--statement` picks which AI-PoW
+    /// statement to benchmark; both rank on the one AI board, in
+    /// MAC-equivalents per second. `--gpu` moves the canonical-MoE grind (and
+    /// nothing else) onto CUDA.
     AiBench {
         /// Which statement to benchmark: `dense` (M5, single-tile) or
         /// `canonical-moe` (the block mainnet AI miners actually run).
@@ -105,6 +108,18 @@ enum Command {
         /// and submits the wins after proving.
         #[arg(long, value_name = "REGISTRY_URL")]
         submit: Option<String>,
+        /// Grind on the CUDA backend instead of the CPU (`--statement
+        /// canonical-moe` only). Requires a build with the `gpu` feature:
+        /// `cargo build --release --features gpu`. Only the jackpot SEARCH
+        /// moves to the device — every win is still re-checked against the
+        /// scalar oracle and certified by the CPU prover.
+        #[arg(long)]
+        gpu: bool,
+        /// Attempts per CUDA launch when `--gpu` is set. Bigger amortizes
+        /// launch overhead; the session allocates for it up front, so device
+        /// memory is the ceiling.
+        #[arg(long, value_name = "N")]
+        gpu_batch: Option<u64>,
     },
     /// Produce one STARK proof whose input incorporates an arbitrary nonce.
     Prove {
@@ -168,20 +183,25 @@ async fn main() {
             k,
             out_dir,
             submit,
+            gpu,
+            gpu_batch,
         } => {
             let statement = client::AiStatement::parse(&statement)
                 .unwrap_or_else(|e| panic!("bad --statement: {e}"));
+            // Which backend grinds — settled before the calibration, because
+            // the calibration must measure the backend that will do the work.
+            let backend = resolve_backend(statement, gpu, gpu_batch);
             // Resolve the difficulty tier FIRST, before anything that starts a
             // clock: the calibration grind must not land inside the reported
             // grind window, nor (with --submit) inside the server window, which
             // opens the moment the challenge is minted.
-            let tier = resolve_tier(statement, attempts, target.is_some(), k);
+            let tier = resolve_tier(statement, backend, attempts, target.is_some(), k);
             match statement {
                 client::AiStatement::Dense => {
                     ai_bench(challenge, target, tier, k, out_dir, submit).await
                 }
                 client::AiStatement::CanonicalMoe => {
-                    ai_bench_moe(challenge, target, tier, k, out_dir, submit).await
+                    ai_bench_moe(challenge, target, tier, k, out_dir, submit, backend).await
                 }
             }
         }
@@ -404,6 +424,92 @@ fn print_human(r: &BenchResult) {
     );
 }
 
+/// Which backend grinds this `ai-bench` run.
+///
+/// Carries the CUDA launch size rather than leaving it in a separate variable
+/// so the calibration and the run cannot end up dispatching differently sized
+/// batches — the tier is derived from the measured rate, and the measured rate
+/// is a function of the launch geometry.
+///
+/// The `Gpu` variant does not exist at all without the `gpu` feature. That is
+/// deliberate: it makes "this build cannot grind on a GPU" a fact the type
+/// system knows, so the only place the missing feature has to be reported is
+/// [`resolve_backend`], and no downstream `match` can silently fall through to
+/// a CPU grind the user did not ask for.
+#[derive(Clone, Copy)]
+enum Backend {
+    Cpu,
+    #[cfg(feature = "gpu")]
+    Gpu {
+        batch_attempts: u64,
+    },
+}
+
+impl Backend {
+    /// How the run reports itself on the summary — the board compares CPU and
+    /// GPU rows in the same MAC-equivalent unit, so which one produced a row
+    /// has to be legible.
+    fn label(self) -> String {
+        match self {
+            Self::Cpu => "CPU (scalar canonical template)".to_string(),
+            #[cfg(feature = "gpu")]
+            Self::Gpu { batch_attempts } => format!(
+                "CUDA device {} ({batch_attempts} attempts/launch, jackpot search only)",
+                aipow_gpu::GPU_DEVICE_ORDINAL
+            ),
+        }
+    }
+}
+
+/// Resolve `--gpu` / `--gpu-batch` into a [`Backend`], failing loudly rather
+/// than silently downgrading.
+///
+/// Two ways this exits instead of returning, both with a message that names the
+/// fix:
+///
+///   * `--gpu` on a build without the `gpu` feature. A panic here would be
+///     read as a bug in tock; the actual situation is that the binary was built
+///     without CUDA, and the remedy is a build flag.
+///   * `--gpu --statement dense`. Upstream's `GpuSearchBackend` does implement
+///     `search_dense`, but through the generic session — a different kernel,
+///     with attempt strips prepared on the CPU first — so it is a separate
+///     measurement that has not been validated here. Grinding the dense
+///     statement on the CPU while the user asked for a GPU would put a
+///     mislabelled row on the board.
+fn resolve_backend(statement: client::AiStatement, gpu: bool, gpu_batch: Option<u64>) -> Backend {
+    if !gpu {
+        if gpu_batch.is_some() {
+            eprintln!("note: --gpu-batch has no effect without --gpu");
+        }
+        return Backend::Cpu;
+    }
+    if statement != client::AiStatement::CanonicalMoe {
+        eprintln!(
+            "--gpu is implemented for --statement {} only (asked for {:?}); \
+             the dense statement has no validated CUDA path",
+            aipow_moe::STATEMENT_CANONICAL_MOE,
+            statement.as_str()
+        );
+        std::process::exit(2);
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = gpu_batch;
+        eprintln!(
+            "--gpu requires a CUDA build of tock, which this binary is not: \
+             rebuild with `cargo build --release --features gpu` on a machine \
+             with nvcc and a CUDA driver"
+        );
+        std::process::exit(2)
+    }
+    #[cfg(feature = "gpu")]
+    {
+        Backend::Gpu {
+            batch_attempts: gpu_batch.unwrap_or(aipow_gpu::DEFAULT_GPU_BATCH_ATTEMPTS),
+        }
+    }
+}
+
 /// Decide which difficulty tier this `ai-bench` run grinds at — expected grind
 /// attempts per win — and say so on stderr. `None` means "the caller pinned the
 /// difficulty with `--target`; leave it alone".
@@ -421,6 +527,7 @@ fn print_human(r: &BenchResult) {
 /// reports a looser lower bound than it deserved.
 fn resolve_tier(
     statement: client::AiStatement,
+    backend: Backend,
     attempts: Option<u64>,
     explicit_target: bool,
     k: u64,
@@ -440,15 +547,24 @@ fn resolve_tier(
         return None;
     }
     let budget = std::time::Duration::from_secs_f64(aipow::AI_CALIBRATION_SECS);
-    let rate = match statement {
-        client::AiStatement::Dense => aipow::calibrate_attempts_per_sec(budget),
-        client::AiStatement::CanonicalMoe => aipow_moe::calibrate_moe_attempts_per_sec(budget),
+    // The calibration MUST run on the backend that will grind: a CPU-measured
+    // rate would hand a GPU a tier some three orders of magnitude too easy, and
+    // the run would degenerate into a measurement of certificate proving —
+    // which is exactly what tiers exist to prevent.
+    let rate = match (statement, backend) {
+        (client::AiStatement::Dense, _) => aipow::calibrate_attempts_per_sec(budget),
+        #[cfg(feature = "gpu")]
+        (client::AiStatement::CanonicalMoe, Backend::Gpu { batch_attempts }) => {
+            aipow_gpu::calibrate_moe_attempts_per_sec(budget, batch_attempts)
+        }
+        (client::AiStatement::CanonicalMoe, _) => aipow_moe::calibrate_moe_attempts_per_sec(budget),
     };
     let tier = aipow::tier_for_rate(rate, k);
     eprintln!(
-        "calibration: {rate:.0} attempts/sec measured over {:.0}s \
+        "calibration: {rate:.0} attempts/sec measured over {:.0}s on {} \
          -> tier 2^{} ({tier} expected attempts/win, ~{:.0}s of grinding for k={k})",
         aipow::AI_CALIBRATION_SECS,
+        backend.label(),
         tier.ilog2(),
         tier as f64 * k as f64 / rate.max(1e-9),
     );
@@ -650,6 +766,12 @@ async fn ai_bench(
 /// and the jackpot is compared against `target · F`, not `target`. Everything
 /// downstream — the server window, the MAC-equivalent arithmetic, the board —
 /// is shared, which is the point: both statements rank together.
+///
+/// `backend` chooses where the GRIND runs (CPU template loop or CUDA search).
+/// Nothing else moves with it: the target semantics, the scalar recheck, the
+/// certificate prover, the window accounting and the submission blob are the
+/// same code either way, so a GPU row and a CPU row on the board differ only in
+/// the rate they achieved.
 async fn ai_bench_moe(
     challenge: Option<String>,
     target: Option<String>,
@@ -657,6 +779,7 @@ async fn ai_bench_moe(
     k: u64,
     out_dir: Option<PathBuf>,
     submit: Option<String>,
+    backend: Backend,
 ) {
     assert!(k >= 1, "k must be at least 1");
     let registry_ch = match &submit {
@@ -707,10 +830,15 @@ async fn ai_bench_moe(
     aipow_moe::expected_attempts_per_moe_win(&ch.target)
         .unwrap_or_else(|e| panic!("target is outside the canonical shape's domain: {e}"));
 
-    let summary = aipow_moe::run(&ch);
+    let summary = match backend {
+        #[cfg(feature = "gpu")]
+        Backend::Gpu { batch_attempts } => aipow_gpu::run(&ch, batch_attempts),
+        Backend::Cpu => aipow_moe::run(&ch),
+    };
 
-    println!("tock ai-bench — Logos AI-PoW, canonical MoE block (CPU reference)");
+    println!("tock ai-bench — Logos AI-PoW, canonical MoE block");
     println!("  statement:    {}", aipow_moe::STATEMENT_CANONICAL_MOE);
+    println!("  backend:      {}", backend.label());
     println!("  challenge:    {}", aipow::hex32(&ch.challenge));
     // The attempt count is printed by `print_tier` below, under this
     // statement's own scaled reading of the target.

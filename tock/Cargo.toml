@@ -6,6 +6,17 @@ edition = "2021"
 # Nockmark bench harness (M1). Grew out of the M0 spike; depends on the
 # nockchain checkout at ../../../nockchain (sibling of the nockmark repo).
 
+[features]
+default = []
+# M6 Phase B2b: the CUDA canonical-MoE grind backend (`tock::aipow_gpu`,
+# reached by `ai-bench --gpu`). OFF by default, and it must stay that way:
+# upstream's `ai-pow-miner/build.rs` shells out to `nvcc` the instant
+# `CARGO_FEATURE_GPU` is set and links `cudart`, so a default-on feature would
+# break every build on a machine without a CUDA toolkit — including the laptop
+# this is developed on. `cargo build`/`cargo test` with no flags compile and
+# run exactly the code they did before this feature existed.
+gpu = ["ai-pow-miner/gpu"]
+
 [dependencies]
 nockapp = { path = "../../../nockchain/crates/nockapp" }
 nockvm = { path = "../../../nockchain/crates/nockvm/rust/nockvm" }
