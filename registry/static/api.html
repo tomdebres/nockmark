@@ -140,6 +140,17 @@
 <div class="eyebrow">AI-PoW track (CPU and GPU)</div>
 
 <div class="endpoint">
+  <p><b>What these rates cover.</b> The AI track grinds the canonical block
+  shape. Nockchain also admits mining inside real model inference, where the
+  tickets ride a matmul the host was already computing for its own users —
+  upstream measures that path at roughly a thousandfold more MAC-equivalents
+  per second on the same GPU. Rates here are verified and mutually comparable;
+  they are not a ceiling for the hardware. The ZK track is CPU-only for a
+  different reason: its GPU provers are closed source and report unverifiable
+  pool units, so they are absent rather than taken on trust.</p>
+</div>
+
+<div class="endpoint">
   <div class="sigline"><span class="verb">POST</span>/challenge?track=ai</div>
   <p>Mint an AI-PoW challenge for the Logos puzzle (INT8 tiled matmul +
   recursive STARK certificate). Returns the kernel-minted <code>nonce</code>,

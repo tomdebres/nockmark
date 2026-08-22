@@ -129,6 +129,11 @@
     </table>
   </div>
   <p class="econ" id="econ" hidden></p>
+  <p class="econ">Every row here is a CPU. Nockchain's GPU STARK provers are
+  closed source and report rates in their own pool units, which cannot be
+  checked against a challenge this server issued — so they are absent rather
+  than unverified. Read this board as "what a CPU proves", not as the ceiling
+  of the hardware.</p>
 </section>
 
 <section id="ai" hidden>
@@ -156,7 +161,15 @@
   out by the fixed certificate-proving cost inside the window. Picking a tier
   cannot inflate a number: an easy tier earns less credit against that same
   fixed cost, and a hard one has to actually be ground out, attempt by verified
-  attempt. CPU and GPU rows rank together: the device only searches for jackpots, and every win it finds is re-checked and certified on the CPU before this server verifies it.</p>
+  attempt. CPU and GPU rows rank together: the device only searches for jackpots, and every win it finds is
+  re-checked and certified on the CPU before this server verifies it.</p>
+  <p class="econ">These runs grind the <b>canonical block shape</b> — a small
+  tile, mined for its own sake. Nockchain also admits mining inside real model
+  inference, where the tickets ride a matmul the host was computing anyway for
+  its own users; upstream measures that path at roughly a thousandfold more
+  MAC-equivalents per second on the same card. The rates below are verified and
+  comparable to each other, and they are not what a machine earning its keep on
+  inference would post.</p>
 </section>
 
 <section class="submit">
