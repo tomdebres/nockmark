@@ -176,6 +176,11 @@ pub fn hex32(bytes: &[u8; 32]) -> String {
 // the grind, not the proving, dominates the window — and the measured rate
 // converges on the machine's true throughput.
 //
+// How hard the client picks is [`AI_TIER_PROVE_RATIO`]: the tier is sized in
+// units of that host's own MEASURED per-certificate prove time, which is what
+// makes the surviving fraction of true throughput identical across machines
+// instead of a function of whichever CPU happened to do the proving.
+//
 // ## Why this is not a way to inflate a number
 //
 // Both directions are closed, and neither by a check that could be forgotten:
@@ -221,16 +226,49 @@ pub const AI_ATTEMPTS_MAX: u64 = 1 << 30;
 /// paying it before the real run starts.
 pub const AI_CALIBRATION_SECS: f64 = 2.0;
 
-/// The grind budget a self-calibrating client sizes its tier for: ~60 s of
-/// expected grinding across ALL k wins.
+/// How much expected grinding a self-calibrating client buys per certificate:
+/// the tier is sized so that one win's expected grind takes
+/// `AI_TIER_PROVE_RATIO ×` the time ONE certificate costs on this machine,
+/// measured ([`calibrate_prove_secs`]) rather than assumed.
 ///
-/// Chosen against the fixed ~25 s-per-win certificate proving the same server
-/// window contains. At k=4 that is ~100 s of proving, so a ~60 s grind puts the
-/// throughput term at ~40% of the window instead of the ~0% a GPU sees at the
-/// CPU-calibrated target. Larger would be more accurate and slower; the 1 h
-/// challenge expiry is the hard ceiling and [`AI_ATTEMPTS_MAX`] keeps every
-/// tier far below it.
-pub const AI_TIER_GRIND_BUDGET_SECS: f64 = 60.0;
+/// ## The recovery identity
+///
+/// The board ranks `verified_mac_per_sec_lb`, which divides MAC-equivalents by
+/// the SERVER window — and that window contains the certificate proving as well
+/// as the grind, so what it recovers of the machine's true grind throughput is
+/// the grind's share of the window. Write `g` for that true throughput and `p`
+/// for the measured seconds one certificate costs on this host. Sizing the tier
+/// as `attempts_per_win = g · R · p` makes a k-win run
+///
+/// ```text
+///   grind    = k · R · p          proving = k · p
+///   recovery = grind / (grind + proving) = R / (R + 1)
+/// ```
+///
+/// Both `k` and `p` cancel. That is the entire point: the SAME fraction on
+/// every host, at every k. At `R = 2` the board reads ~67% of a machine's true
+/// grind rate, whoever's prover it ran on and however many wins were asked for.
+///
+/// ## Why uniformity beats magnitude
+///
+/// The rule this replaced sized the tier for a fixed ~60 s of grinding across
+/// all k wins, which left recovery at the mercy of the host's prove time —
+/// measured on the live board: 35% for the 3090, 51% for the 4090, 66% for the
+/// 5090, because proving took 26 s per win on one host and 7.4 s on another. A
+/// card was being ranked partly on the CPU sitting next to it. That rule also
+/// divided the budget BY k, holding total grind at ~60 s however many wins were
+/// asked for, so raising k to shrink the ±1/√k Poisson noise (±50% at k=4) made
+/// the dilution worse rather than better.
+///
+/// A uniform bias is a scale factor on the whole board: it leaves the ranking —
+/// the thing the board is for — exactly intact. A host-dependent one reorders
+/// it. Removing the bias altogether is not on the table, because proving is
+/// what makes the work verifiable at all and is therefore inside the window by
+/// construction. `R` only trades wall clock for how much of the bias is left:
+/// `R = 2` makes a run 3× its own proving and recovers 2/3; `R = 9` would
+/// recover 90% and cost 10×. The 1 h challenge expiry is the hard ceiling
+/// either way, and [`AI_ATTEMPTS_MAX`] keeps every tier well inside it.
+pub const AI_TIER_PROVE_RATIO: f64 = 2.0;
 
 /// Expected grind attempts per jackpot win at **little-endian** target `T`
 /// under the DENSE (raw) comparison: `2^256 / (T+1)` — the jackpot hash is
@@ -322,11 +360,18 @@ pub fn target_for_attempts(
     })
 }
 
-/// Pick a tier for a machine measured at `attempts_per_sec`, sized so the
-/// expected grind across all `k` wins takes about
-/// [`AI_TIER_GRIND_BUDGET_SECS`]. Always a granted tier.
-pub fn tier_for_rate(attempts_per_sec: f64, k: u64) -> u64 {
-    let per_win = attempts_per_sec * AI_TIER_GRIND_BUDGET_SECS / k.max(1) as f64;
+/// Pick a tier for a machine measured at `attempts_per_sec` whose certificates
+/// take `prove_secs` each: enough expected grinding per win to cover
+/// [`AI_TIER_PROVE_RATIO`] × one certificate. Always a granted tier.
+///
+/// Note what is not an argument: `k`. Grinding and proving both scale with the
+/// number of wins, so the recovery identity in [`AI_TIER_PROVE_RATIO`] holds
+/// per-win, and the tier a machine should ask for is the same whether the
+/// registry wants one win or ten. The predecessor of this function divided a
+/// fixed grind budget by `k`, which is precisely how raising `k` used to make
+/// the proving share of the window grow.
+pub fn tier_for_prove_ratio(attempts_per_sec: f64, prove_secs: f64) -> u64 {
+    let per_win = attempts_per_sec * AI_TIER_PROVE_RATIO * prove_secs;
     // `as u64` saturates on overflow; the NaN guard is the only case it does
     // not cover, and [`grant_attempts`] clamps both ends regardless.
     grant_attempts(if per_win.is_finite() && per_win > 0.0 {
@@ -363,6 +408,46 @@ pub fn calibrate_attempts_per_sec(budget: Duration) -> f64 {
         attempts += 1;
     }
     attempts as f64 / t0.elapsed().as_secs_f64().max(1e-9)
+}
+
+/// Measure what ONE certificate costs this machine: prove a single throwaway
+/// compact certificate and time it.
+///
+/// The second half of the pre-mint calibration, and bound by the same rule as
+/// [`calibrate_attempts_per_sec`] — it must run BEFORE the challenge is minted,
+/// because the server window opens at mint and a prove inside it would be
+/// charged to the very run it exists to size. [`tier_for_prove_ratio`] wants
+/// this number and nothing else: the tier is denominated in it.
+///
+/// The throwaway workload is [`dev_challenge`] at extranonce 0 against the
+/// all-ones target — a target every attempt clears. Unlike the rate
+/// calibration, this one cannot use an unreachable target: the prover refuses
+/// to certify an attempt that did not hit the target it was given
+/// (`ensure_found_tile_hits_target`), so the throwaway must be a genuine win.
+/// Nothing survives the call — the certificate is dropped, and it is for a
+/// challenge no registry ever mints.
+///
+/// No prover cache is supplied, so what is measured is the FIRST prove of a
+/// run, the one that also builds the STARK setup; the dense path reuses that
+/// setup for wins 2..k, so a k > 1 run's average certificate is somewhat
+/// cheaper than this. The resulting tier is therefore a touch harder than the
+/// identity calls for, i.e. the realized recovery is a touch ABOVE
+/// `R/(R+1)` — an error that costs wall clock and moves every host the same
+/// way, which is the direction that leaves the ranking alone.
+pub fn calibrate_prove_secs() -> f64 {
+    let challenge = dev_challenge();
+    let (a, b) = synth_matrices(&challenge, &AI_PARAMS);
+    // T = all ones: the loosest dense target there is, so extranonce 0 wins.
+    let reachable = [0xffu8; 32];
+    let nonce = extranonce_nonce(0);
+    // Context construction is outside the clock, exactly as in [`prove_wins`]
+    // — it is ~2 ms of attempt work, not proving.
+    let ctx =
+        BlockContext::build(&challenge, &nonce, &a, &b, &AI_PARAMS).expect("BlockContext::build");
+    let t0 = Instant::now();
+    prove_ai_pow_compact_recursive_certificate(&ctx, &AI_PARAMS, &nonce, &reachable, 0)
+        .expect("prove throwaway calibration certificate");
+    t0.elapsed().as_secs_f64().max(1e-9)
 }
 
 /// Grind extranonces 0, 1, 2, … strictly ascending (the fixed rule — the AI
@@ -584,32 +669,125 @@ mod tests {
         assert_eq!(pow2_target(256), None);
     }
 
-    /// The calibration heuristic: a tier sized so k wins expect ~60 s of grind,
-    /// from a synthetic rate (no grinding here — the measurement itself is the
-    /// slow part and is exercised by the real local run).
+    /// What fraction of a machine's true grind throughput survives the SERVER
+    /// window for a `k`-win run at `tier` — the quantity
+    /// [`AI_TIER_PROVE_RATIO`] exists to hold constant across hosts.
+    fn recovery(attempts_per_win: f64, attempts_per_sec: f64, prove_secs: f64, k: u64) -> f64 {
+        let grind = attempts_per_win * k as f64 / attempts_per_sec;
+        let proving = prove_secs * k as f64;
+        grind / (grind + proving)
+    }
+
+    /// **The identity the whole scheme rests on**: sizing a tier as
+    /// `rate · R · prove_secs` recovers exactly `R/(R+1)` of true throughput —
+    /// for any rate, any prove time, and any k.
+    ///
+    /// Asserted on the UNROUNDED tier, because that is where the identity is
+    /// exact; [`grant_attempts`]'s power-of-two rounding perturbs it by at most
+    /// a rounding step, which the measured-machine test below bounds.
     #[test]
-    fn tier_for_rate_targets_the_grind_budget() {
-        // A CPU at 15 000 attempts/s, k=4: 15000·60/4 = 225 000 ⇒ nearest tier
-        // 2^18 = 262 144, i.e. ~70 s of expected grinding for the four wins.
-        let tier = tier_for_rate(15_000.0, 4);
-        assert_eq!(tier, 1 << 18);
-        let grind_secs = tier as f64 * 4.0 / 15_000.0;
-        assert!(
-            (40.0..=100.0).contains(&grind_secs),
-            "{grind_secs}s is not within a rounding step of the 60 s budget"
+    fn prove_ratio_recovery_is_uniform_across_hosts_and_k() {
+        let ideal = AI_TIER_PROVE_RATIO / (AI_TIER_PROVE_RATIO + 1.0);
+        assert!((ideal - 2.0 / 3.0).abs() < 1e-12, "R=2 means 2/3 recovery");
+        for (rate, prove_secs) in [
+            (3_394.0f64, 26.0f64),   // the reference CPU core, slow prover
+            (3_394.0, 7.4),          // …the same core next to a fast prover
+            (1.95e6, 26.0),          // a GPU behind the slow prover
+            (2.86e6, 7.4),           // a GPU behind the fast one
+            (9.26e5, 10.5),          // the 3090 as measured in aipow_gpu
+            (1.0, 0.25),             // hopeless machine, fast prover
+        ] {
+            let unrounded = rate * AI_TIER_PROVE_RATIO * prove_secs;
+            for k in [1u64, 2, 4, 8, 64] {
+                let got = recovery(unrounded, rate, prove_secs, k);
+                assert!(
+                    (got - ideal).abs() < 1e-9,
+                    "rate {rate}, prove {prove_secs}s, k={k}: recovery {got} != {ideal}"
+                );
+            }
+        }
+        // The host-dependence is what is gone: the SAME card behind a 26 s
+        // prover and behind a 7.4 s one now recovers the same fraction. Under
+        // the 60 s-budget rule those two were 35% and 66%.
+        let rate = 2.86e6;
+        let slow = recovery(rate * AI_TIER_PROVE_RATIO * 26.0, rate, 26.0, 4);
+        let fast = recovery(rate * AI_TIER_PROVE_RATIO * 7.4, rate, 7.4, 4);
+        assert!((slow - fast).abs() < 1e-9, "{slow} vs {fast}");
+    }
+
+    /// The three machines actually measured on the live board: the tier they
+    /// now ask for is inside the clamp, has a target, and lands within one
+    /// power-of-two rounding step of the 67% recovery the identity promises.
+    ///
+    /// A rounding step is ×2^±0.5, so the realized ratio is `R·f` for
+    /// `f ∈ [1/√2, √2]` and recovery lies in [0.586, 0.739]. The old rule put
+    /// these same three machines at 35% / 51% / 66% — the spread this test
+    /// pins shut.
+    #[test]
+    fn measured_machines_land_near_the_promised_recovery() {
+        let lo = (AI_TIER_PROVE_RATIO / 2f64.sqrt()) / (AI_TIER_PROVE_RATIO / 2f64.sqrt() + 1.0);
+        let hi = (AI_TIER_PROVE_RATIO * 2f64.sqrt()) / (AI_TIER_PROVE_RATIO * 2f64.sqrt() + 1.0);
+        for (label, rate, prove_secs) in [
+            ("5090-class grind, 7.4s prover", 2.86e6f64, 7.4f64),
+            ("4090-class grind, 26s prover", 1.95e6, 26.0),
+            ("reference CPU core, 26s prover", 3_394.0, 26.0),
+        ] {
+            let tier = tier_for_prove_ratio(rate, prove_secs);
+            assert!(
+                (AI_ATTEMPTS_MIN..=AI_ATTEMPTS_MAX).contains(&tier),
+                "{label}: tier {tier} outside the clamp"
+            );
+            assert!(
+                target_for_attempts(tier, expected_attempts_per_win).is_some(),
+                "{label}: tier 2^{} has no dense target",
+                tier.ilog2()
+            );
+            for k in [1u64, 4] {
+                let got = recovery(tier as f64, rate, prove_secs, k);
+                assert!(
+                    (lo..=hi).contains(&got),
+                    "{label} at k={k}: recovery {got:.3} is more than a rounding \
+                     step from {:.3}",
+                    AI_TIER_PROVE_RATIO / (AI_TIER_PROVE_RATIO + 1.0)
+                );
+            }
+        }
+        // Spelled out for the fastest of the three so the arithmetic is
+        // readable: 2.86e6 · 2 · 7.4 = 4.23e7 = 2^25.3 ⇒ tier 2^25, i.e. ~11.7 s
+        // of grinding per win against a 7.4 s certificate.
+        assert_eq!(tier_for_prove_ratio(2.86e6, 7.4), 1 << 25);
+    }
+
+    /// Clamping and degenerate inputs: every measurement, however bad, yields a
+    /// runnable tier rather than 0, NaN or a panic.
+    #[test]
+    fn tier_for_prove_ratio_clamps_and_survives_bad_measurements() {
+        // Above the ceiling and below the floor.
+        assert_eq!(
+            tier_for_prove_ratio(3.0e8, 26.0),
+            AI_ATTEMPTS_MAX,
+            "clamped, not wild"
         );
-        // A GPU-class rate at k=1 wants far more work, and gets it: 3e6·60 =
-        // 1.8e8, whose nearest tier in log space is 2^27 (2^27.4).
-        assert_eq!(tier_for_rate(3.0e6, 1), 1 << 27);
-        assert_eq!(tier_for_rate(3.0e8, 1), AI_ATTEMPTS_MAX, "clamped, not wild");
-        // A hopeless machine still gets a runnable tier rather than 0 or NaN.
-        assert_eq!(tier_for_rate(1.0, 4), AI_ATTEMPTS_MIN);
-        assert_eq!(tier_for_rate(0.0, 1), AI_ATTEMPTS_MIN);
-        assert_eq!(tier_for_rate(f64::NAN, 1), AI_ATTEMPTS_MIN);
-        // Every rate yields a tier that has a target.
+        // Finite but past u64: `as u64` saturates, then the clamp catches it.
+        assert_eq!(tier_for_prove_ratio(1.0e30, 1.0e6), AI_ATTEMPTS_MAX);
+        // Overflow to infinity is NOT saturation — it degrades to the floor,
+        // which is the safe direction for a measurement that made no sense.
+        assert_eq!(tier_for_prove_ratio(1.0e300, 1.0e300), AI_ATTEMPTS_MIN);
+        assert_eq!(tier_for_prove_ratio(1.0, 26.0), AI_ATTEMPTS_MIN);
+        assert_eq!(tier_for_prove_ratio(3_394.0, 0.0), AI_ATTEMPTS_MIN);
+        // A zero/negative/NaN measurement degrades to the floor.
+        assert_eq!(tier_for_prove_ratio(0.0, 26.0), AI_ATTEMPTS_MIN);
+        assert_eq!(tier_for_prove_ratio(-1.0, 26.0), AI_ATTEMPTS_MIN);
+        assert_eq!(tier_for_prove_ratio(3_394.0, -26.0), AI_ATTEMPTS_MIN);
+        assert_eq!(tier_for_prove_ratio(f64::NAN, 26.0), AI_ATTEMPTS_MIN);
+        assert_eq!(tier_for_prove_ratio(3_394.0, f64::NAN), AI_ATTEMPTS_MIN);
+        assert_eq!(tier_for_prove_ratio(f64::INFINITY, 26.0), AI_ATTEMPTS_MIN);
+        // Every (rate, prove) pair yields a tier that has a target.
         for rate in [1.0, 3_394.0, 15_000.0, 3.0e6, 1.0e12] {
-            let t = tier_for_rate(rate, 4);
-            assert!(target_for_attempts(t, expected_attempts_per_win).is_some());
+            for prove_secs in [0.5, 7.4, 26.0] {
+                let t = tier_for_prove_ratio(rate, prove_secs);
+                assert!(target_for_attempts(t, expected_attempts_per_win).is_some());
+            }
         }
     }
 

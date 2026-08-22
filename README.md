@@ -68,12 +68,17 @@ itself uses to compare AI work of different tile shapes — convertible to
 ZK-attempt-equivalents at the consensus exchange rate; details at
 https://nockmark.xyz/api.
 
-`ai-bench` measures your machine for ~2 s first and asks the registry for a
-difficulty **tier** sized so the grind takes about a minute — otherwise fast
+`ai-bench` measures your machine first — ~2 s of grinding plus one throwaway
+certificate prove (~7-26 s) — and asks the registry for a difficulty **tier**
+sized so each win grinds for twice that measured prove time. Otherwise fast
 hardware finishes grinding in milliseconds and its ranked rate is nothing but
-the fixed certificate-proving cost inside the measured window. Pass
+the fixed certificate-proving cost inside the measured window. Sizing against
+your own prove time is what makes the comparison fair across machines: every
+host's ranked rate then recovers the same ~2/3 of its true grind throughput,
+instead of a fraction that depends on whichever CPU did the proving. Pass
 `--attempts <n>` to pick the tier yourself (expected grind attempts per win) or
-`--target <hex>` to pin the difficulty outright; either skips the calibration.
+`--target <hex>` to pin the difficulty outright; either skips the calibration,
+including the prove.
 Choosing a tier cannot inflate a rate: an easy one earns less credit against
 that same fixed proving cost, and a hard one has to actually be ground out,
 attempt by verified attempt.
