@@ -141,11 +141,14 @@
 
 <div class="endpoint">
   <p><b>What these rates cover.</b> The AI track grinds the canonical block
-  shape. Nockchain also admits mining inside real model inference, where the
-  tickets ride a matmul the host was already computing for its own users —
-  upstream measures that path at roughly a thousandfold more MAC-equivalents
-  per second on the same GPU. Rates here are verified and mutually comparable;
-  they are not a ceiling for the hardware. The ZK track is CPU-only for a
+  shape, and the GPU rows are behind upstream: they use the generic CUDA
+  kernel at the nockchain commit this registry pins, and two days after that
+  pin upstream made a peak kernel the production default — the same card on
+  the same statement goes from 0.19 to 335 TMAC/s, about 1,700x. Read the GPU
+  rows as a floor for the hardware; a re-pin and re-run is pending. Nockchain
+  also admits mining inside real model inference, at throughput comparable to
+  the optimised dedicated kernel — the notable part being that the compute is
+  dual-use, not that it is faster. The ZK track is CPU-only for a
   different reason: its GPU provers are closed source and report unverifiable
   pool units, so they are absent rather than taken on trust.</p>
 </div>

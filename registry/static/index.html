@@ -163,13 +163,15 @@
   fixed cost, and a hard one has to actually be ground out, attempt by verified
   attempt. CPU and GPU rows rank together: the device only searches for jackpots, and every win it finds is
   re-checked and certified on the CPU before this server verifies it.</p>
-  <p class="econ">These runs grind the <b>canonical block shape</b> — a small
-  tile, mined for its own sake. Nockchain also admits mining inside real model
-  inference, where the tickets ride a matmul the host was computing anyway for
-  its own users; upstream measures that path at roughly a thousandfold more
-  MAC-equivalents per second on the same card. The rates below are verified and
-  comparable to each other, and they are not what a machine earning its keep on
-  inference would post.</p>
+  <p class="econ"><b>These GPU figures are behind upstream.</b> They were
+  measured with the generic CUDA kernel at the nockchain commit this registry
+  pins. Two days after that pin, upstream made a peak kernel the production
+  default and reports the same card on the same statement going from 0.19 to
+  335 TMAC/s — about 1,700× — so treat the GPU rows here as a floor for the
+  hardware, not a measurement of it. A re-pin and re-run is the next thing on
+  the list. (Nockchain also admits mining inside real model inference, at
+  throughput comparable to the optimised dedicated kernel; the interesting
+  part there is that the compute is dual-use, not that it is faster.)</p>
 </section>
 
 <section class="submit">
