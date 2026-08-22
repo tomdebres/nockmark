@@ -429,6 +429,36 @@ pub fn calibrate_moe_attempts_per_sec(budget: Duration) -> f64 {
     attempts as f64 / t0.elapsed().as_secs_f64().max(1e-9)
 }
 
+/// Measure what ONE canonical-MoE certificate costs this machine: prove a
+/// single throwaway block and time it.
+///
+/// The peer of [`crate::aipow::calibrate_prove_secs`] and the second half of
+/// the same pre-mint calibration — it must finish before the challenge is
+/// minted, for the reason [`calibrate_moe_attempts_per_sec`] gives.
+/// [`crate::aipow::tier_for_prove_ratio`] is denominated in this number.
+///
+/// Simpler than the dense peer in one respect: [`prove_canonical_moe_block_at`]
+/// takes no target at all — the canonical statement is a function of
+/// `(challenge, ordinal)` alone — so the throwaway needs no contrived win, just
+/// [`dev_challenge`] at ordinal 0. The block is dropped on return.
+///
+/// This is also the measurement a `--gpu` run uses, unchanged: the device
+/// grinds, the CPU proves, so the per-certificate cost is a property of the
+/// host and not of the backend.
+pub fn calibrate_moe_prove_secs() -> f64 {
+    let t0 = Instant::now();
+    prove_canonical_moe_block_at(
+        &AI_MOE_PARAMS,
+        AI_MOE_HW,
+        AI_MOE_E,
+        AI_MOE_TOP_K,
+        dev_challenge(),
+        0,
+    )
+    .expect("prove throwaway canonical-MoE calibration block");
+    t0.elapsed().as_secs_f64().max(1e-9)
+}
+
 // ---------------------------------------------------------------------------
 // Prove
 // ---------------------------------------------------------------------------

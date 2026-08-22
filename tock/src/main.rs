@@ -88,16 +88,18 @@ enum Command {
         /// Difficulty tier: expected grind attempts per win. Skips the
         /// self-calibration and asks for exactly this (rounded to the nearest
         /// power of two and clamped to [2^12, 2^30]). Without it, and without
-        /// --target, ai-bench measures this machine for ~2 s and picks a tier
-        /// sized for ~60 s of grinding across all k wins — which is what lets
-        /// fast hardware be measured on its grind rate instead of on the fixed
-        /// certificate-proving cost.
+        /// --target, ai-bench first measures this machine — ~2 s of grinding
+        /// AND one throwaway certificate prove (~7-26 s, the same cost a real
+        /// win pays) — and sizes each win's grind at 2x that measured prove
+        /// time, which is what lets fast hardware be ranked on its grind rate
+        /// instead of on whichever CPU happened to do the proving. Pass
+        /// --attempts (or --target) to skip that startup cost entirely.
         #[arg(long)]
         attempts: Option<u64>,
         /// Jackpot wins to find (each win costs a ~24 s certificate prove).
-        /// Also what the self-calibrated tier is sized for; with --submit the
-        /// registry's own k takes over for the run itself, so pass the
-        /// registry's k here if you want the grind budget to land exactly.
+        /// The self-calibrated tier does NOT depend on k — it is sized per win
+        /// — so with --submit a differing registry k only changes how long the
+        /// run takes, not how hard it is.
         #[arg(short, long, default_value_t = 1)]
         k: u64,
         /// Directory to write win certificates into (cert-<extranonce>.bin).
@@ -529,16 +531,18 @@ fn resolve_backend(statement: client::AiStatement, gpu: bool, gpu_batch: Option<
 /// difficulty with `--target`; leave it alone".
 ///
 /// Runs BEFORE the challenge is minted and before either grind window opens, so
-/// the ~2 s of calibration is charged to nothing. `--attempts` skips the
-/// measurement entirely.
+/// the whole calibration — the ~2 s rate measurement AND the one throwaway
+/// certificate — is charged to nothing. `--attempts` (and `--target`) skip both
+/// measurements entirely, which is the way to avoid paying for the prove.
 ///
-/// The heuristic is one line — measure, then size the grind for
-/// [`aipow::AI_TIER_GRIND_BUDGET_SECS`] across all k wins — and the reason it
-/// is safe to let the client run it is that the tier is not a claim. The
-/// registry re-derives the target from the tier, verifies every win against it,
-/// and credits exactly the attempts that target implies. A machine that
-/// overestimates itself simply grinds longer; one that underestimates itself
-/// reports a looser lower bound than it deserved.
+/// The heuristic is one line — measure this machine's grind rate and its
+/// per-certificate prove time, then ask for
+/// [`aipow::AI_TIER_PROVE_RATIO`] × one certificate's worth of grinding per win
+/// — and the reason it is safe to let the client run it is that the tier is not
+/// a claim. The registry re-derives the target from the tier, verifies every
+/// win against it, and credits exactly the attempts that target implies. A
+/// machine that overestimates itself simply grinds longer; one that
+/// underestimates itself reports a looser lower bound than it deserved.
 fn resolve_tier(
     statement: client::AiStatement,
     backend: Backend,
@@ -573,36 +577,47 @@ fn resolve_tier(
         }
         (client::AiStatement::CanonicalMoe, _) => aipow_moe::calibrate_moe_attempts_per_sec(budget),
     };
-    let tier = aipow::tier_for_rate(rate, k);
+    // The prove half is chosen by STATEMENT and not by backend, because
+    // certificates are proved on the CPU on every path — the GPU only grinds.
+    // This is the expensive part of the calibration (~7-26 s, one certificate).
+    let prove_secs = match statement {
+        client::AiStatement::Dense => aipow::calibrate_prove_secs(),
+        client::AiStatement::CanonicalMoe => aipow_moe::calibrate_moe_prove_secs(),
+    };
+    // No k: the tier is sized per win against one certificate, and both halves
+    // scale with k, so the grind/prove mix the board sees is the same at any k.
+    let tier = aipow::tier_for_prove_ratio(rate, prove_secs);
     eprintln!(
-        "calibration: {rate:.0} attempts/sec measured over {:.0}s on {} \
-         -> tier 2^{} ({tier} expected attempts/win, ~{:.0}s of grinding for k={k})",
+        "calibration: {rate:.0} attempts/sec measured over {:.0}s on {}, \
+         {prove_secs:.1}s per certificate -> tier 2^{} ({tier} expected \
+         attempts/win, ~{:.0}s of grinding vs ~{:.0}s of proving for k={k})",
         aipow::AI_CALIBRATION_SECS,
         backend.label(),
         tier.ilog2(),
         tier as f64 * k as f64 / rate.max(1e-9),
+        prove_secs * k as f64,
     );
     Some(tier)
 }
 
-/// Warn when the registry's k differs from the one the tier was sized for.
+/// Note when the registry's k differs from the one the run was quoted for.
 ///
 /// The tier has to be chosen before the challenge exists (it is a parameter OF
-/// the challenge request), so with `--submit` it is sized for the local `-k`.
-/// If the registry wants a different k the grind simply scales — the run is
-/// still correct, just longer or shorter than the budget — so this is a note,
-/// not an error.
+/// the challenge request), so with `--submit` the wall clock printed by
+/// [`resolve_tier`] is for the local `-k`. The TIER itself is k-independent
+/// under [`aipow::AI_TIER_PROVE_RATIO`] — grinding and proving both scale with
+/// the number of wins, so the mix the board measures is unchanged — and only
+/// the run length moves. Hence a note, not an error.
 fn note_k_mismatch(registry_ch: Option<&client::AiRegistryChallenge>, tier: Option<u64>, k: u64) {
     let Some(rc) = registry_ch else { return };
     if rc.k == k || tier.is_none() {
         return;
     }
     eprintln!(
-        "note: the tier was sized for k={k} but the registry wants k={}; \
-         expect the grind to take {:.1}x the ~{:.0}s budget",
+        "note: the run was quoted for k={k} but the registry wants k={}; \
+         the tier stands (it is per-win) — expect {:.1}x the wall clock",
         rc.k,
         rc.k as f64 / k as f64,
-        aipow::AI_TIER_GRIND_BUDGET_SECS,
     );
 }
 

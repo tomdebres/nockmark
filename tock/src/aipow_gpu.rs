@@ -55,17 +55,21 @@
 //!
 //! `ai-bench --gpu` self-calibrates through the same `resolve_tier` path as
 //! every other run, just with [`calibrate_moe_attempts_per_sec`] supplying the
-//! rate. That is the entire reason M6 shipped tiers before it shipped CUDA: at
-//! the CPU-calibrated `T_b = 2^224` a GPU finishes the grind in milliseconds
-//! and the run degenerates into a measurement of `prove_canonical_moe_block_at`,
-//! which is not the thing the AI board ranks. Let the machine measure itself
-//! and the tier moves with it.
+//! rate — the prove half of that calibration is
+//! [`crate::aipow_moe::calibrate_moe_prove_secs`] either way, because the
+//! device never certifies anything. That is the entire reason M6 shipped tiers
+//! before it shipped CUDA: at the CPU-calibrated `T_b = 2^224` a GPU finishes
+//! the grind in milliseconds and the run degenerates into a measurement of
+//! `prove_canonical_moe_block_at`, which is not the thing the AI board ranks.
+//! Let the machine measure itself and the tier moves with it.
 //!
-//! Observed on the 3090 (see [`MEASURED_3090_ATTEMPTS_PER_SEC`]), at `k = 4`:
-//! the calibration measures ~926 k attempts/sec, `tier_for_rate` asks for
-//! `2^24`, and the grind then takes ~35 s against ~42 s of CPU proving — a
-//! window the throughput term actually shows up in. The same machine at the
-//! CPU-calibrated `2^16` tier would have ground for 0.07 s.
+//! Observed on the 3090 (see [`MEASURED_3090_ATTEMPTS_PER_SEC`]): the
+//! calibration measures ~926 k attempts/sec against a ~10.5 s certificate (the
+//! ~42 s of CPU proving that k = 4 run paid, per win), so
+//! [`crate::aipow::tier_for_prove_ratio`] asks for `2^24` and each win then
+//! grinds ~18 s against that ~10.5 s of CPU proving — a window the throughput
+//! term actually shows up in, at any `k`, since both halves scale together. The
+//! same machine at the CPU-calibrated `2^16` tier would have ground for 0.07 s.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
