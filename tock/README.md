@@ -9,7 +9,12 @@ See also: [M2 Registry Deployment Runbook](../docs/superpowers/specs/2026-07-15-
 
 ## Prerequisites
 
-- The nockchain checkout at `../../../nockchain` (this crate uses path deps).
+- Nothing for the Rust build: the nockchain crates come by git, pinned to one
+  `rev` in `Cargo.toml` (every nockchain line carries the same rev; bump them
+  together with `NOCKCHAIN_PIN` in `src/miner.rs` on a re-pin). Cargo fetches
+  them once into `~/.cargo/git`, so any checkout or worktree builds as-is.
+- A nockchain checkout at that same commit only to compile the kernel jams
+  below (`$NOCKCHAIN` here; anywhere on disk).
 - `protoc` on PATH (`brew install protobuf` / `apt install protobuf-compiler`).
   The AI track's canonical-MoE client links `ai-pow-miner`'s `node` feature —
   the canonical grind/prove path lives behind it — which pulls `nockapp-grpc`.
@@ -30,16 +35,16 @@ nockchain repo). Two hoonc quirks: it writes the output jam into the
 dir cannot be reused — use a fresh one per kernel.
 
 ```sh
-cd ../../../nockchain
+cd "$NOCKCHAIN"   # checked out at the rev pinned in Cargo.toml
 cargo build --release -p hoonc
 # miner kernel (the prover — the kernel mainnet mining uses), ~6 min
 target/release/hoonc --new --data-dir /tmp/hoonc-miner \
   --output miner.jam hoon/apps/dumbnet/miner.hoon hoon
-mv miner.jam ../nockmark/m0-prover-spike/tock/assets/
+mv miner.jam <nockmark>/tock/assets/
 # roswell kernel (test harness exposing %verify-proof), ~17 min
 target/release/hoonc --new --data-dir /tmp/hoonc-roswell \
   --output roswell.jam hoon/apps/roswell/roswell.hoon hoon
-mv roswell.jam ../nockmark/m0-prover-spike/tock/assets/
+mv roswell.jam <nockmark>/tock/assets/
 ```
 
 ## Bench
