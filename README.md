@@ -110,8 +110,13 @@ rate-related is.
 - `docs/` — write-up, design notes, deploy runbook
 - `deploy/`, `Dockerfile`, `railway.json` — the deployed instance
 
-Building requires a nockchain checkout at `1372f270` (path dependencies —
-expected location and toolchain pinning in `tock/README.md`).
+The nockchain crates are git dependencies pinned to one commit in
+`tock/Cargo.toml` and `registry/Cargo.toml`, so any checkout builds without a
+sibling nockchain tree; toolchain and kernel-jam steps are in `tock/README.md`.
+
+`./verify --fast` (syntax checks, under a second) and `./verify` (adds the
+tock and registry test suites) are the checks a change must pass before it
+opens a PR.
 
 Runs from hardware not yet on the board are the most useful contribution —
 especially modern desktop CPUs and big-core-count servers.

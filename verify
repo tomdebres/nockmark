@@ -1,0 +1,144 @@
+#!/bin/bash
+# ./verify: is this change right? The one command agents, land and the ship
+# gate agree on. From devkit's templates/verify: keep the shape, and fill in the
+# steps with commands this repo already runs.
+#
+#   ./verify --fast  Under 60 s, measured. devkit's Stop hook (verify-nudge)
+#                    runs it when an agent's turn ends with the tree changed: a
+#                    nudge, CI is the gate. Nothing slow or shared: no
+#                    simulator, device, network, or lock another agent or a
+#                    nightly job needs.
+#   ./verify         Everything a PR needs before it opens: the fast steps,
+#                    then the slow ones. land runs it.
+#
+# Exits 0 when every step passed, 1 at the first that failed, 2 on usage. With
+# no steps it fails: a check that has never run proves nothing. It never
+# changes tracked files: the agent is the only writer.
+set -eu
+cd "$(dirname "$0")"
+
+usage() { echo "usage: ./verify [--fast]" >&2; exit 2; }
+[ $# -le 1 ] || usage
+case "${1-}" in
+  --fast) mode=fast ;;
+  '') mode=full ;;
+  *) usage ;;
+esac
+
+steps=0
+# step <name> <command> [args...]: run it, stop at the first failure. Give it
+# a command or a script, not a shell function: a function runs without set -e
+# here, so a failure inside it can pass.
+step() {
+  name=$1
+  shift
+  steps=$((steps + 1))
+  echo "verify: $name"
+  t=$SECONDS
+  if "$@"; then
+    echo "verify: $name ok ($((SECONDS - t)) s)"
+  else
+    rc=$?
+    echo "verify: FAILED $name (exit $rc, $((SECONDS - t)) s)"
+    exit 1
+  fi
+}
+
+# ---- fast: under 60 s together --------------------------------------------
+# Syntax and parse checks only: nothing here compiles Rust. tock/ and registry/
+# build the nockchain prover stack (a cold build is minutes, and a fresh
+# worktree is always cold), so every cargo step is full-only. File lists come
+# from git: tracked files and new ones not yet added, never ignored ones.
+# aipow-spike/ is left out: it is the M5 Task-1 spike, path-pinned to a
+# nockchain-v3 checkout that no longer exists, and nothing builds it.
+files() {
+  git ls-files -z --cached --others --exclude-standard -- "$@" |
+    while IFS= read -r -d '' f; do
+      case $f in aipow-spike/*) continue ;; esac
+      [ ! -f "$f" ] || printf '%s\0' "$f"
+    done
+}
+sh=() py=() json=() toml=() html=()
+while IFS= read -r -d '' f; do sh+=("$f"); done < <(files '*.sh')
+while IFS= read -r -d '' f; do py+=("$f"); done < <(files '*.py')
+while IFS= read -r -d '' f; do json+=("$f"); done < <(files '*.json')
+while IFS= read -r -d '' f; do toml+=("$f"); done < <(files '*.toml')
+while IFS= read -r -d '' f; do html+=("$f"); done < <(files 'registry/static/*.html')
+# An empty list would pass a check without it checking anything.
+for n in "${#sh[@]}" "${#py[@]}" "${#json[@]}" "${#toml[@]}" "${#html[@]}"; do
+  [ "$n" -gt 0 ] || { echo "verify: FAILED listing files: git found none of one kind"; exit 1; }
+done
+
+step "bash -n: ${#sh[@]} .sh" \
+  xargs -0 -n1 bash -n < <(printf '%s\0' "${sh[@]}")
+# ast.parse, not py_compile: no __pycache__ is written.
+step "python parse: ${#py[@]} .py" \
+  python3 -I -c 'import ast, sys
+bad = 0
+for f in sys.argv[1:]:
+    try: ast.parse(open(f, encoding="utf-8").read(), f)
+    except SyntaxError as e: print(f"{f}: {e}", file=sys.stderr); bad = 1
+sys.exit(bad)' "${py[@]}"
+step "JSON parse: ${#json[@]} .json (railway.json, bench-results/)" \
+  python3 -I -c 'import json, sys
+bad = 0
+for f in sys.argv[1:]:
+    try: json.load(open(f, encoding="utf-8"))
+    except ValueError as e: print(f"{f}: {e}", file=sys.stderr); bad = 1
+sys.exit(bad)' "${json[@]}"
+step "TOML parse: ${#toml[@]} .toml (Cargo manifests, .cargo/config)" \
+  python3 -I -c 'import sys, tomllib
+bad = 0
+for f in sys.argv[1:]:
+    try: tomllib.load(open(f, "rb"))
+    except tomllib.TOMLDecodeError as e: print(f"{f}: {e}", file=sys.stderr); bad = 1
+sys.exit(bad)' "${toml[@]}"
+# The board and /api pages are served verbatim by the registry, and their
+# inline JS (rendering, number formatting) is checked by nothing else. Each
+# inline <script> goes to a temp file outside the checkout for node --check.
+step "node --check: inline <script> in ${#html[@]} registry/static/*.html" \
+  python3 -I -c 'import re, subprocess, sys, tempfile, os
+bad = 0
+with tempfile.TemporaryDirectory() as d:
+    for f in sys.argv[1:]:
+        src = open(f, encoding="utf-8").read()
+        for i, m in enumerate(re.finditer(r"<script(?![^>]*\bsrc=)([^>]*)>(.*?)</script>", src, re.S)):
+            ext = ".mjs" if "module" in m.group(1) else ".js"
+            p = os.path.join(d, f"{os.path.basename(f)}.{i}{ext}")
+            open(p, "w", encoding="utf-8").write(m.group(2))
+            r = subprocess.run(["node", "--check", p], capture_output=True, text=True)
+            if r.returncode: print(f"{f} <script> #{i}:\n{r.stderr}", file=sys.stderr); bad = 1
+sys.exit(bad)' "${html[@]}"
+
+if [ "$mode" = full ]; then
+  # ---- full only: slow, or needs something shared -------------------------
+  # The pinned nightly (rust-toolchain is not a rustup install on the Studio:
+  # see tock/README.md), when it is there; otherwise whatever cargo is on PATH.
+  tc="$HOME/.rustup/toolchains/nightly-2026-04-03-aarch64-apple-darwin/bin"
+  [ ! -d "$tc" ] || PATH="$tc:$PATH"
+  export PATH RUST_MIN_STACK=8388608
+  # One target dir for both crates (registry depends on tock), inside this
+  # checkout so it goes when the worktree does. Cold: ~minutes; warm: seconds.
+  export CARGO_TARGET_DIR="$PWD/target"
+  # registry compiles roswell.jam in (KERNEL_JAM_PATH, registry/.cargo) and its
+  # tests boot registry.jam; both are gitignored under tock/assets/. Seed them
+  # from the committed deploy/assets/ copies, the ones production runs, only
+  # when absent: a jam already there may be a newer local build.
+  step 'seed tock/assets/ from deploy/assets/ (when absent)' \
+    bash -c 'mkdir -p tock/assets && for j in roswell registry; do
+      [ -e "tock/assets/$j.jam" ] || cp "deploy/assets/$j.jam" "tock/assets/$j.jam"; done'
+  # From inside each crate, not --manifest-path: cargo finds .cargo/config.toml
+  # from the directory it runs in, and registry's sets KERNEL_JAM_PATH.
+  # (Cargo also prints an "invalid character `{`" error for a template
+  # Cargo.toml in the nockchain git checkout; it is a scan warning, not a
+  # failure.)
+  step 'cargo test: tock' bash -c 'cd tock && cargo test'
+  step 'cargo test: registry' bash -c 'cd registry && cargo test'
+fi
+
+if [ "$steps" -eq 0 ]; then
+  echo "verify: no steps yet: add this repo's checks to ./verify" >&2
+  exit 1
+fi
+[ "$mode" = fast ] && label='./verify --fast' || label='./verify'
+echo "$label: ok, $steps steps, $SECONDS s"
