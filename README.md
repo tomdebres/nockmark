@@ -10,8 +10,17 @@ mining workloads against a server-issued challenge, the registry checks
 every STARK, and your rate is computed from the server's own clock. The
 published number is a lower bound that nobody can inflate — including you.
 
+> **Nockchain moved under this board (Nov 2026).** Since block 147,500
+> (Anthropos, ZK proof version 5) a ZK mining attempt is one Tip5 hash, and a
+> full STARK is built only for a winning nonce; AI-PoW now carries ~70% of
+> blocks. The ZK board below still measures complete proofs per second, so it
+> is a proving benchmark rather than a mining rate, and carries no earnings
+> estimate. A v5 hash-rate track (CPU and the open-source CUDA miner) is in
+> progress; the plan is in
+> [docs/superpowers/specs/2026-11-11-m7-anthropos.md](docs/superpowers/specs/2026-11-11-m7-anthropos.md).
+
 - Leaderboard: https://nockmark.xyz/ (JSON at `/leaderboard`)
-- Earnings estimates: https://nockmark.xyz/economics
+- Earnings estimates (AI track; every input published): https://nockmark.xyz/economics
 - Write-up with cross-hardware results (M1, Graviton4, EPYC, Xeon):
   [docs/writeups/2026-07-15-first-public-nockchain-proving-benchmarks.md](docs/writeups/2026-07-15-first-public-nockchain-proving-benchmarks.md)
 

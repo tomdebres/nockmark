@@ -83,9 +83,20 @@
   <ul class="fields">
     <li><code>proofs_per_sec</code> — k / server-observed window; the ranked, trustless rate (a lower bound)</li>
     <li><code>self_reported_pps</code> — k / client-reported elapsed time; informational only</li>
-    <li><code>est_nock_per_day</code>, <code>network_share</code> — economics estimates, present when configured</li>
   </ul>
+  <p>ZK rows carry no earnings estimate. Every row was proved before height
+  147,500 (Anthropos, ZK proof version 5), as complete proofs per second;
+  since then a ZK mining attempt is one Tip5 hash and network difficulty
+  counts hashes, so a proofs/sec figure prices nothing. Rows served before
+  M7 carried <code>est_nock_per_day</code> ≈ 0 and a
+  <code>network_share</code>; both are gone.</p>
   <pre>curl https://nockmark.xyz/leaderboard</pre>
+  <p><code>?track=ai</code> returns the AI-PoW board instead: rates in
+  MAC-equivalents per second, plus <code>est_nock_per_day</code> and
+  <code>est_usd_per_day</code> computed from the ranked
+  <code>verified_mac_per_sec_lb</code>. Those two are absent until an
+  <code>ai-pow</code> block has actually been seen at the chain tip — AI
+  difficulty cannot be derived from the ZK figure.</p>
 </div>
 
 <div class="endpoint">
@@ -96,16 +107,34 @@
 
 <div class="endpoint">
   <div class="sigline"><span class="verb">GET</span>/economics</div>
-  <p>Current network difficulty (expected proof attempts per block,
-  auto-refreshed from the chain), block reward, and the estimated
-  whole-network proving rate. Pass <code>?pps=</code> to price a rate of
-  your own.</p>
-  <pre>curl 'https://nockmark.xyz/economics?pps=0.22'</pre>
+  <p>Every input behind every estimate this registry publishes, so you can
+  recompute any of them yourself: both difficulties — ZK
+  (<code>difficulty</code>, expected attempts per ZK block — Tip5 hashes since
+  height 147,500) and AI
+  (<code>ai_difficulty_mac_equiv_per_block</code> = 2^256 / (<code>ai_target</code>
+  + 1), expected MAC-equivalents per block) — each with its own
+  <code>*_observed_at</code> and <code>*_age_secs</code>; the NOCK price with
+  its source and age; the block reward; both block times; and the
+  MAC↔ZK-attempt exchange rate (14,285,714 MAC-equivalents per Tip5 hash
+  since height 154,500). <code>difficulty_source</code> and
+  <code>ai_difficulty_source</code> name where each figure came from — nockscan
+  first, NockBlocks when it fails — and <code>block_reward_observed_at</code>
+  says the reward (the 80% miner share) was read from the chain rather than
+  configured. <code>model</code> carries the formulas, <code>notes.excludes</code>
+  what they do not account for, and <code>notes.zk_board</code> why the ZK
+  board is unpriced.</p>
+  <p>Anything unobserved is omitted rather than defaulted: no AI block seen
+  means no <code>ai_*</code> keys, no price means no USD anywhere. Pass
+  <code>?zk_hashes_per_sec=</code> or <code>?mac_per_sec=</code> to price a
+  machine of your own on either puzzle. The old <code>?pps=</code> is answered
+  with a <code>pps_note</code> saying why, not with a number.</p>
+  <pre>curl 'https://nockmark.xyz/economics?zk_hashes_per_sec=1.8e7&amp;mac_per_sec=3.3e14'</pre>
 </div>
 
 <div class="endpoint">
   <div class="sigline"><span class="verb">GET</span>/economics/history</div>
-  <p>Difficulty over time as <code>[unix_secs, difficulty]</code> pairs,
+  <p>ZK difficulty over time as <code>[unix_secs, difficulty]</code> pairs
+  (points before height 147,500 count proofs, after it Tip5 hashes),
   oldest first, thinned to ≤ 1000 points. <code>?hours=</code> bounds the
   lookback (default 168, max 2160).</p>
   <pre>curl 'https://nockmark.xyz/economics/history?hours=720'</pre>
@@ -255,7 +284,7 @@
     <li><code>expected_attempts_per_win</code> — the difficulty tier this run was measured at, derived from its own stored <code>target</code> (so rows from before tiers existed carry it too). A tighter lower bound comes with a harder tier, because more of the window was grinding and less of it proving.</li>
     <li><code>verified_mac_per_sec_lb</code> — k · attempts-per-win · 2^16 / server window (issue → submit, proving included); the ranked lower bound</li>
     <li><code>grind_mac_per_sec</code> — same numerator over the client grind window; informational only</li>
-    <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 25.75e9, the consensus MAC↔ZK-attempt exchange rate</li>
+    <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 14,285,714, the consensus MAC↔ZK-attempt exchange rate since height 154,500; a ZK attempt is one Tip5 hash since Anthropos (rows served before M7 divided by the Logos rate, 25.75e9 per complete proof)</li>
     <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (k wins is Poisson: 1/√k)</li>
   </ul>
   <p>Runs are era-labeled by <code>prover_version</code>. Entries proved

@@ -178,9 +178,10 @@ pub const AI_WINDOW_MS: u64 = 3_600_000;
 /// grind window) — same "minutes of client work" envelope as the ZK k=8.
 pub const AI_K_DEFAULT: u64 = 4;
 
-/// Consensus exchange rate: MAC-equivalents per ZK proof attempt
-/// (`tx-engine.hoon`, Logos).
-pub const MAC_EQUIV_PER_ZK_ATTEMPT: f64 = 25.75e9;
+/// Consensus exchange rate: MAC-equivalents per ZK attempt — one Tip5 hash
+/// since Anthropos, 14,285,714 from height 154,500. Defined once, with its
+/// height table, in [`crate::economics`].
+pub use crate::economics::MAC_EQUIV_PER_ZK_ATTEMPT;
 
 /// Submission blob cap: the certificate's 150 KB consensus cap plus
 /// headroom for the statement metadata (nonce + PIs + trace height,
@@ -275,16 +276,11 @@ pub fn expected_attempts_per_win(target: &[u8; 32]) -> f64 {
     tock::aipow::expected_attempts_per_win(target)
 }
 
-/// Round to 4 significant digits — rate magnitudes here span ~1e-6
-/// (zk-attempt equivalents) to ~1e9 (MAC/s), so fixed decimal places
-/// would be either lossy or noisy.
-fn signif4(x: f64) -> f64 {
-    if x == 0.0 || !x.is_finite() {
-        return x;
-    }
-    let scale = 10f64.powf(3.0 - x.abs().log10().floor());
-    (x * scale).round() / scale
-}
+// Rounding to 4 significant digits — rate magnitudes here span ~1e-6
+// (zk-attempt equivalents) to ~1e11 (MAC/s), so fixed decimal places would
+// be either lossy or noisy. Shared with `economics`, which rounds its
+// earnings estimates the same way for the same reason; one helper, one home.
+use crate::economics::signif4;
 
 /// The computed board figures for one AI run.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -298,7 +294,7 @@ pub struct AiRates {
     /// Same numerator over the client-reported grind window (proving
     /// excluded) — display-only, like the ZK track's self_reported_pps.
     pub grind_mac_per_sec: f64,
-    /// verified_mac_per_sec_lb ÷ 25.75e9 (consensus MAC↔ZK-attempt
+    /// verified_mac_per_sec_lb ÷ 14,285,714 (consensus MAC↔ZK-attempt
     /// exchange rate).
     pub zk_attempt_equiv_per_sec: f64,
     /// ±1σ as a fraction of the rate: k wins is Poisson, so 1/√k.
@@ -894,7 +890,7 @@ mod tests {
         // signif4 rounds to 4 significant digits: 131072 → 131100 etc.
         assert_eq!(r.verified_mac_per_sec_lb, 131_100.0);
         assert_eq!(r.grind_mac_per_sec, 262_100.0);
-        assert_eq!(r.zk_attempt_equiv_per_sec, signif4(131_072.0 / 25.75e9));
+        assert_eq!(r.zk_attempt_equiv_per_sec, signif4(131_072.0 / 14_285_714.0));
         assert_eq!(r.sigma_frac, 0.5);
     }
 
@@ -916,15 +912,6 @@ mod tests {
         assert_eq!(attempts, 8192.0, "LE parse of the production target");
     }
 
-    #[test]
-    fn signif4_rounds_sanely() {
-        assert_eq!(signif4(123_456.0), 123_500.0);
-        assert_eq!(signif4(0.000123456), 0.0001235);
-        assert_eq!(signif4(0.0), 0.0);
-        assert_eq!(signif4(1.0), 1.0);
-    }
-
-    #[test]
     /// The sweep must remove exactly the other-pin context blobs and
     /// nothing else — it runs at boot against the live volume, where the
     /// neighbours are kernel state and the leaderboard's own JSONL.

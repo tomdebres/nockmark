@@ -30,35 +30,28 @@ pub struct LeaderboardEntry {
     pub proofs_per_sec: f64,
     /// k / client-reported elapsed_ms — informational only.
     pub self_reported_pps: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub est_nock_per_day: Option<f64>,
-    /// This run's share of the estimated whole-network proving rate
-    /// (difficulty / block time). Tiny by design — the network is pools
-    /// of GPUs; the board is single machines.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub network_share: Option<f64>,
+    // No earnings fields. Every row here is complete %3 proofs/sec from a
+    // pre-Anthropos pin, and since height 147,500 a ZK mining attempt is one
+    // Tip5 hash: there is nothing to price it against
+    // (`economics::ZK_PROOF_ROWS_UNPRICED`, published on /economics). Until
+    // M7 these rows printed est_nock_per_day ≈ 0 and a network_share; both
+    // were artefacts of dividing proofs by hashes.
 }
 
 fn round4(x: f64) -> f64 {
     (x * 10_000.0).round() / 10_000.0
 }
 
-fn to_entry(run: RunRecord, econ: Option<crate::economics::EconParams>) -> LeaderboardEntry {
+fn to_entry(run: RunRecord) -> LeaderboardEntry {
     let server_window_ms =
         crate::kernel::da_diff_to_ms(run.issued_at, run.submitted_at).max(1);
     let proofs_per_sec = round4(run.k as f64 / (server_window_ms as f64 / 1000.0));
     let self_reported_pps = round4(run.k as f64 / (run.elapsed_ms as f64 / 1000.0));
-    let est_nock_per_day =
-        econ.map(|p| round4(crate::economics::nock_per_day(proofs_per_sec, &p)));
-    let network_share =
-        econ.map(|p| proofs_per_sec / crate::economics::network_pps(&p));
     LeaderboardEntry {
         run,
         server_window_ms,
         proofs_per_sec,
         self_reported_pps,
-        est_nock_per_day,
-        network_share,
     }
 }
 
@@ -684,9 +677,22 @@ pub struct AiLeaderboardEntry {
     pub server_window_ms: u64,
     #[serde(flatten)]
     pub rates: crate::aipow::AiRates,
+    /// Estimated NOCK/day at the observed AI difficulty, from the RANKED
+    /// `verified_mac_per_sec_lb` — never the client-reported grind rate.
+    /// ABSENT until an `ai-pow` tip has actually been observed: an AI
+    /// difficulty cannot be derived from the ZK one, and a zero would read
+    /// as "this card earns nothing" rather than "we have not seen a block".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub est_nock_per_day: Option<f64>,
+    /// `est_nock_per_day × spot NOCK/USD`, absent on the same terms.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub est_usd_per_day: Option<f64>,
 }
 
-fn to_ai_entry(run: crate::aipow::AiRunRecord) -> AiLeaderboardEntry {
+fn to_ai_entry(
+    run: crate::aipow::AiRunRecord,
+    econ: Option<&crate::economics::EconParams>,
+) -> AiLeaderboardEntry {
     let server_window_ms = run.submitted_at_ms.saturating_sub(run.issued_at_ms).max(1);
     // The per-run persisted target; an unparseable one (torn line) falls
     // back to the max target, which can only UNDERSTATE the rate.
@@ -698,10 +704,21 @@ fn to_ai_entry(run: crate::aipow::AiRunRecord) -> AiLeaderboardEntry {
         server_window_ms,
         run.grind_elapsed_ms,
     );
+    // The published, already-rounded rate goes in, so the estimate is one a
+    // reader can reproduce from what the row itself prints.
+    let est_nock_per_day = econ.and_then(|p| {
+        crate::economics::ai_nock_per_day(rates.verified_mac_per_sec_lb, p)
+            .map(crate::economics::signif4)
+    });
+    let est_usd_per_day = est_nock_per_day
+        .zip(econ)
+        .and_then(|(nock, p)| crate::economics::usd_per_day(nock, p));
     AiLeaderboardEntry {
         run,
         server_window_ms,
         rates,
+        est_nock_per_day,
+        est_usd_per_day,
     }
 }
 
@@ -710,6 +727,7 @@ async fn leaderboard(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     if is_ai_track(&q) {
+        let econ = st.econ.read().await.clone();
         let mut entries: Vec<AiLeaderboardEntry> = st
             .ai
             .lock()
@@ -717,7 +735,7 @@ async fn leaderboard(
             .runs()
             .iter()
             .cloned()
-            .map(to_ai_entry)
+            .map(|run| to_ai_entry(run, econ.as_ref()))
             .collect();
         entries.sort_by(|a, b| {
             b.rates
@@ -727,11 +745,9 @@ async fn leaderboard(
         });
         return (StatusCode::OK, Json(entries)).into_response();
     }
-    let econ = *st.econ.read().await;
     match st.kernel.lock().await.leaderboard().await {
         Ok(runs) => {
-            let mut entries: Vec<LeaderboardEntry> =
-                runs.into_iter().map(|run| to_entry(run, econ)).collect();
+            let mut entries: Vec<LeaderboardEntry> = runs.into_iter().map(to_entry).collect();
             entries.sort_by(|a, b| b.proofs_per_sec.partial_cmp(&a.proofs_per_sec).unwrap_or(std::cmp::Ordering::Equal));
             (StatusCode::OK, Json(entries)).into_response()
         }
@@ -745,6 +761,7 @@ async fn run_by_id(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     if is_ai_track(&q) {
+        let econ = st.econ.read().await.clone();
         let entry = st
             .ai
             .lock()
@@ -753,7 +770,7 @@ async fn run_by_id(
             .iter()
             .find(|r| r.id == id)
             .cloned()
-            .map(to_ai_entry);
+            .map(|run| to_ai_entry(run, econ.as_ref()));
         return match entry {
             Some(e) => (StatusCode::OK, Json(Some(e))).into_response(),
             None => (
@@ -763,10 +780,9 @@ async fn run_by_id(
                 .into_response(),
         };
     }
-    let econ = *st.econ.read().await;
     match st.kernel.lock().await.leaderboard().await {
         Ok(runs) => {
-            let entry = runs.into_iter().find(|r| r.id == id).map(|run| to_entry(run, econ));
+            let entry = runs.into_iter().find(|r| r.id == id).map(to_entry);
             match entry {
                 Some(e) => (StatusCode::OK, Json(Some(e))).into_response(),
                 None => (StatusCode::NOT_FOUND, Json(None::<LeaderboardEntry>)).into_response(),
@@ -778,28 +794,130 @@ async fn run_by_id(
     }
 }
 
+/// Every input behind every published figure, so a reader can recompute any
+/// of them without trusting us — the same standard the rest of the registry
+/// holds itself to (a ranked rate is checkable because the certificates are
+/// re-verifiable; an earnings estimate is checkable because the inputs and
+/// the formulas are both printed).
+///
+/// Anything unobserved is OMITTED rather than defaulted: no AI block seen
+/// means no `ai_*` keys at all, no price means no `nock_usd*` keys and no
+/// `est_usd_per_day` anywhere on the board. Observation times are published
+/// alongside, plus their age at request time, because the two difficulties
+/// refresh at very different rates — ZK on nearly every 10-minute tick, AI
+/// only when the ~30% of blocks that are AI put one at the tip.
+///
+/// `?pps=` and `?mac_per_sec=` run the two models for an arbitrary machine.
 async fn economics(
     State(st): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let Some(p) = *st.econ.read().await else {
+    use crate::economics as econ;
+
+    let Some(p) = st.econ.read().await.clone() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({ "error": "economics not configured on this instance" })),
         );
     };
     let mut out = json!({
+        // --- ZK track inputs ---
         "difficulty": p.difficulty,
+        "block_time_secs": econ::block_time_secs(),
+        "est_network_zk_hashes_per_sec": econ::network_pps(&p),
+        // --- shared inputs ---
         "block_reward_nock": p.block_reward_nock,
-        "block_time_secs": crate::economics::block_time_secs(),
-        "est_network_pps": crate::economics::network_pps(&p),
-        "model": "est_nock_per_day = pps * 86400 / difficulty * block_reward_nock",
-        "note": "difficulty = expected proof attempts per block; estimates only",
+        // The consensus exchange rate between the two tracks' work units
+        // (height-selected in tx-engine.hoon). Published so the AI board's
+        // zk_attempt_equiv_per_sec is checkable too.
+        "mac_equiv_per_zk_attempt": econ::MAC_EQUIV_PER_ZK_ATTEMPT,
+        "mac_equiv_per_zk_attempt_since_height": 154_500,
+        "model": {
+            "zk": "est_nock_per_day = zk_hashes_per_sec * 86400 / difficulty * block_reward_nock",
+            "ai": "est_nock_per_day = mac_per_sec * 86400 / ai_difficulty_mac_equiv_per_block * block_reward_nock",
+            "ai_difficulty": "ai_difficulty_mac_equiv_per_block = 2^256 / (ai_target + 1)",
+            "usd": "est_usd_per_day = est_nock_per_day * nock_usd",
+        },
+        "notes": {
+            "difficulty": "expected attempts per ZK block; since height 147,500 (Anthropos, ZK proof %5) one attempt is one Tip5 hash of proof object 0, and a full proof is built only for a winning nonce",
+            "zk_board": econ::ZK_PROOF_ROWS_UNPRICED,
+            "ai_difficulty": "expected MAC-equivalents per AI block, independent of the tile shape a miner picked",
+            "block_reward_nock": "already the 80% miner share; an AI block and a ZK block pay a miner identically",
+            "ranked_input": "board estimates are computed from the ranked, server-measured rate (verified_mac_per_sec_lb), never a client-reported one",
+            "block_times": "ZK 500 s and AI 214 s ideal intervals since Anthropos (~30% ZK / ~70% AI blocks, ~150 s combined)",
+            "excludes": econ::EXCLUDED_FROM_ESTIMATES,
+        },
     });
-    if let Some(pps) = q.get("pps").and_then(|s| s.parse::<f64>().ok()) {
-        out["pps"] = json!(pps);
-        out["est_nock_per_day"] = json!(crate::economics::nock_per_day(pps, &p));
-        out["network_share"] = json!(pps / crate::economics::network_pps(&p));
+    // Absent while difficulty is still the operator-supplied seed: an
+    // unconfirmed figure should not wear an observation time it never had.
+    if let Some(t) = p.difficulty_observed_at {
+        out["difficulty_observed_at"] = json!(t);
+        out["difficulty_age_secs"] = json!(econ::age_secs(t));
+    }
+    if let Some(src) = &p.difficulty_source {
+        out["difficulty_source"] = json!(src);
+    }
+    // Absent while the reward is still the env seed — the same rule.
+    if let Some(t) = p.block_reward_observed_at {
+        out["block_reward_observed_at"] = json!(t);
+        out["block_reward_age_secs"] = json!(econ::age_secs(t));
+    }
+    // …and the age of the BLOCK it came from, which is the figure that
+    // actually says whether the chain is moving. We re-read the tip every ten
+    // minutes, so `difficulty_age_secs` stays small even against a chain (or
+    // an explorer) that stopped days ago; only this one can tell you.
+    if let Some(t) = p.difficulty_tip_timestamp {
+        out["difficulty_tip_timestamp"] = json!(t);
+        out["difficulty_tip_age_secs"] = json!(econ::age_secs(t));
+    }
+    if let Some(ai) = &p.ai {
+        out["ai_difficulty_mac_equiv_per_block"] = json!(ai.mac_equiv_per_block);
+        if let Some(t) = &ai.target {
+            out["ai_target"] = json!(t);
+        }
+        out["ai_difficulty_source"] = json!(ai.source);
+        out["ai_difficulty_observed_at"] = json!(ai.observed_at);
+        out["ai_difficulty_age_secs"] = json!(econ::age_secs(ai.observed_at));
+        if let Some(t) = ai.tip_timestamp {
+            out["ai_difficulty_tip_timestamp"] = json!(t);
+            out["ai_difficulty_tip_age_secs"] = json!(econ::age_secs(t));
+        }
+        out["ai_block_time_secs"] = json!(econ::ai_block_time_secs());
+        out["est_ai_network_mac_per_sec"] = json!(econ::ai_network_mac_per_sec(&p));
+    }
+    if let Some(price) = &p.price {
+        out["nock_usd"] = json!(price.usd);
+        out["nock_usd_source"] = json!(price.source);
+        out["nock_usd_observed_at"] = json!(price.observed_at);
+        out["nock_usd_age_secs"] = json!(econ::age_secs(price.observed_at));
+    }
+    if let Some(hps) = q.get("zk_hashes_per_sec").and_then(|s| s.parse::<f64>().ok()) {
+        let nock = econ::nock_per_day(hps, &p);
+        out["zk_hashes_per_sec"] = json!(hps);
+        out["est_nock_per_day"] = json!(nock);
+        out["network_share"] = json!(hps / econ::network_pps(&p));
+        if let Some(usd) = econ::usd_per_day(nock, &p) {
+            out["est_usd_per_day"] = json!(usd);
+        }
+    }
+    // The pre-M7 query. Answered with why, not with a number: a proofs/sec
+    // figure divided by a difficulty that counts hashes is the ≈ 0 the board
+    // printed for weeks.
+    if q.contains_key("pps") {
+        out["pps_note"] = json!(
+            "?pps= is retired: since height 147,500 a ZK attempt is one Tip5 hash, not a proof. Use ?zk_hashes_per_sec="
+        );
+    }
+    if let Some(mac) = q.get("mac_per_sec").and_then(|s| s.parse::<f64>().ok()) {
+        out["mac_per_sec"] = json!(mac);
+        // Still absent, deliberately, when no AI tip has been seen: asking the
+        // question does not conjure an answer.
+        if let Some(nock) = econ::ai_nock_per_day(mac, &p) {
+            out["est_ai_nock_per_day"] = json!(nock);
+            if let Some(usd) = econ::usd_per_day(nock, &p) {
+                out["est_ai_usd_per_day"] = json!(usd);
+            }
+        }
     }
     (StatusCode::OK, Json(out))
 }

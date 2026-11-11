@@ -250,7 +250,7 @@ async fn ai_golden_path_tamper_and_replay() {
         "the grind window excludes proving, so it must beat the lower bound"
     );
     let zk_equiv = row["zk_attempt_equiv_per_sec"].as_f64().unwrap();
-    assert!((zk_equiv - verified / 25.75e9).abs() <= 0.001 * (verified / 25.75e9));
+    assert!((zk_equiv - verified / 14_285_714.0).abs() <= 0.001 * (verified / 14_285_714.0));
     assert!((row["sigma_frac"].as_f64().unwrap() - 1.0 / (K as f64).sqrt()).abs() < 1e-3);
 
     // 7. The ZK board is untouched by AI runs.
