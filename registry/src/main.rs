@@ -22,10 +22,14 @@ async fn main() {
     let state = nockmark_registry::http::AppState::boot_with_k(&cli.kernel, &cli.data_dir, cli.k)
         .await
         .expect("boot registry");
-    if let Ok(url) = std::env::var("NOCKMARK_ECON_URL") {
+    // One 10-minute loop refreshes both difficulties and the NOCK price.
+    // It is worth running for either alone: an instance with a hand-set
+    // difficulty still wants a live price, and an instance with the price
+    // feed switched off still wants difficulty.
+    let sources = nockmark_registry::economics::sources_from_env();
+    if !sources.is_empty() || nockmark_registry::economics::price_url().is_some() {
         tokio::spawn(nockmark_registry::economics::refresh_loop(
-            url,
-            std::env::var("NOCKMARK_ECON_API_KEY").ok(),
+            sources,
             Some(state.econ_history_path()),
             state.econ.clone(),
         ));

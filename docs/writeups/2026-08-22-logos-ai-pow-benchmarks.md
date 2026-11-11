@@ -2,6 +2,15 @@
 
 *Tom de Bres — 2026-08-22*
 
+> **Note, 2026-11-11.** Two forks later, several figures here are history.
+> Anthropos (block 147,500) made a ZK attempt one Tip5 hash and flipped the
+> block split to ~70% AI / ~30% ZK; from block 154,500 the exchange rate is
+> 14,285,714 MAC-equivalents per Tip5 hash (the 25.75e9-per-proof rate used
+> below is the Logos value), and AI certificates must use the hardened proof
+> rules. The GPU rows measured upstream's generic CUDA kernel, which the peak
+> kernel has since replaced. See
+> [the M7 plan](../superpowers/specs/2026-11-11-m7-anthropos.md).
+
 In July I published the first cross-hardware Nockchain proving benchmarks.
 Since then the chain has hard-forked three times. The last of those, **Logos**
 (protocol 016, live at block 126,000), did something no other proof-of-work

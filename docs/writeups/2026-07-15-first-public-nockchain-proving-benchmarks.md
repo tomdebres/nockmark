@@ -2,6 +2,13 @@
 
 *Tom de Bres — 2026-07-17*
 
+> **Note, 2026-11-11.** Since block 147,500 (Anthropos, ZK proof version 5) a
+> ZK mining attempt is one Tip5 hash, not a complete proof: a miner builds the
+> full STARK only for a winning nonce. The proofs/sec figures below still
+> measure STARK proving speed, but they no longer translate into mining
+> throughput or earnings. See
+> [the M7 plan](../superpowers/specs/2026-11-11-m7-anthropos.md).
+
 Nockchain is a zkPoW chain: miners earn NOCK by producing STARK proofs of
 Nock execution, and the fastest prover wins. Which makes it strange that the
 most-asked question in every mining channel — **"what hardware proves

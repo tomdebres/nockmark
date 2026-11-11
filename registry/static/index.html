@@ -115,20 +115,26 @@
 </header>
 
 <section>
-  <div class="eyebrow">Leaderboard — proofs per second, server-observed</div>
+  <div class="eyebrow">ZK proving — complete proofs per second, server-observed</div>
   <div class="scroll">
     <table id="board">
       <thead>
         <tr>
           <th>#</th><th></th><th>hardware</th>
           <th class="num">verified p/s</th><th class="num">self-reported</th>
-          <th class="num">k</th><th>prover</th><th class="num">nock/day</th>
+          <th class="num">k</th><th>prover</th>
         </tr>
       </thead>
-      <tbody><tr class="state"><td colspan="8">Loading verified runs…</td></tr></tbody>
+      <tbody><tr class="state"><td colspan="7">Loading verified runs…</td></tr></tbody>
     </table>
   </div>
   <p class="econ" id="econ" hidden></p>
+  <p class="econ"><b>These rows are a proving benchmark, no longer a mining
+  rate.</b> Since block 147,500 (Anthropos, ZK proof version 5) a ZK mining
+  attempt is one Tip5 hash, and a miner builds a full proof only for a winning
+  nonce. Every row here was measured before that, as complete proofs per
+  second, so none of them carries an earnings estimate. A hash-rate track,
+  CPU and GPU, is next.</p>
   <p class="econ">Every row here is a CPU. Nockchain's GPU STARK provers are
   closed source and report rates in their own pool units, which cannot be
   checked against a challenge this server issued — so they are absent rather
@@ -145,6 +151,7 @@
           <th>#</th><th>hardware</th><th>statement</th><th class="num">tier</th>
           <th class="num">verified MAC-equiv/s</th><th class="num">grind-window</th>
           <th class="num">zk-attempt-equiv/s</th><th class="num">±σ</th><th>prover</th>
+          <th class="num">nock/day</th><th class="num">usd/day</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -184,8 +191,12 @@
   <p>Each mark in the second column is drawn from that run's challenge
   nonce — a fingerprint of the workload the machine actually proved.
   Hardware descriptors are self-reported; rates are not.</p>
-  <p>nock/day is an estimate (attempt-lottery model at current difficulty
-  and emission), shown when this instance has economics configured.</p>
+  <p>nock/day and usd/day (AI rows, for now) are estimates: the attempt-lottery model at the
+  difficulty and price observed above, shown only when this instance has
+  actually observed them. They exclude electricity, hardware, pool fees and
+  solo-mining variance, and both difficulty and price drift — so read every
+  figure as a snapshot, not a forecast. <a href="/economics">/economics</a>
+  publishes every input, so you can redo the arithmetic yourself.</p>
   <p><a href="https://github.com/tomdebres/nockmark">How it works</a> ·
   <a href="/api">API</a> ·
   <a href="/leaderboard">JSON</a> ·
@@ -215,13 +226,22 @@ function sigil(seed) {
   return `<svg width="22" height="22" viewBox="0 0 22 22" role="img" aria-label="challenge sigil">${glyphs.join('')}</svg>`;
 }
 
-const fmt = v => v == null ? '—' : (v < 1 ? v.toFixed(3) : v.toFixed(1));
+// NOCK/day spans ~6e-7 (a laptop on the AI track) to tens (a peak-kernel GPU).
+// Below 0.001 an exponent, never "0.000": a printed zero says "earns
+// nothing", which is a different claim from "earns very little".
+const fmt = v => v == null ? '—' :
+  v >= 1 ? v.toFixed(1) : v >= 0.001 ? v.toFixed(3) : v.toExponential(1);
+// USD/day spans ~$0.0003 (one CPU) to ~$100 (a rack), so a fixed number of
+// decimals is useless at one end or the other. An em dash means the figure is
+// genuinely absent — this instance has no price feed, or the chain has not
+// yet shown us an AI block — never that the machine earns nothing.
+const usd = v => v == null ? '—' : '$' + (v >= 1 ? v.toFixed(2) : v.toPrecision(3));
 const tb = document.querySelector('#board tbody');
 
 fetch('/leaderboard').then(r => r.json()).then(rows => {
   tb.textContent = '';
   if (!rows.length) {
-    tb.innerHTML = '<tr class="state"><td colspan="8">No verified runs yet. Yours can be first — command below.</td></tr>';
+    tb.innerHTML = '<tr class="state"><td colspan="7">No verified runs yet. Yours can be first — command below.</td></tr>';
     return;
   }
   for (const [i, r] of rows.entries()) {
@@ -233,18 +253,24 @@ fetch('/leaderboard').then(r => r.json()).then(rows => {
       `<td class="num verified">${r.proofs_per_sec.toFixed(4)}</td>` +
       `<td class="num quiet">${r.self_reported_pps.toFixed(4)}</td>` +
       `<td class="num">${r.k}</td>` +
-      `<td class="quiet">${r.prover_version}</td>` +
-      `<td class="num">${fmt(r.est_nock_per_day)}</td>`;
+      `<td class="quiet">${r.prover_version}</td>`;
     tr.querySelector('.hw').textContent = r.hardware;
     tb.appendChild(tr);
   }
 }).catch(() => {
-  tb.innerHTML = '<tr class="state"><td colspan="8">Could not load the leaderboard — reload the page to retry, or read the <a href="/leaderboard">JSON</a> directly.</td></tr>';
+  tb.innerHTML = '<tr class="state"><td colspan="7">Could not load the leaderboard — reload the page to retry, or read the <a href="/leaderboard">JSON</a> directly.</td></tr>';
 });
 
 // A compact "3.1M"-style figure for the estimated network proving rate.
 const human = v => {
-  for (const [n, s] of [[1e9, 'B'], [1e6, 'M'], [1e3, 'k']]) {
+  // Past trillions, an exponent reads better than a stack of suffixes: the
+  // AI difficulty is ~3e21 MAC-equivalents per block, and "3.26e+12B" (what
+  // the B-capped version printed) helps nobody.
+  if (v >= 1e15) {
+    const e = Math.floor(Math.log10(v));
+    return (v / 10 ** e).toFixed(2) + 'e' + e;
+  }
+  for (const [n, s] of [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'k']]) {
     if (v >= n) return (v / n).toPrecision(3) + s;
   }
   return v.toPrecision(3);
@@ -275,7 +301,9 @@ fetch('/leaderboard?track=ai').then(r => r.json()).then(rows => {
       `<td class="num quiet">${human(r.grind_mac_per_sec)}</td>` +
       `<td class="num quiet">${r.zk_attempt_equiv_per_sec.toExponential(2)}</td>` +
       `<td class="num quiet">±${Math.round(r.sigma_frac * 100)}%</td>` +
-      `<td class="quiet">${r.prover_version}</td>`;
+      `<td class="quiet">${r.prover_version}</td>` +
+      `<td class="num">${fmt(r.est_nock_per_day)}</td>` +
+      `<td class="num quiet">${usd(r.est_usd_per_day)}</td>`;
     tr.querySelector('.hw').textContent = r.hardware;
     // Rows written before the statement existed were all dense.
     tr.querySelector('.stmt').textContent =
@@ -285,12 +313,31 @@ fetch('/leaderboard?track=ai').then(r => r.json()).then(rows => {
   document.getElementById('ai').hidden = false;
 }).catch(() => {});
 
+// How old an observation is. A difficulty or a price without its age is a
+// number the reader has to take on trust — and the two refresh at very
+// different rates, since ZK blocks are only ~30% of the chain.
+const ago = s => s == null ? 'age unknown' :
+  s < 120 ? `${s}s ago` :
+  s < 7200 ? `${Math.round(s / 60)} min ago` :
+  s < 172800 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+
 fetch('/economics').then(r => r.ok ? r.json() : null).then(d => {
   if (!d || !d.difficulty) return;
   const el = document.getElementById('econ');
-  el.textContent = `economics: difficulty 2^${Math.log2(d.difficulty).toFixed(2)}` +
-    (d.est_network_pps ? ` · est network rate ${human(d.est_network_pps)} proofs/s` : '') +
-    ` · block reward ${d.block_reward_nock} NOCK`;
+  el.textContent = `economics: ZK difficulty 2^${Math.log2(d.difficulty).toFixed(2)} hashes/block` +
+    // Prefer the age of the BLOCK it came from: we re-poll every ten
+    // minutes, so our own fetch time would read "3 min ago" against a chain
+    // that has not produced a block in a week.
+    (d.difficulty_tip_age_secs != null ? ` (block ${ago(d.difficulty_tip_age_secs)})`
+      : d.difficulty_observed_at ? ` (read ${ago(d.difficulty_age_secs)})` : '') +
+    (d.est_network_zk_hashes_per_sec ? ` · est ZK network ${human(d.est_network_zk_hashes_per_sec)} hashes/s` : '') +
+    ` · block reward ${d.block_reward_nock} NOCK` +
+    (d.nock_usd
+      ? ` · NOCK $${d.nock_usd.toPrecision(4)} (${ago(d.nock_usd_age_secs)})`
+      : ' · no price feed, so no usd/day') +
+    (d.ai_difficulty_mac_equiv_per_block
+      ? ` · AI difficulty ${human(d.ai_difficulty_mac_equiv_per_block)} MAC-equiv/block (${ago(d.ai_difficulty_age_secs)})`
+      : ' · no AI block observed yet, so no AI nock/day');
   el.hidden = false;
   return fetch('/economics/history?hours=720').then(r => r.ok ? r.json() : null);
 }).then(h => {
