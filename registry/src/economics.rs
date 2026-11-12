@@ -12,10 +12,11 @@
 //! so attempts/sec was proofs/sec — the unit the ZK board ranks. From it, an
 //! attempt is ONE Tip5 hash of proof object 0 (`%puzzle [commitment nonce
 //! len p]`), and a full proof is built only for the winning nonce. Network
-//! difficulty now counts Tip5 hashes (~2^46.5 per block in Nov 2026), so a
-//! proofs/sec figure no longer prices anything: the ZK board's rows, all
-//! proved at pre-Anthropos pins, carry NO earnings estimate
-//! ([`ZK_PROOF_ROWS_UNPRICED`]). A v5 hash-rate track will.
+//! difficulty now counts Tip5 hashes (~2^46.5 per block in Nov 2026). The ZK
+//! board's ranked rows are verified Tip5 hashes/sec (the v5 track,
+//! `crate::zkv5`) and are priced with exactly this formula; its pre-Anthropos
+//! rows are proofs/sec, which no longer prices anything, and carry NO
+//! earnings estimate ([`ZK_PROOF_ROWS_UNPRICED`]).
 //!
 //! ## AI track
 //!
@@ -262,13 +263,14 @@ pub fn ai_block_time_secs() -> f64 {
 /// nockscan publishes as `workNormalization.macsPerZkUnit`.
 pub const MAC_EQUIV_PER_ZK_ATTEMPT: f64 = 14_285_714.0;
 
-/// Why rows on the ZK proofs/sec board carry no earnings estimate, published
-/// verbatim on `/economics`. Every one was proved at a pre-Anthropos pin, so
-/// it measures complete %3 proofs per second, while network difficulty counts
-/// Tip5 hashes per block. Dividing one by the other gives a number (≈ 0
-/// NOCK/day, which is what the board printed for weeks) that means nothing,
-/// so the estimate is omitted, not zeroed. The v5 hash-rate track gets one.
-pub const ZK_PROOF_ROWS_UNPRICED: &str = "ZK board rows are complete proofs/sec at pre-Anthropos pins; since height 147,500 a ZK mining attempt is one Tip5 hash and difficulty counts hashes, so proofs/sec does not price and no estimate is shown";
+/// How the ZK board is priced, published verbatim on `/economics`. Its ranked
+/// rows (`rules: anthropos`) are verified Tip5 hashes per second — the unit
+/// network difficulty counts since height 147,500 — and carry an estimate.
+/// Its pre-Anthropos rows measure complete %3 proofs per second; dividing
+/// those by a difficulty in hashes gives a number (≈ 0 NOCK/day, which the
+/// board printed for weeks) that means nothing, so theirs is omitted, not
+/// zeroed.
+pub const ZK_PROOF_ROWS_UNPRICED: &str = "ZK v5 rows (rules anthropos) are verified Tip5 hashes/s, the unit difficulty counts since height 147,500, and are priced from that ranked rate; pre-anthropos rows are complete %3 proofs/sec, which does not price, so they carry no estimate";
 
 /// ZK track: `attempts_per_sec × 86400 / difficulty × block_reward_nock`.
 /// Since Anthropos the argument must be Tip5 hashes per second.

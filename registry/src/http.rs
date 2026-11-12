@@ -16,9 +16,14 @@ use crate::kernel::{RegistryKernel, RunRecord};
 use crate::ratelimit::RateLimiter;
 use crate::verifier::Verifier;
 
-/// Proofs per submission. 8 ≈ 3 minutes on an M1 Mac (21 s/proof) — the
-/// design spec's "minutes of proving" target; the spike value was 2.
-pub const K_DEFAULT: u64 = 8;
+/// Wins per ZK v5 submission (`--k`): 16, the AI track's k
+/// (`NOCKMARK_AI_K=16` since M6), for the same reason. k wins is Poisson, so a
+/// row carries ±1/√k: ±25% at 16 against ±35% at 8, and at 8 two cards 1.4×
+/// apart rank the wrong way round too often. The first M1 Max row at k = 8
+/// came in at 38% of its calibrated rate on 2.55× bad luck. Each win is one
+/// ~21 s proof on an M1 Max plus twice that of grinding, so a self-calibrated
+/// k = 16 run is ~20 min there.
+pub const K_DEFAULT: u64 = 16;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LeaderboardEntry {
@@ -35,6 +40,10 @@ pub struct LeaderboardEntry {
     /// Anthropos (height 147,500) made a ZK attempt one Tip5 hash, so all of
     /// them are `pre-anthropos`, whatever pin proved them.
     pub rules: &'static str,
+    /// Always `None`: since M7 step 3 the ZK board ranks only rows measured
+    /// under current consensus rules (Tip5 hashes/s, `rules: anthropos`).
+    /// These rows stay listed, after the ranked ones, unranked.
+    pub rank: Option<u64>,
     // No earnings fields. Every row here is complete %3 proofs/sec from a
     // pre-Anthropos pin, and since height 147,500 a ZK mining attempt is one
     // Tip5 hash: there is nothing to price it against
@@ -61,7 +70,113 @@ fn to_entry(run: RunRecord) -> LeaderboardEntry {
         proofs_per_sec,
         self_reported_pps,
         rules: ZK_PROOF_ROW_RULES,
+        rank: None,
     }
+}
+
+/// One ZK v5 board row: the stored run, the rates computed from it, its rank,
+/// and earnings from the RANKED rate.
+#[derive(Debug, Clone, Serialize)]
+pub struct ZkV5LeaderboardEntry {
+    #[serde(flatten)]
+    pub run: crate::zkv5::ZkV5RunRecord,
+    /// submitted_at − issued_at, server-observed (proving included).
+    pub server_window_ms: u64,
+    #[serde(flatten)]
+    pub rates: crate::zkv5::ZkV5Rates,
+    /// 1-based rank among current-rules rows. Every v5 row is current-rules.
+    pub rank: Option<u64>,
+    /// NOCK/day at the observed ZK difficulty, from the ranked
+    /// `verified_zk_hashes_per_sec_lb`. Absent while economics is unconfigured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub est_nock_per_day: Option<f64>,
+    /// `est_nock_per_day × spot NOCK/USD`, absent without a price.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub est_usd_per_day: Option<f64>,
+}
+
+fn to_zk_entry(
+    run: crate::zkv5::ZkV5RunRecord,
+    econ: Option<&crate::economics::EconParams>,
+) -> ZkV5LeaderboardEntry {
+    let server_window_ms = run.submitted_at_ms.saturating_sub(run.issued_at_ms).max(1);
+    let rates = crate::zkv5::rates(run.k, &run.target, server_window_ms, run.grind_elapsed_ms);
+    // The published, rounded rate goes in, so a reader can redo the sum from
+    // what the row prints (the AI board's rule).
+    let est_nock_per_day = econ.map(|p| {
+        crate::economics::signif4(crate::economics::nock_per_day(
+            rates.verified_zk_hashes_per_sec_lb,
+            p,
+        ))
+    });
+    let est_usd_per_day = est_nock_per_day
+        .zip(econ)
+        .and_then(|(nock, p)| crate::economics::usd_per_day(nock, p));
+    ZkV5LeaderboardEntry {
+        run,
+        server_window_ms,
+        rates,
+        rank: None,
+        est_nock_per_day,
+        est_usd_per_day,
+    }
+}
+
+/// A row of the ZK board: a ranked v5 row or an unranked pre-Anthropos one.
+/// The two carry different units, so `rules` (and the rate field present)
+/// says which a row is.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum ZkBoardRow {
+    V5(ZkV5LeaderboardEntry),
+    PreAnthropos(LeaderboardEntry),
+}
+
+fn by_desc(a: f64, b: f64) -> std::cmp::Ordering {
+    b.partial_cmp(&a).unwrap_or(std::cmp::Ordering::Equal)
+}
+
+/// The ZK board: v5 rows ranked by verified Tip5 hashes/s, then the
+/// pre-Anthropos proofs/sec rows, unranked, fastest first.
+fn zk_board(
+    v5: Vec<ZkV5LeaderboardEntry>,
+    legacy: Vec<LeaderboardEntry>,
+) -> Vec<ZkBoardRow> {
+    let mut v5 = v5;
+    v5.sort_by(|a, b| {
+        by_desc(
+            a.rates.verified_zk_hashes_per_sec_lb,
+            b.rates.verified_zk_hashes_per_sec_lb,
+        )
+    });
+    for (i, e) in v5.iter_mut().enumerate() {
+        e.rank = Some(i as u64 + 1);
+    }
+    let mut legacy = legacy;
+    legacy.sort_by(|a, b| by_desc(a.proofs_per_sec, b.proofs_per_sec));
+    v5.into_iter()
+        .map(ZkBoardRow::V5)
+        .chain(legacy.into_iter().map(ZkBoardRow::PreAnthropos))
+        .collect()
+}
+
+/// The AI board: rows verified under the current rules (`hardened`) ranked
+/// by verified MAC-equivalents/s, then every earlier row, unranked.
+fn ai_board(entries: Vec<AiLeaderboardEntry>) -> Vec<AiLeaderboardEntry> {
+    let (mut current, mut earlier): (Vec<_>, Vec<_>) = entries
+        .into_iter()
+        .partition(|e| e.run.rules == crate::aipow::CURRENT_AI_RULES);
+    current.sort_by(|a, b| {
+        by_desc(a.rates.verified_mac_per_sec_lb, b.rates.verified_mac_per_sec_lb)
+    });
+    for (i, e) in current.iter_mut().enumerate() {
+        e.rank = Some(i as u64 + 1);
+    }
+    earlier.sort_by(|a, b| {
+        by_desc(a.rates.verified_mac_per_sec_lb, b.rates.verified_mac_per_sec_lb)
+    });
+    current.extend(earlier);
+    current
 }
 
 #[derive(Clone)]
@@ -89,6 +204,8 @@ pub struct AppState {
     /// MAC-equivalents and scaled by F at compare time, so it is NOT
     /// interchangeable with `ai_target`.
     pub ai_moe_target: [u8; 32],
+    /// ZK v5 track (M7 step 3): pending challenges + verified runs, JSONL.
+    pub zk: Arc<Mutex<crate::zkv5::ZkV5Store>>,
 }
 
 impl AppState {
@@ -111,6 +228,8 @@ impl AppState {
     ) -> Result<Self, nockapp::NockAppError> {
         let ai = crate::aipow::AiStore::load(crate::aipow::AiStore::path_in(data_dir))
             .map_err(|e| nockapp::NockAppError::OtherError(format!("ai store load: {e}")))?;
+        let zk = crate::zkv5::ZkV5Store::load(crate::zkv5::ZkV5Store::path_in(data_dir))
+            .map_err(|e| nockapp::NockAppError::OtherError(format!("zk v5 store load: {e}")))?;
         Ok(Self {
             kernel: Arc::new(Mutex::new(RegistryKernel::boot(jam, data_dir).await?)),
             verifier: Arc::new(Mutex::new(Verifier::boot().await?)),
@@ -124,6 +243,7 @@ impl AppState {
             ai_target: crate::aipow::target_from_env(),
             ai_moe_verifier: Arc::new(tokio::sync::OnceCell::new()),
             ai_moe_target: crate::aipow_moe::moe_target_from_env(),
+            zk: Arc::new(Mutex::new(zk)),
         })
     }
 }
@@ -178,9 +298,42 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// `?track=ai` selects the AI-PoW track on the shared routes.
-fn is_ai_track(q: &std::collections::HashMap<String, String>) -> bool {
-    q.get("track").map(String::as_str) == Some("ai")
+/// Which track a request is for (`?track=`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Track {
+    /// `?track=ai`: the AI-PoW track.
+    Ai,
+    /// `?track=zk`: the ZK v5 hash-rate track.
+    Zk,
+    /// No `track`: what every pre-M7 ZK client sent. Reads get the ZK board
+    /// (and `/runs/:id` the pre-Anthropos kernel run, whose links old clients
+    /// printed); writes get 410 Gone, because the `%3` proofs/sec submission
+    /// they would make is retired.
+    Untracked,
+}
+
+fn track_from_query(q: &std::collections::HashMap<String, String>) -> Result<Track, String> {
+    match q.get("track").map(String::as_str) {
+        None => Ok(Track::Untracked),
+        Some("ai") => Ok(Track::Ai),
+        Some("zk") => Ok(Track::Zk),
+        Some(other) => Err(format!("unknown track {other:?} (expected \"zk\" or \"ai\")")),
+    }
+}
+
+/// What an untracked `POST /challenge` or `POST /run` gets.
+///
+/// Those are the `%3` complete-proofs/sec submissions of every pre-M7 tock.
+/// Since height 147,500 mainnet takes only `%5` ZK proofs and a ZK mining
+/// attempt is one Tip5 hash, so a new proofs/sec row would measure work no
+/// miner does and could never be ranked. Old rows stay on the board, unranked.
+const ZK_V3_RETIRED: &str = "ZK %3 proofs/sec submissions are retired: since height 147,500 (Anthropos) \
+     mainnet takes only %5 ZK proofs and a ZK attempt is one Tip5 hash. Use \
+     POST /challenge?track=zk — `tock zk-bench --submit`. Earlier rows stay on the \
+     board, unranked.";
+
+fn gone() -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::GONE, Json(json!({ "error": ZK_V3_RETIRED })))
 }
 
 /// `?statement=` selects which AI-PoW statement, within the one AI track.
@@ -217,11 +370,16 @@ async fn new_challenge(
     State(st): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // Validate the query and derive everything pure BEFORE minting: an unknown
-    // statement or a malformed tier must not consume a nonce (or, worse,
-    // silently hand back a dense one). Only meaningful on the AI track — the ZK
-    // path ignores both parameters exactly as it always has.
-    let (statement, tier) = if is_ai_track(&q) {
+    match track_from_query(&q) {
+        Err(e) => return bad(e),
+        Ok(Track::Untracked) => return gone(),
+        Ok(Track::Zk) => return new_zk_challenge(st, &q).await,
+        Ok(Track::Ai) => {}
+    }
+    // AI track from here. Validate the query and derive everything pure
+    // BEFORE minting: an unknown statement or a malformed tier must not
+    // consume a nonce (or, worse, silently hand back a dense one).
+    let (statement, tier) = {
         let statement = match statement_from_query(&q) {
             Ok(s) => s,
             Err(e) => return bad(e),
@@ -251,8 +409,6 @@ async fn new_challenge(
             }
         };
         (statement, tier)
-    } else {
-        (crate::aipow::Statement::Dense, None)
     };
     let nonce = st
         .kernel
@@ -261,7 +417,7 @@ async fn new_challenge(
         .mint_challenge()
         .await
         .expect("mint_challenge failed");
-    if is_ai_track(&q) {
+    {
         // AI track: the kernel's mint/uniqueness machinery is reused
         // untouched; the 32-byte challenge is DERIVED from the minted
         // nonce, and the AI store records the server-observed issue time
@@ -327,26 +483,59 @@ async fn new_challenge(
         if let Some((granted, _)) = tier {
             body["attempts"] = json!(granted);
         }
-        return (StatusCode::OK, Json(body));
+        (StatusCode::OK, Json(body))
     }
+}
+
+/// `POST /challenge?track=zk[&attempts=N]`: mint a ZK v5 challenge.
+///
+/// The tier (`attempts`, expected Tip5 hashes per win) is validated and its
+/// target derived BEFORE the mint, so a malformed request consumes nothing.
+/// The challenge, commitment and target are all derived from the kernel nonce
+/// and the granted tier; the store records the target the client was told to
+/// grind, which is the one its wins are verified and credited against.
+async fn new_zk_challenge(
+    st: AppState,
+    q: &std::collections::HashMap<String, String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    use tock::zkv5;
+    let requested = match attempts_from_query(q) {
+        Ok(a) => a.unwrap_or(zkv5::ZK_ATTEMPTS_DEFAULT),
+        Err(e) => return bad(e),
+    };
+    let granted = zkv5::grant_attempts(requested);
+    let Some(target) = zkv5::target_for_attempts(granted) else {
+        return bad(format!("no target for a tier of {granted} expected hashes per win"));
+    };
+    let nonce = st
+        .kernel
+        .lock()
+        .await
+        .mint_challenge()
+        .await
+        .expect("mint_challenge failed");
+    st.zk
+        .lock()
+        .await
+        .record_challenge(nonce, crate::aipow::unix_ms(), target, granted)
+        .expect("zk store append failed");
+    let challenge = zkv5::challenge32(nonce);
     (
         StatusCode::OK,
         Json(json!({
+            "track": "zk",
             "nonce": nonce.to_string(),
-            "pow_len": tock::miner::DEFAULT_POW_LEN,
+            "challenge": tock::aipow::hex32(&challenge),
+            "commitment": zkv5::belts_to_strings(&zkv5::commitment(&challenge)),
+            "commitment_rule": zkv5::ZK_V5_COMMITMENT_RULE,
+            "target": zkv5::belts_to_strings(&target),
+            "attempts": granted,
             "k": st.k,
-            "nonce_rule": tock::nonce::NONCE_RULE,
+            "pow_len": zkv5::ZK_V5_POW_LEN,
+            "proof_version": zkv5::ZK_V5_PROOF_VERSION,
+            "nonce_rule": zkv5::ZK_V5_NONCE_RULE,
         })),
     )
-}
-
-#[derive(serde::Deserialize)]
-struct RunSubmission {
-    nonce: String,
-    hardware: String,
-    prover_version: String,
-    elapsed_ms: u64,
-    proofs: Vec<String>,
 }
 
 fn bad(msg: String) -> (StatusCode, Json<serde_json::Value>) {
@@ -358,27 +547,60 @@ async fn submit_run(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
     Json(body): Json<serde_json::Value>,
 ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
-    use base64::Engine;
-
-    if is_ai_track(&q) {
-        let statement = match statement_from_query(&q) {
-            Ok(s) => s,
-            Err(e) => return bad(e),
-        };
-        return submit_ai_run(st, statement, body).await;
+    match track_from_query(&q) {
+        Err(e) => bad(e),
+        Ok(Track::Untracked) => gone(),
+        Ok(Track::Zk) => submit_zk_run(st, body).await,
+        Ok(Track::Ai) => {
+            let statement = match statement_from_query(&q) {
+                Ok(s) => s,
+                Err(e) => return bad(e),
+            };
+            submit_ai_run(st, statement, body).await
+        }
     }
-    let sub: RunSubmission = match serde_json::from_value(body) {
+}
+
+#[derive(serde::Deserialize)]
+struct ZkRunSubmission {
+    nonce: String,
+    hardware: String,
+    prover_version: String,
+    /// Client-measured grind time: displayed, never ranked.
+    grind_elapsed_ms: u64,
+    /// k base64 proof jams, one per win, in strictly ascending nonce order.
+    proofs: Vec<String>,
+}
+
+/// A process-random u64 for the verifier's Merkle-check ordering
+/// ([`crate::zkv5::verify_win_native`]): soundness does not depend on it.
+fn verifier_entropy() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u64(crate::aipow::unix_ms());
+    h.finish()
+}
+
+/// `POST /run?track=zk`. Validate cheaply, check every win
+/// ([`crate::zkv5::check_win`]: version, object 0, commitment, len, digest,
+/// target, canonical polynomials), dedupe on the nonce, then verify every
+/// STARK twice — upstream's native verifier and the consensus Hoon verifier —
+/// BEFORE touching any state, then commit. See [`crate::zkv5`] for why each
+/// check is there.
+async fn submit_zk_run(st: AppState, body: serde_json::Value) -> (StatusCode, Json<serde_json::Value>) {
+    use base64::Engine;
+    use tock::zkv5;
+
+    let sub: ZkRunSubmission = match serde_json::from_value(body) {
         Ok(sub) => sub,
         Err(e) => return bad(format!("bad submission body: {e}")),
     };
-
     let Ok(nonce) = sub.nonce.parse::<u64>() else {
         return bad("nonce must be a decimal u64".into());
     };
-    // elapsed_ms = 0 would make proofs_per_sec = Infinity, which serde_json
-    // serializes as JSON null — corrupting the leaderboard at rank #1.
-    if sub.elapsed_ms == 0 {
-        return bad("elapsed_ms must be greater than zero".into());
+    // 0 would make the grind rate Infinity, which serde_json writes as null.
+    if sub.grind_elapsed_ms == 0 {
+        return bad("grind_elapsed_ms must be greater than zero".into());
     }
     if sub.hardware.len() > 128 {
         return bad("hardware string too long (max 128 bytes)".into());
@@ -389,30 +611,93 @@ async fn submit_run(
     if sub.proofs.len() as u64 != st.k {
         return bad(format!("expected {} proofs, got {}", st.k, sub.proofs.len()));
     }
-    // decode + bind + verify every proof BEFORE touching kernel state
+    let mut jams: Vec<Vec<u8>> = Vec::with_capacity(sub.proofs.len());
     for (i, b64) in sub.proofs.iter().enumerate() {
         let Ok(jam) = base64::engine::general_purpose::STANDARD.decode(b64) else {
             return bad(format!("proof {i}: invalid base64"));
         };
-        if let Err(e) = crate::binding::check_binding(&jam, &sub.nonce, i as u64, tock::miner::DEFAULT_POW_LEN) {
-            return bad(format!("proof {i}: {e}"));
+        jams.push(jam);
+    }
+    // Pending, unexpired, unused — checked now (before any verifier time) and
+    // again at commit.
+    let pending = match st.zk.lock().await.challenge_status(nonce, crate::aipow::unix_ms()) {
+        Ok(p) => p,
+        Err(reason) => return bad(reason),
+    };
+    // Re-derived from the stored nonce: nothing challenge-shaped is taken from
+    // the client.
+    let commitment = zkv5::commitment_for_nonce(nonce);
+    let target = pending.target;
+
+    // 1. Every cheap check, on every win, before any STARK work.
+    let checked = {
+        let jams = jams.clone();
+        tokio::task::spawn_blocking(move || {
+            jams.iter()
+                .enumerate()
+                .map(|(i, jam)| {
+                    crate::zkv5::check_win(&commitment, &target, jam).map_err(|e| format!("proof {i}: {e}"))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .await
+    };
+    let checked = match checked {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => return bad(e),
+        Err(join_err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("win check task failed: {join_err}") })),
+            )
         }
-        // `Verifier::verify`'s future is not `Send` (it holds a raw-pointer
-        // `NockStack` across an internal await inside `roswell`), which
-        // axum's `Handler` blanket impl requires of the whole handler
-        // future. Run it to completion on a blocking-pool thread via a
-        // nested `block_on` so the non-Send state never needs to cross a
-        // cooperative-scheduling boundary.
-        let verifier = st.verifier.clone();
-        let jam_owned = jam;
-        let verify_result = tokio::task::spawn_blocking(move || {
-            tokio::runtime::Handle::current()
-                .block_on(async move { verifier.lock().await.verify(&jam_owned).await })
+    };
+    // 2. One win per (challenge, nonce), whatever the proof bytes: the suffix
+    //    after object 0 is a witness envelope consensus does not identify.
+    let nonces: Vec<zkv5::Belts5> = checked.iter().map(|c| c.nonce).collect();
+    for (i, n) in nonces.iter().enumerate() {
+        if let Some(j) = nonces[..i].iter().position(|m| m == n) {
+            return bad(format!(
+                "proof {i}: duplicate win — its nonce was already counted by proof {j} \
+                 (one win per (challenge, nonce), whatever the proof bytes)"
+            ));
+        }
+    }
+    if !zkv5::nonces_strictly_ascending(&nonces) {
+        return bad("proofs must be in strictly ascending nonce order".into());
+    }
+    // 3. Upstream's native STARK verifier, per win, on the blocking pool.
+    for (i, win) in checked.into_iter().enumerate() {
+        let eny = verifier_entropy();
+        let res = tokio::task::spawn_blocking(move || {
+            crate::zkv5::verify_win_native(win, &commitment, eny)
         })
         .await;
-        match verify_result {
+        match res {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return bad(format!("proof {i}: {e}")),
+            Err(join_err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("proof {i}: verify task failed: {join_err}") })),
+                )
+            }
+        }
+    }
+    // 4. The consensus Hoon verifier (`verify:nv`, via roswell), per win.
+    //    `Verifier::verify`'s future is not `Send` (roswell holds a raw-pointer
+    //    `NockStack` across an await), so it runs to completion on a blocking
+    //    thread under a nested `block_on`.
+    for (i, jam) in jams.into_iter().enumerate() {
+        let verifier = st.verifier.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            tokio::runtime::Handle::current()
+                .block_on(async move { verifier.lock().await.verify(&jam).await })
+        })
+        .await;
+        match res {
             Ok(Ok(true)) => {}
-            Ok(Ok(false)) => return bad(format!("proof {i}: STARK verification failed")),
+            Ok(Ok(false)) => return bad(format!("proof {i}: consensus (Hoon) verifier rejected it")),
             Ok(Err(e)) => return bad(format!("proof {i}: verifier error: {e}")),
             Err(join_err) => {
                 return (
@@ -422,15 +707,19 @@ async fn submit_run(
             }
         }
     }
-    match st.kernel.lock().await
-        .submit_run(nonce, &sub.hardware, &sub.prover_version, st.k, sub.elapsed_ms)
-        .await
-    {
-        Ok(Ok(id)) => (StatusCode::OK, Json(json!({ "run_id": id }))),
+    match st.zk.lock().await.commit_run(
+        nonce,
+        &sub.hardware,
+        &sub.prover_version,
+        sub.grind_elapsed_ms,
+        nonces,
+        crate::aipow::unix_ms(),
+    ) {
+        Ok(Ok(run)) => (StatusCode::OK, Json(json!({ "run_id": run.id }))),
         Ok(Err(reason)) => bad(reason),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("kernel error: {e}") })),
+            Json(json!({ "error": format!("zk store error: {e}") })),
         ),
     }
 }
@@ -686,6 +975,9 @@ pub struct AiLeaderboardEntry {
     pub server_window_ms: u64,
     #[serde(flatten)]
     pub rates: crate::aipow::AiRates,
+    /// 1-based rank among rows verified under the current AI rules
+    /// (`hardened`); `None` for earlier rows, which stay listed after them.
+    pub rank: Option<u64>,
     /// Estimated NOCK/day at the observed AI difficulty, from the RANKED
     /// `verified_mac_per_sec_lb` — never the client-reported grind rate.
     /// ABSENT until an `ai-pow` tip has actually been observed: an AI
@@ -726,80 +1018,99 @@ fn to_ai_entry(
         run,
         server_window_ms,
         rates,
+        rank: None,
         est_nock_per_day,
         est_usd_per_day,
     }
+}
+
+/// The AI board, every row, ranked ([`ai_board`]).
+async fn ai_board_rows(st: &AppState) -> Vec<AiLeaderboardEntry> {
+    let econ = st.econ.read().await.clone();
+    let entries: Vec<AiLeaderboardEntry> = st
+        .ai
+        .lock()
+        .await
+        .runs()
+        .iter()
+        .cloned()
+        .map(|run| to_ai_entry(run, econ.as_ref()))
+        .collect();
+    ai_board(entries)
+}
+
+/// The v5 half of the ZK board, unranked (ranking happens in [`zk_board`]).
+async fn zk_v5_rows(st: &AppState) -> Vec<ZkV5LeaderboardEntry> {
+    let econ = st.econ.read().await.clone();
+    st.zk
+        .lock()
+        .await
+        .runs()
+        .iter()
+        .cloned()
+        .map(|run| to_zk_entry(run, econ.as_ref()))
+        .collect()
 }
 
 async fn leaderboard(
     State(st): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if is_ai_track(&q) {
-        let econ = st.econ.read().await.clone();
-        let mut entries: Vec<AiLeaderboardEntry> = st
-            .ai
-            .lock()
-            .await
-            .runs()
-            .iter()
-            .cloned()
-            .map(|run| to_ai_entry(run, econ.as_ref()))
-            .collect();
-        entries.sort_by(|a, b| {
-            b.rates
-                .verified_mac_per_sec_lb
-                .partial_cmp(&a.rates.verified_mac_per_sec_lb)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        return (StatusCode::OK, Json(entries)).into_response();
-    }
-    match st.kernel.lock().await.leaderboard().await {
-        Ok(runs) => {
-            let mut entries: Vec<LeaderboardEntry> = runs.into_iter().map(to_entry).collect();
-            entries.sort_by(|a, b| b.proofs_per_sec.partial_cmp(&a.proofs_per_sec).unwrap_or(std::cmp::Ordering::Equal));
-            (StatusCode::OK, Json(entries)).into_response()
+    match track_from_query(&q) {
+        Err(e) => bad(e).into_response(),
+        Ok(Track::Ai) => (StatusCode::OK, Json(ai_board_rows(&st).await)).into_response(),
+        // `/leaderboard` with no track has always been the ZK board.
+        Ok(Track::Zk | Track::Untracked) => {
+            let v5 = zk_v5_rows(&st).await;
+            match st.kernel.lock().await.leaderboard().await {
+                Ok(runs) => {
+                    let legacy = runs.into_iter().map(to_entry).collect();
+                    (StatusCode::OK, Json(zk_board(v5, legacy))).into_response()
+                }
+                Err(_e) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(Vec::<ZkBoardRow>::new())).into_response()
+                }
+            }
         }
-        Err(_e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(Vec::<LeaderboardEntry>::new())).into_response(),
     }
 }
 
+/// `GET /runs/:id`. The tracks number runs independently, so the track picks
+/// the id space: `?track=ai`, `?track=zk` (v5), or none for the
+/// pre-Anthropos kernel runs (the links pre-M7 tock printed). A ranked row
+/// carries the rank it has on its board.
 async fn run_by_id(
     State(st): State<AppState>,
     AxumPath(id): AxumPath<u64>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if is_ai_track(&q) {
-        let econ = st.econ.read().await.clone();
-        let entry = st
-            .ai
-            .lock()
-            .await
-            .runs()
-            .iter()
-            .find(|r| r.id == id)
-            .cloned()
-            .map(|run| to_ai_entry(run, econ.as_ref()));
-        return match entry {
+    match track_from_query(&q) {
+        Err(e) => bad(e).into_response(),
+        Ok(Track::Ai) => match ai_board_rows(&st).await.into_iter().find(|e| e.run.id == id) {
             Some(e) => (StatusCode::OK, Json(Some(e))).into_response(),
-            None => (
-                StatusCode::NOT_FOUND,
-                Json(None::<AiLeaderboardEntry>),
-            )
-                .into_response(),
-        };
-    }
-    match st.kernel.lock().await.leaderboard().await {
-        Ok(runs) => {
-            let entry = runs.into_iter().find(|r| r.id == id).map(to_entry);
-            match entry {
+            None => (StatusCode::NOT_FOUND, Json(None::<AiLeaderboardEntry>)).into_response(),
+        },
+        Ok(Track::Zk) => {
+            let found = zk_board(zk_v5_rows(&st).await, Vec::new())
+                .into_iter()
+                .find_map(|r| match r {
+                    ZkBoardRow::V5(e) if e.run.id == id => Some(e),
+                    _ => None,
+                });
+            match found {
                 Some(e) => (StatusCode::OK, Json(Some(e))).into_response(),
-                None => (StatusCode::NOT_FOUND, Json(None::<LeaderboardEntry>)).into_response(),
+                None => (StatusCode::NOT_FOUND, Json(None::<ZkV5LeaderboardEntry>)).into_response(),
             }
         }
-        Err(_e) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(None::<LeaderboardEntry>)).into_response()
-        }
+        Ok(Track::Untracked) => match st.kernel.lock().await.leaderboard().await {
+            Ok(runs) => match runs.into_iter().find(|r| r.id == id).map(to_entry) {
+                Some(e) => (StatusCode::OK, Json(Some(e))).into_response(),
+                None => (StatusCode::NOT_FOUND, Json(None::<LeaderboardEntry>)).into_response(),
+            },
+            Err(_e) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(None::<LeaderboardEntry>)).into_response()
+            }
+        },
     }
 }
 
@@ -852,7 +1163,7 @@ async fn economics(
             "zk_board": econ::ZK_PROOF_ROWS_UNPRICED,
             "ai_difficulty": "expected MAC-equivalents per AI block, independent of the tile shape a miner picked",
             "block_reward_nock": "already the 80% miner share; an AI block and a ZK block pay a miner identically",
-            "ranked_input": "board estimates are computed from the ranked, server-measured rate (verified_mac_per_sec_lb), never a client-reported one",
+            "ranked_input": "board estimates are computed from the ranked, server-measured rate (verified_zk_hashes_per_sec_lb, verified_mac_per_sec_lb), never a client-reported one",
             "block_times": "ZK 500 s and AI 214 s ideal intervals since Anthropos (~30% ZK / ~70% AI blocks, ~150 s combined)",
             "excludes": econ::EXCLUDED_FROM_ESTIMATES,
         },

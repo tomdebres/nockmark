@@ -4296,6 +4296,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "kernels-open-miner"
+version = "0.1.17"
+
+[[package]]
 name = "kernels-roswell"
 version = "0.1.17"
 source = "git+https://github.com/nockchain/nockchain?rev=ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4#ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4"
@@ -5401,6 +5405,7 @@ dependencies = [
  "tock",
  "tokio",
  "tower",
+ "zk-pow-miner",
  "zkvm-jetpack",
 ]
 
@@ -8663,8 +8668,11 @@ dependencies = [
  "ai-pow-miner",
  "ai-pow-zk",
  "base64",
+ "blake3",
  "clap",
+ "ibig",
  "nockapp",
+ "nockchain-math",
  "nockvm",
  "nockvm_macros",
  "postcard",
@@ -8673,6 +8681,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tokio",
+ "zk-pow-miner",
  "zkvm-jetpack",
 ]
 
@@ -10213,6 +10222,34 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "zk-pow-miner"
+version = "0.1.17"
+source = "git+https://github.com/nockchain/nockchain?rev=ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4#ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "clap",
+ "futures",
+ "ibig",
+ "kernels-open-miner",
+ "nockapp",
+ "nockapp-grpc",
+ "nockchain-math",
+ "nockchain-mining-common",
+ "nockvm",
+ "nockvm_macros",
+ "num_cpus",
+ "rand 0.9.4",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "zkvm-jetpack",
 ]
 
 [[package]]

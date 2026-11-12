@@ -15,7 +15,11 @@ fn test_lock() -> &'static tokio::sync::Mutex<()> {
 }
 
 async fn state() -> nockmark_registry::http::AppState {
-    let dir = tempfile::tempdir().unwrap();
+    state_in(tempfile::tempdir().unwrap()).await
+}
+
+/// Boot in `dir`, which a test may have seeded with store files first.
+async fn state_in(dir: tempfile::TempDir) -> nockmark_registry::http::AppState {
     let jam = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../tock/assets/registry.jam"));
     let state = nockmark_registry::http::AppState::boot_with_k(jam, dir.path(), 2).await.unwrap();
     // leak: kernel checkpoints live here; dropping would delete the dir under
@@ -29,16 +33,20 @@ async fn challenge_returns_nonce() {
     let _guard = test_lock().lock().await;
     let app = nockmark_registry::http::router(state().await);
     let res = app
-        .oneshot(Request::post("/challenge").body(Body::empty()).unwrap())
+        .oneshot(Request::post("/challenge?track=zk").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(v["nonce"].as_str().unwrap().parse::<u64>().unwrap() > 0);
-    assert_eq!(v["nonce_rule"], "fnv1a-splitmix64-v1");
+    assert_eq!(v["nonce_rule"], tock::zkv5::ZK_V5_NONCE_RULE);
+    // No tier asked for: the default one.
+    assert_eq!(v["attempts"], tock::zkv5::ZK_ATTEMPTS_DEFAULT);
 }
 
+/// A complete `%3` proof (bound to "fixture-challenge/0"), kept for the
+/// shape checks below: the ZK v5 path must refuse it whatever else is wrong.
 const GOOD: &[u8] = include_bytes!("fixtures/proof-good.jam");
 
 async fn post_json(app: axum::Router, path: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
@@ -51,22 +59,21 @@ async fn post_json(app: axum::Router, path: &str, body: serde_json::Value) -> (S
 }
 
 #[tokio::test]
-async fn run_rejects_unbound_proof() {
+async fn run_rejects_a_v3_proof_on_the_zk_track() {
     use base64::Engine;
     let _guard = test_lock().lock().await;
     let st = state().await;
     let app = nockmark_registry::http::router(st.clone());
-    // mint a real challenge
-    let (_, ch) = post_json(app.clone(), "/challenge", serde_json::json!({})).await;
+    // mint a real v5 challenge
+    let (_, ch) = post_json(app.clone(), "/challenge?track=zk", serde_json::json!({})).await;
     let nonce = ch["nonce"].as_str().unwrap();
-    // proof-good.jam binds to "fixture-challenge/0", NOT to this nonce
     let b64 = base64::engine::general_purpose::STANDARD.encode(GOOD);
-    let (status, body) = post_json(app, "/run", serde_json::json!({
+    let (status, body) = post_json(app, "/run?track=zk", serde_json::json!({
         "nonce": nonce, "hardware": "hw", "prover_version": "31b8a015",
-        "elapsed_ms": 60000, "proofs": [b64, b64]
+        "grind_elapsed_ms": 60000, "proofs": [b64, b64]
     })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body["error"].as_str().unwrap().contains("nonce"));
+    assert!(body["error"].as_str().unwrap().contains("version"), "{body}");
 }
 
 #[tokio::test]
@@ -75,29 +82,28 @@ async fn run_rejects_unknown_challenge() {
     let _guard = test_lock().lock().await;
     let app = nockmark_registry::http::router(state().await);
     let b64 = base64::engine::general_purpose::STANDARD.encode(GOOD);
-    let (status, body) = post_json(app, "/run", serde_json::json!({
+    let (status, body) = post_json(app, "/run?track=zk", serde_json::json!({
         "nonce": "12345", "hardware": "hw", "prover_version": "x",
-        "elapsed_ms": 1, "proofs": [b64, b64]
+        "grind_elapsed_ms": 1, "proofs": [b64, b64]
     })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    // binding fails before the kernel is ever consulted
-    assert!(body["error"].as_str().is_some());
+    assert_eq!(body["error"], "unknown-nonce", "the store is consulted before any proof work");
 }
 
 #[tokio::test]
-async fn run_rejects_zero_elapsed_ms() {
+async fn run_rejects_zero_grind_elapsed_ms() {
     use base64::Engine;
     let _guard = test_lock().lock().await;
     let app = nockmark_registry::http::router(state().await);
     let b64 = base64::engine::general_purpose::STANDARD.encode(GOOD);
-    // elapsed_ms = 0 must be rejected before binding/verify: it would make
-    // proofs_per_sec = Infinity, which serde_json serializes as JSON null.
-    let (status, body) = post_json(app, "/run", serde_json::json!({
+    // 0 must be rejected before any verify: it would make the grind rate
+    // Infinity, which serde_json serializes as JSON null.
+    let (status, body) = post_json(app, "/run?track=zk", serde_json::json!({
         "nonce": "12345", "hardware": "hw", "prover_version": "x",
-        "elapsed_ms": 0, "proofs": [b64, b64]
+        "grind_elapsed_ms": 0, "proofs": [b64, b64]
     })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body["error"].as_str().unwrap().contains("elapsed_ms"));
+    assert!(body["error"].as_str().unwrap().contains("grind_elapsed_ms"));
 }
 
 #[tokio::test]
@@ -130,7 +136,7 @@ async fn index_page_ok() {
 }
 
 #[tokio::test]
-async fn leaderboard_sorts_by_proofs_per_sec_desc() {
+async fn pre_anthropos_rows_sort_by_proofs_per_sec_desc_unranked() {
     let _guard = test_lock().lock().await;
     let st = state().await;
     let app = nockmark_registry::http::router(st.clone());
@@ -192,6 +198,8 @@ async fn leaderboard_sorts_by_proofs_per_sec_desc() {
         // Client claims are faster than the window here, so the
         // self-reported rate must exceed the ranked rate.
         assert!(row["self_reported_pps"].as_f64().unwrap() > pps);
+        // Pre-Anthropos rows are listed, never ranked.
+        assert!(row["rank"].is_null(), "{row}");
     }
 }
 
@@ -216,21 +224,21 @@ async fn challenge_is_rate_limited_per_ip() {
     // bucket as long as the trusted last entry stays the same.
     for i in 0..10 {
         let res = app.clone()
-            .oneshot(Request::post("/challenge")
+            .oneshot(Request::post("/challenge?track=zk")
                 .header("x-forwarded-for", format!("10.0.0.{i}, 203.0.113.7"))
                 .body(Body::empty()).unwrap())
             .await.unwrap();
         assert_eq!(res.status(), StatusCode::OK, "request {i} should pass");
     }
     let res = app.clone()
-        .oneshot(Request::post("/challenge")
+        .oneshot(Request::post("/challenge?track=zk")
             .header("x-forwarded-for", "10.0.0.99, 203.0.113.7")
             .body(Body::empty()).unwrap())
         .await.unwrap();
     assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
     // A different IP (different LAST entry) is unaffected.
     let res = app
-        .oneshot(Request::post("/challenge")
+        .oneshot(Request::post("/challenge?track=zk")
             .header("x-forwarded-for", "10.0.0.1, 203.0.113.8")
             .body(Body::empty()).unwrap())
         .await.unwrap();
@@ -254,28 +262,28 @@ async fn run_rejects_overlong_strings() {
     let _guard = test_lock().lock().await;
     let app = nockmark_registry::http::router(state().await);
     let b64 = base64::engine::general_purpose::STANDARD.encode(GOOD);
-    let (status, body) = post_json(app.clone(), "/run", serde_json::json!({
+    let (status, body) = post_json(app.clone(), "/run?track=zk", serde_json::json!({
         "nonce": "12345", "hardware": "h".repeat(129), "prover_version": "x",
-        "elapsed_ms": 1, "proofs": [b64.clone(), b64.clone()]
+        "grind_elapsed_ms": 1, "proofs": [b64.clone(), b64.clone()]
     })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].as_str().unwrap().contains("hardware"));
-    let (status, body) = post_json(app, "/run", serde_json::json!({
+    let (status, body) = post_json(app, "/run?track=zk", serde_json::json!({
         "nonce": "12345", "hardware": "hw", "prover_version": "p".repeat(65),
-        "elapsed_ms": 1, "proofs": [b64.clone(), b64]
+        "grind_elapsed_ms": 1, "proofs": [b64.clone(), b64]
     })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].as_str().unwrap().contains("prover_version"));
 }
 
 #[tokio::test]
-async fn default_k_is_eight_and_test_states_override_it() {
+async fn default_k_is_sixteen_and_test_states_override_it() {
     let _guard = test_lock().lock().await;
-    assert_eq!(nockmark_registry::http::K_DEFAULT, 8);
-    // state() boots with k=2 so the 116 KB fixture pair keeps working.
+    assert_eq!(nockmark_registry::http::K_DEFAULT, 16);
+    // state() boots with k=2 so the 116 KB fixture pairs keep working.
     let app = nockmark_registry::http::router(state().await);
     let res = app
-        .oneshot(Request::post("/challenge").body(Body::empty()).unwrap())
+        .oneshot(Request::post("/challenge?track=zk").body(Body::empty()).unwrap())
         .await.unwrap();
     let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
@@ -377,12 +385,13 @@ async fn ai_challenge_difficulty_tiers() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(err["error"].as_str().unwrap().contains("attempts"), "{err}");
 
-    // --- The ZK track ignores the parameter exactly as it ignores ?statement=.
-    let (status, zk) = mint("/challenge?attempts=1048576".into()).await;
+    // --- The ZK v5 track has tiers of its own, in Tip5 hashes, with its
+    //     own ceiling; an untracked mint is the retired %3 path.
+    let (status, zk) = mint("/challenge?track=zk&attempts=99999999999999".into()).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(zk.get("attempts").is_none());
-    assert!(zk.get("target").is_none());
-    assert_eq!(zk["nonce_rule"], "fnv1a-splitmix64-v1");
+    assert_eq!(zk["attempts"], tock::zkv5::ZK_ATTEMPTS_MAX);
+    let (status, _) = mint("/challenge?attempts=1048576".into()).await;
+    assert_eq!(status, StatusCode::GONE);
 }
 
 #[tokio::test]
@@ -476,17 +485,77 @@ async fn economics_estimates_and_annotates_the_board() {
             "nonce",
             "proofs_per_sec",
             "prover_version",
+            "rank",
             "rules",
             "self_reported_pps",
             "server_window_ms",
             "submitted_at",
         ]
     );
-    // Every ZK row measures complete proofs/sec: the pre-Anthropos unit.
+    // Every %3 row measures complete proofs/sec: the pre-Anthropos unit.
     assert_eq!(v[0]["rules"], "pre-anthropos");
     // …and /economics says why, in words.
-    let (_, e) = get_json(app, "/economics").await;
+    let (_, e) = get_json(app.clone(), "/economics").await;
     assert!(e["notes"]["zk_board"].as_str().unwrap().contains("147,500"));
+
+    // A v5 row IS priced: Tip5 hashes/s over a difficulty in Tip5 hashes, from
+    // the ranked rate it prints.
+    {
+        let mut zk = st.zk.lock().await;
+        let t = tock::zkv5::target_for_attempts(1 << 20).unwrap();
+        zk.record_challenge(7, 1_000_000, t, 1 << 20).unwrap();
+        zk.commit_run(7, "test-gpu", "v", 2_000, vec![[1, 0, 0, 0, 0], [2, 0, 0, 0, 0]], 1_004_000)
+            .unwrap()
+            .unwrap();
+    }
+    let (_, v) = get_json(app, "/leaderboard?track=zk").await;
+    assert_eq!(v[0]["rules"], "anthropos");
+    let hps = v[0]["verified_zk_hashes_per_sec_lb"].as_f64().unwrap();
+    assert_eq!(
+        hps,
+        nockmark_registry::economics::signif4(2.0 * 1_048_576.0 / 4.0),
+        "2 wins at 2^20 in a 4 s window, published to 4 significant figures"
+    );
+    assert_eq!(
+        v[0]["est_nock_per_day"].as_f64().unwrap(),
+        nockmark_registry::economics::signif4(hps * 86_400.0 / 6_000.0 * 1_228.8)
+    );
+    assert!(v[1].get("est_nock_per_day").is_none(), "the %3 row stays unpriced");
+}
+
+/// The AI board ranks only rows verified under the current rules; earlier
+/// rows stay listed after them, unranked, however fast.
+#[tokio::test]
+async fn ai_board_ranks_only_current_rules_rows() {
+    let _guard = test_lock().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    // A pre-ed1edfcc row (no `rules` field, so `legacy` on replay) with a
+    // 1 s window: faster than the Hardened row seeded below.
+    let legacy = serde_json::json!({
+        "ev": "run", "id": 1, "nonce": 11, "hardware": "legacy-gpu", "prover_version": "c8d6b13e",
+        "k": 2, "target": tock::aipow::hex32(&nockmark_registry::aipow::default_target()),
+        "grind_elapsed_ms": 500, "win_extranonces": [0, 1],
+        "issued_at_ms": 1_000_000, "submitted_at_ms": 1_001_000,
+    });
+    std::fs::write(
+        nockmark_registry::aipow::AiStore::path_in(dir.path()),
+        format!("{legacy}\n"),
+    )
+    .unwrap();
+    let st = state_in(dir).await;
+    seed_ai_run(&st).await; // Hardened, 4 s window
+    let app = nockmark_registry::http::router(st);
+    let (_, ai) = get_json(app.clone(), "/leaderboard?track=ai").await;
+    let rows = ai.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!((rows[0]["rules"].as_str(), rows[0]["rank"].as_u64()), (Some("hardened"), Some(1)));
+    assert_eq!((rows[1]["rules"].as_str(), rows[1]["rank"].is_null()), (Some("legacy"), true));
+    assert!(
+        rows[1]["verified_mac_per_sec_lb"].as_f64() > rows[0]["verified_mac_per_sec_lb"].as_f64(),
+        "the legacy row is faster and still sits below, unranked"
+    );
+    let (_, one) = get_json(app, "/runs/2?track=ai").await;
+    assert_eq!(one["rank"].as_u64(), Some(1), "/runs carries the board rank");
 }
 
 /// USD appears on the AI board exactly when a price has been observed, and is

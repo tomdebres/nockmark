@@ -17,6 +17,11 @@ default = []
 # this is developed on. `cargo build`/`cargo test` with no flags compile and
 # run exactly the code they did before this feature existed.
 gpu = ["ai-pow-miner/gpu"]
+# M7 step 3: the CUDA V5 ZK grind backend (`tock::zkv5_gpu`, reached by
+# `zk-bench --gpu`). OFF by default for the same reason as `gpu`: upstream's
+# `zk-pow-miner/build.rs` runs `nvcc` as soon as `cuda` is on. Arch from
+# `ZK_POW_CUDA_ARCH` (e.g. 86 for a 3090; unset = the build host's GPU).
+zk-gpu = ["zk-pow-miner/cuda"]
 
 [dependencies]
 nockapp = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4" }
@@ -34,6 +39,17 @@ ai-pow-zk = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988
 # threshold all live behind it); it also pulls the gRPC/nockapp tree, which
 # tock already links for the ZK track.
 ai-pow-miner = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4", features = ["node"] }
+# M7 step 3: the ZK v5 track uses upstream's own V5 digest, base-p target
+# comparison and CUDA search (`zk_pow_miner::v5`, `::cuda`) on BOTH sides —
+# the client grinds with them and the registry checks with them. Its
+# `kernels-open-miner` dep is patched to an empty stub below.
+zk-pow-miner = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4" }
+# Tip5 sponge primitives (object-0 digest re-derivation) and upstream's
+# vendored bignum (targets are integers below p^5 ≈ 2^320).
+nockchain-math = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4" }
+ibig = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4" }
+# ZK v5 challenge derivation, the same plain hash the AI track uses.
+blake3 = "1"
 # Wire codec of the AI-track submission blob (same codec family the compact
 # certificate uses upstream).
 postcard = { version = "1.1.3", features = ["alloc"] }
@@ -47,6 +63,14 @@ base64 = "0.22"
 
 [profile.release]
 opt-level = 3
+
+# zk-pow-miner depends on `kernels-open-miner`, whose build script panics
+# without a compiled miner.jam at build time. Nothing here uses its embedded
+# kernel (tock boots miner.jam from a run-time path), so it is replaced by an
+# empty stub — see stub/kernels-open-miner/src/lib.rs. registry/Cargo.toml
+# carries the same patch: a [patch] only applies to the root manifest's build.
+[patch."https://github.com/nockchain/nockchain"]
+kernels-open-miner = { path = "stub/kernels-open-miner" }
 
 # Match upstream's release-semantics validation of the ai-pow crates (their
 # workspace disables both flags in dev; composite_trace.rs:979 wraps

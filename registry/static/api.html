@@ -79,31 +79,45 @@
 
 <div class="endpoint">
   <div class="sigline"><span class="verb">GET</span>/leaderboard</div>
-  <p>All verified runs, ranked by server-observed proving rate.</p>
+  <p>The ZK board (<code>?track=zk</code> says so explicitly). Ranked rows
+  first: ZK v5 runs, by verified Tip5 hashes per second. Then every run from
+  before Anthropos, in their own unit, unranked.</p>
   <ul class="fields">
-    <li><code>proofs_per_sec</code> — k / server-observed window; the ranked, trustless rate (a lower bound)</li>
-    <li><code>self_reported_pps</code> — k / client-reported elapsed time; informational only</li>
-    <li><code>rules</code> — the consensus era of the row's unit: <code>pre-anthropos</code> on every ZK row, since each one measures complete proofs per second</li>
+    <li><code>rank</code> — 1-based among current-rules rows; <code>null</code> on every unranked row</li>
+    <li><code>rules</code> — server-attested era: <code>anthropos</code> (ZK proof %5, ranked) or <code>pre-anthropos</code> (complete %3 proofs/sec, unranked)</li>
   </ul>
-  <p>ZK rows carry no earnings estimate. Every row was proved before height
-  147,500 (Anthropos, ZK proof version 5), as complete proofs per second;
-  since then a ZK mining attempt is one Tip5 hash and network difficulty
-  counts hashes, so a proofs/sec figure prices nothing. Rows served before
-  M7 carried <code>est_nock_per_day</code> ≈ 0 and a
-  <code>network_share</code>; both are gone.</p>
-  <pre>curl https://nockmark.xyz/leaderboard</pre>
+  <p>A v5 row (<code>rules: anthropos</code>):</p>
+  <ul class="fields">
+    <li><code>verified_zk_hashes_per_sec_lb</code> — k · <code>expected_attempts_per_win</code> / server-observed window (mint → submit, proving included); the ranked lower bound</li>
+    <li><code>grind_zk_hashes_per_sec</code> — the same numerator over the client's grind time; informational only</li>
+    <li><code>expected_attempts_per_win</code> — the tier: p<sup>5</sup> / (target + 1) Tip5 hashes, with p the Goldilocks prime</li>
+    <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (1/√k)</li>
+    <li><code>target</code>, <code>attempts</code>, <code>win_nonces</code> — the target the wins were verified against (5 base-p limbs, least significant first, as decimal strings), its tier, and the winning nonces</li>
+    <li><code>est_nock_per_day</code>, <code>est_usd_per_day</code> — from the ranked rate, at the difficulty and price on <a href="/economics">/economics</a></li>
+  </ul>
+  <p>A pre-Anthropos row (<code>rules: pre-anthropos</code>) keeps its old
+  shape: <code>proofs_per_sec</code> (k / server window) and
+  <code>self_reported_pps</code>. Those rows measure complete proofs per
+  second, the mining unit before height 147,500. They carry no earnings
+  estimate: network difficulty counts Tip5 hashes now, so a proofs/sec figure
+  prices nothing.</p>
+  <pre>curl 'https://nockmark.xyz/leaderboard?track=zk'</pre>
   <p><code>?track=ai</code> returns the AI-PoW board instead: rates in
   MAC-equivalents per second, plus <code>est_nock_per_day</code> and
   <code>est_usd_per_day</code> computed from the ranked
   <code>verified_mac_per_sec_lb</code>. Those two are absent until an
   <code>ai-pow</code> block has actually been seen at the chain tip — AI
-  difficulty cannot be derived from the ZK figure.</p>
+  difficulty cannot be derived from the ZK figure. Only rows verified under
+  the current AI rules (<code>hardened</code>) are ranked.</p>
 </div>
 
 <div class="endpoint">
   <div class="sigline"><span class="verb">GET</span>/runs/:id</div>
-  <p>One verified run by id, same shape as a leaderboard entry.</p>
-  <pre>curl https://nockmark.xyz/runs/1</pre>
+  <p>One verified run by id, same shape as a leaderboard entry, with its board
+  rank. Each track numbers its runs separately, so the track picks which:
+  <code>?track=zk</code> for a v5 run, <code>?track=ai</code> for an AI run,
+  and no track for a pre-Anthropos run (the links older clients printed).</p>
+  <pre>curl 'https://nockmark.xyz/runs/1?track=zk'</pre>
 </div>
 
 <div class="endpoint">
@@ -122,8 +136,8 @@
   first, NockBlocks when it fails — and <code>block_reward_observed_at</code>
   says the reward (the 80% miner share) was read from the chain rather than
   configured. <code>model</code> carries the formulas, <code>notes.excludes</code>
-  what they do not account for, and <code>notes.zk_board</code> why the ZK
-  board is unpriced.</p>
+  what they do not account for, and <code>notes.zk_board</code> which ZK rows
+  are priced and why the pre-Anthropos ones are not.</p>
   <p>Anything unobserved is omitted rather than defaulted: no AI block seen
   means no <code>ai_*</code> keys, no price means no USD anywhere. Pass
   <code>?zk_hashes_per_sec=</code> or <code>?mac_per_sec=</code> to price a
@@ -144,26 +158,54 @@
 <div class="eyebrow">Submit</div>
 
 <div class="endpoint">
-  <div class="sigline"><span class="verb">POST</span>/challenge</div>
-  <p>Mint a proving challenge. Returns the <code>nonce</code> to prove
-  against, <code>k</code> (proofs required), <code>pow_len</code>, and the
-  nonce derivation rule. The ranked rate is measured from this moment to
-  submission, server-side.</p>
-  <pre>curl -X POST https://nockmark.xyz/challenge</pre>
+  <div class="sigline"><span class="verb">POST</span>/challenge?track=zk</div>
+  <p>Mint a ZK v5 challenge. The ranked rate is measured from this moment to
+  submission, server-side. Returns:</p>
+  <ul class="fields">
+    <li><code>nonce</code> — the kernel-minted u64 the rest derives from (decimal string)</li>
+    <li><code>challenge</code> — C = <code>blake3("nockmark-zk-v5" ‖ nonce_le8)</code>, hex</li>
+    <li><code>commitment</code> — the block commitment to grind: C as a little-endian 256-bit integer written in base p (5 belts, least significant first). Rule <code>commitment_rule</code>.</li>
+    <li><code>target</code>, <code>attempts</code> — the benchmark target T<sub>b</sub> (5 base-p limbs) and the tier it realises</li>
+    <li><code>k</code> — winners required; <code>pow_len</code> 64; <code>proof_version</code> 5; <code>nonce_rule</code></li>
+  </ul>
+  <p>Belts travel as decimal strings: they run to 2<sup>64</sup>, past what a
+  JSON number survives in JavaScript.</p>
+  <p><code>?attempts=</code> picks the tier: expected Tip5 hashes per win,
+  rounded to the nearest power of two and clamped to
+  [2<sup>12</sup>, 2<sup>31</sup>] (default 2<sup>20</sup>). The target is
+  T<sub>b</sub> = ⌊(p<sup>5</sup> − 1) / attempts⌋ − 1, so that
+  p<sup>5</sup> / (T<sub>b</sub> + 1) gives the tier back exactly. As on the
+  AI track, a tier cannot inflate a rate: an easy one earns less credit
+  against the same proving time, and a hard one has to be ground out.
+  <code>tock zk-bench</code> sizes it at twice the machine's own proving time,
+  which makes the ranked rate about two thirds of the true one on every
+  host.</p>
+  <p>Without <code>?track=</code>, <code>POST /challenge</code> and
+  <code>POST /run</code> answer <code>410 Gone</code>: they were the complete
+  %3 proofs/sec submission, retired with Anthropos.</p>
+  <pre>curl -X POST 'https://nockmark.xyz/challenge?track=zk&amp;attempts=16777216'</pre>
 </div>
 
 <div class="endpoint">
-  <div class="sigline"><span class="verb">POST</span>/run</div>
-  <p>Submit k base64-jammed STARK proofs for a challenge. Every proof is
-  checked (challenge binding, then full verification) before anything is
-  recorded; the practical path is the one-liner on the <a href="/">board</a>,
-  which mints, proves, and submits for you.</p>
+  <div class="sigline"><span class="verb">POST</span>/run?track=zk</div>
+  <p>Submit k winners, one <code>%5</code> proof each, in strictly ascending
+  nonce order (base-p, most significant limb first).</p>
   <ul class="fields">
-    <li><code>nonce</code>, <code>proofs[k]</code> — the challenge and its proofs</li>
+    <li><code>nonce</code>, <code>proofs[k]</code> — the challenge and the winners' base64 proof jams</li>
     <li><code>hardware</code>, <code>prover_version</code> — self-described labels (rates are not self-described)</li>
-    <li><code>elapsed_ms</code> — client-measured proving time; displayed, never ranked</li>
+    <li><code>grind_elapsed_ms</code> — client-measured grind time; displayed, never ranked</li>
   </ul>
-  <pre>tock bench --kernel assets/miner.jam \
+  <p>Nothing digest-shaped is taken from the client. Per proof, cheapest
+  first:</p>
+  <ul class="fields">
+    <li>version is <code>%5</code>: a %3 proof is refused, as mainnet has refused them since height 147,500</li>
+    <li>object 0 is a <code>%puzzle</code> whose commitment is this challenge's and whose <code>len</code> is 64</li>
+    <li>its Tip5 digest is re-derived from the submitted object 0 the way consensus does (<code>+proof-to-pow</code>), must equal upstream's own <code>v5_pow_digest</code> of the object's commitment, nonce and length, and must be ≤ T<sub>b</sub> (consensus's <code>+check-target</code>)</li>
+    <li>every polynomial object is in canonical form (<code>+canonical-pow-proof</code>)</li>
+    <li>across the submission, one win per nonce. Consensus treats everything after object 0 as a witness envelope: two different proofs of one nonce are one win, so the dedupe is on the nonce, not on the proof bytes</li>
+    <li>the STARK verifies with upstream's native verifier, and again with the consensus Hoon verifier</li>
+  </ul>
+  <pre>tock zk-bench --kernel assets/miner.jam \
   --submit https://nockmark.xyz</pre>
 </div>
 
@@ -179,9 +221,7 @@
   floor for the hardware; that shape and a GPU re-run are pending. Nockchain
   also admits mining inside real model inference, at throughput comparable to
   the optimised dedicated kernel — the notable part being that the compute is
-  dual-use, not that it is faster. The ZK track is CPU-only for a
-  different reason: its GPU provers are closed source and report unverifiable
-  pool units, so they are absent rather than taken on trust.</p>
+  dual-use, not that it is faster.</p>
 </div>
 
 <div class="endpoint">
@@ -289,13 +329,15 @@
     <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 14,285,714, the consensus MAC↔ZK-attempt exchange rate since height 154,500; a ZK attempt is one Tip5 hash since Anthropos (rows served before M7 divided by the Logos rate, 25.75e9 per complete proof)</li>
     <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (k wins is Poisson: 1/√k)</li>
     <li><code>rules</code> — the proof rules the wins were verified under, recorded by this server at acceptance: <code>hardened</code> or <code>legacy</code></li>
+    <li><code>rank</code> — 1-based among <code>hardened</code> rows; <code>null</code> on legacy rows</li>
   </ul>
   <p>Mainnet has admitted only <code>Hardened</code> AI certificates since
   height 154,500, and since 170,000 a canonical-MoE block must also route
   every token exactly <code>top_k</code> times. This registry pins nockchain
   <code>ed1edfcc</code> and verifies new wins under exactly those rules: a
   legacy certificate is rejected. Rows accepted before that pin carry
-  <code>rules: legacy</code> and stay on the board. Older still, rows proved
+  <code>rules: legacy</code> and stay on the board, listed after the ranked
+  rows with <code>rank: null</code>. Older still, rows proved
   before pin <code>c8d6b13e</code> used the pre-Pearl-V3 statement, whose AIR
   was later hardened upstream (urange8 lookup fix). Cross-era rate
   comparisons are fair — the grind is the same work — but each row's

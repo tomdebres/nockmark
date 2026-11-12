@@ -301,14 +301,24 @@ pub fn expected_attempts_per_win(target: &[u8; 32]) -> f64 {
 /// granted value back on the challenge as `attempts`, so a client can always
 /// see what it actually got.
 pub fn grant_attempts(requested: u64) -> u64 {
-    let n = requested.clamp(AI_ATTEMPTS_MIN, AI_ATTEMPTS_MAX);
+    grant_pow2_tier(requested, AI_ATTEMPTS_MIN, AI_ATTEMPTS_MAX)
+}
+
+/// [`grant_attempts`]'s rule with the bounds as arguments: clamp to
+/// `min..=max`, then round to the nearest power of two in log space. Shared
+/// with the ZK v5 track ([`crate::zkv5::grant_attempts`]), whose tiers count
+/// Tip5 hashes and run to a higher ceiling. `min` and `max` must be powers of
+/// two, so the rounding can never leave the range.
+pub fn grant_pow2_tier(requested: u64, min: u64, max: u64) -> u64 {
+    debug_assert!(min.is_power_of_two() && max.is_power_of_two() && min <= max);
+    let n = requested.clamp(min, max);
     if n.is_power_of_two() {
         return n;
     }
     let lo = 1u64 << n.ilog2();
     let hi = lo << 1;
     // Nearest in log space: n is closer to hi iff n² ≥ lo·hi. u128 keeps the
-    // squares exact (n ≤ 2^30 here, but the intent is what matters).
+    // squares exact (n ≤ 2^32 on either track; the intent is what matters).
     if (n as u128) * (n as u128) >= (lo as u128) * (hi as u128) {
         hi
     } else {

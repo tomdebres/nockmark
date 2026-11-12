@@ -1,0 +1,9 @@
+[package]
+# Stands in for upstream's `kernels-open-miner` (crates/lib/kernels/miner),
+# patched in by tock/Cargo.toml and registry/Cargo.toml. See src/lib.rs.
+name = "kernels-open-miner"
+version = "0.1.17"
+edition = "2021"
+publish = false
+
+[dependencies]

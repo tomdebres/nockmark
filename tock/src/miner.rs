@@ -22,8 +22,9 @@ pub const DEFAULT_POW_LEN: u64 = 64;
 /// source of truth for the prover_version submitted with runs.
 pub const NOCKCHAIN_PIN: &str = "ed1edfcc";
 
-/// Current mainnet proof version tag in the miner-kernel cause (%3 since
-/// the Zoe fork at height 119,400).
+/// Proof version of the `bench`/`prove` commands: complete `%3` proofs, the
+/// mainnet ZK proof from the Zoe fork (height 119,400) until Anthropos
+/// (147,500). Mainnet now takes `%5`; `zk-bench` ([`crate::zkv5`]) proves it.
 pub const PROOF_VERSION: u64 = 3;
 
 /// max-tip5-atom = p^5 - 1 (p = 2^64 - 2^32 + 1, Goldilocks prime) as
@@ -75,10 +76,12 @@ pub fn belts_to_digest(slab: &mut NounSlab, belts: &[u64; 5]) -> Noun {
     T(slab, &nouns)
 }
 
-/// Build the max target as a bignum noun: [%bn limbs-as-list].
-fn max_target(slab: &mut NounSlab) -> Noun {
+
+/// Build a target bignum noun `[%bn limbs]` from LSB-first u32 limbs — the
+/// representation `check-target` merges (hoon/common/pow.hoon).
+fn target_from_limbs(slab: &mut NounSlab, limbs: &[u32]) -> Noun {
     let mut list = D(0);
-    for limb in MAX_TARGET_LIMBS.iter().rev() {
+    for limb in limbs.iter().rev() {
         list = T(slab, &[D(*limb as u64), list]);
     }
     T(slab, &[D(tas!(b"bn")), list])
@@ -94,21 +97,42 @@ pub async fn run_prove(
     nonce_belts: &[u64; 5],
     pow_len: u64,
 ) -> ProveOutput {
+    run_prove_at(serf, PROOF_VERSION, header_belts, nonce_belts, &MAX_TARGET_LIMBS, pow_len)
+        .await
+        .unwrap_or_else(|e| panic!("{e} — the max target should always pass"))
+}
+
+/// One proving poke at an explicit proof `version` and target (LSB-first u32
+/// limbs of the integer target).
+///
+/// For `%5` the kernel first computes the object-0 digest and proves ONLY if
+/// it meets `target` (hoon/apps/dumbnet/miner.hoon); a losing nonce comes back
+/// as `%mine-result %|` and is returned here as `Err`, never as a proof. The
+/// kernel also asserts that the proof's own PoW digest equals the one it
+/// checked, so a proof returned for `%5` is bound to `nonce` and `target`.
+pub async fn run_prove_at(
+    serf: &SerfThread<SaveableCheckpoint>,
+    version: u64,
+    header_belts: &[u64; 5],
+    nonce_belts: &[u64; 5],
+    target_limbs: &[u32],
+    pow_len: u64,
+) -> Result<ProveOutput, String> {
     let mut slab: NounSlab = NounSlab::new();
     let header = belts_to_digest(&mut slab, header_belts);
     let nonce = belts_to_digest(&mut slab, nonce_belts);
-    let target = max_target(&mut slab);
-    let poke = T(
-        &mut slab,
-        &[D(PROOF_VERSION), header, nonce, target, D(pow_len)],
-    );
+    let target = target_from_limbs(&mut slab, target_limbs);
+    let poke = T(&mut slab, &[D(version), header, nonce, target, D(pow_len)]);
     slab.set_root(poke);
 
     // Same wire the mining driver uses (mining.rs MiningWire::Candidate).
     let wire = WireRepr::new("miner", 1, vec!["candidate".into()]);
 
     let t0 = Instant::now();
-    let result = serf.poke(wire, slab).await.expect("prove poke failed");
+    let result = serf
+        .poke(wire, slab)
+        .await
+        .map_err(|e| format!("prove poke failed: {e:?}"))?;
     let duration = t0.elapsed();
 
     // Effects: list containing [%mine-result %& hash %command %pow proof dig header nonce]
@@ -136,7 +160,10 @@ pub async fn run_prove(
             .as_u64()
             .expect("each flag should be small");
         if flag != 0 {
-            panic!("mine-result reported failure (%|) — target should always pass");
+            return Err(format!(
+                "mine-result reported failure (%|): the version-{version} digest of this nonce \
+                 does not meet the target"
+            ));
         }
         // [hash %command %pow %dumb-zkpow proof dig header nonce]
         // (%dumb-zkpow selects the zk variant of the consensus kernel's
@@ -171,15 +198,15 @@ pub async fn run_prove(
         break;
     }
 
-    let proof = proof.expect("no mine-result effect found in prove output");
+    let proof = proof.ok_or("no mine-result effect found in prove output")?;
     let mut proof_slab: NounSlab = NounSlab::new();
     let proof_copied = proof_slab.copy_into(proof, &space);
     proof_slab.set_root(proof_copied);
     let proof_jam = proof_slab.jam().to_vec();
 
-    ProveOutput {
+    Ok(ProveOutput {
         duration,
         proof_jam,
         dig_hex,
-    }
+    })
 }

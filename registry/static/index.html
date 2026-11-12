@@ -3,7 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nockmark — verified Nockchain proving benchmarks</title>
-<meta name="description" content="A public registry of Nockchain STARK proving benchmarks. Every rate is computed server-side from verified proofs of a server-issued challenge.">
+<meta name="description" content="A public registry of Nockchain mining benchmarks. Every rate is computed server-side from verified proofs of a server-issued challenge.">
 <link rel="canonical" href="https://nockmark.xyz/">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nockmark.xyz/">
@@ -86,6 +86,8 @@
   .verified { font-size: 1.0625rem; font-weight: 700; font-variant-numeric: tabular-nums; }
   .quiet { color: var(--faint); font-variant-numeric: tabular-nums; }
   .state td { color: var(--faint); white-space: normal; }
+  .eyebrow.sub { margin-top: 2.5rem; }
+  #ai { margin-top: 3rem; }
 
   .econ { margin-top: .875rem; font-size: .8125rem; color: var(--faint); }
   .econ .spark { vertical-align: -3px; margin-left: .35rem; }
@@ -115,31 +117,56 @@
 </header>
 
 <section>
-  <div class="eyebrow">ZK proving — complete proofs per second, server-observed</div>
+  <div class="eyebrow">ZK mining — Tip5 hashes per second, CPU and GPU</div>
   <div class="scroll">
     <table id="board">
       <thead>
         <tr>
-          <th>#</th><th></th><th>hardware</th>
-          <th class="num">verified p/s</th><th class="num">self-reported</th>
-          <th class="num">k</th><th>prover</th>
+          <th>#</th><th></th><th>hardware</th><th class="num">tier</th>
+          <th class="num">verified hashes/s</th><th class="num">grind-window</th>
+          <th class="num">±σ</th><th>prover</th>
+          <th class="num">nock/day</th><th class="num">usd/day</th>
         </tr>
       </thead>
-      <tbody><tr class="state"><td colspan="7">Loading verified runs…</td></tr></tbody>
+      <tbody><tr class="state"><td colspan="10">Loading verified runs…</td></tr></tbody>
     </table>
   </div>
   <p class="econ" id="econ" hidden></p>
-  <p class="econ"><b>These rows are a proving benchmark, no longer a mining
-  rate.</b> Since block 147,500 (Anthropos, ZK proof version 5) a ZK mining
-  attempt is one Tip5 hash, and a miner builds a full proof only for a winning
-  nonce. Every row here was measured before that, as complete proofs per
-  second, so none of them carries an earnings estimate. A hash-rate track,
-  CPU and GPU, is next.</p>
-  <p class="econ">Every row here is a CPU. Nockchain's GPU STARK provers are
-  closed source and report rates in their own pool units, which cannot be
-  checked against a challenge this server issued — so they are absent rather
-  than unverified. Read this board as "what a CPU proves", not as the ceiling
-  of the hardware.</p>
+  <p class="econ">Since block 147,500 (Anthropos, ZK proof version 5) a ZK
+  mining attempt is one Tip5 hash of proof object 0 — the puzzle for one
+  nonce — and a miner builds the full STARK only for a nonce whose hash meets
+  the target. So this board ranks hashes per second. A run grinds nonces for a
+  commitment derived from this server's challenge, against a target it
+  issued, and proves k winners. For each one the server re-derives the hash
+  from the proof itself, checks the commitment, the length, the version and
+  the target, and verifies the STARK twice, with upstream's native verifier
+  and with the consensus Hoon verifier. Only then does it credit k × the
+  expected hashes per win, over the window it observed. A nonce counts once,
+  whatever the proof bytes.</p>
+  <p class="econ"><b>Tier</b> is the expected hashes per win a run asked for.
+  Clients size it at twice their own proving time, so the proving inside the
+  window costs every host the same third of its true rate, and the ranking
+  holds. CPU and GPU rows rank together: the GPU path is upstream's
+  open-source CUDA V5 search, which only finds winners; each one is re-checked
+  and proved on the CPU, then verified here like any other.</p>
+  <div id="pre" hidden>
+    <div class="eyebrow sub">Before Anthropos — complete proofs per second, unranked</div>
+    <div class="scroll">
+      <table id="pre-board">
+        <thead>
+          <tr>
+            <th>#</th><th></th><th>hardware</th>
+            <th class="num">verified p/s</th><th class="num">self-reported</th>
+            <th class="num">k</th><th>prover</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="econ">Complete %3 proofs per second: the ZK mining unit until
+    block 147,500. Kept as a CPU proving benchmark. These rows are not ranked
+    or priced, and the registry no longer accepts new ones.</p>
+  </div>
 </section>
 
 <section id="ai" hidden>
@@ -172,9 +199,8 @@
   re-checked and certified on the CPU before this server verifies it.</p>
   <p class="econ">New wins are verified under mainnet's current rules
   (Hardened since block 154,500, exact MoE routing since 170,000); a legacy
-  certificate is rejected. Rows accepted before that are marked <b>legacy
-  rules</b> in the prover column and stay ranked: the grind they measure is
-  the same work.</p>
+  certificate is rejected. Only those rows are ranked. Rows accepted before
+  that are marked <b>legacy rules</b> and listed after them, unranked.</p>
   <p class="econ"><b>These GPU figures are behind upstream.</b> They were
   measured at pin c8d6b13e with the generic CUDA kernel, which still serves
   this shape. Two days after that pin, upstream made a peak kernel on its own
@@ -188,7 +214,7 @@
 
 <section class="submit">
   <div class="eyebrow">Get on the board</div>
-  <pre><b>tock bench</b> --kernel assets/miner.jam \
+  <pre><b>tock zk-bench</b> --kernel assets/miner.jam \
   --submit https://nockmark.xyz</pre>
 </section>
 
@@ -196,7 +222,7 @@
   <p>Each mark in the second column is drawn from that run's challenge
   nonce — a fingerprint of the workload the machine actually proved.
   Hardware descriptors are self-reported; rates are not.</p>
-  <p>nock/day and usd/day (AI rows, for now) are estimates: the attempt-lottery model at the
+  <p>nock/day and usd/day are estimates: the attempt-lottery model at the
   difficulty and price observed above, shown only when this instance has
   actually observed them. They exclude electricity, hardware, pool fees and
   solo-mining variance, and both difficulty and price drift — so read every
@@ -246,31 +272,55 @@ const tb = document.querySelector('#board tbody');
 // The prover cell: the client's pin label, then the rules the row was
 // measured under (server-side). Set as text: prover_version is whatever the
 // submitter sent.
-const RULES = { 'pre-anthropos': 'pre-Anthropos', legacy: 'legacy rules', hardened: 'Hardened' };
+const RULES = { anthropos: 'Anthropos', 'pre-anthropos': 'pre-Anthropos', legacy: 'legacy rules', hardened: 'Hardened' };
 const prover = r => r.rules ? `${r.prover_version} · ${RULES[r.rules] || r.rules}` : r.prover_version;
 
-fetch('/leaderboard').then(r => r.json()).then(rows => {
+// The ZK board: v5 rows (rules "anthropos") are ranked; the pre-Anthropos
+// proofs/sec rows follow, unranked, in their own table.
+const cell = (tr, sel, text) => { tr.querySelector(sel).textContent = text; };
+fetch('/leaderboard?track=zk').then(r => r.json()).then(rows => {
+  const v5 = rows.filter(r => r.rules === 'anthropos');
+  const pre = rows.filter(r => r.rules !== 'anthropos');
   tb.textContent = '';
-  if (!rows.length) {
-    tb.innerHTML = '<tr class="state"><td colspan="7">No verified runs yet. Yours can be first — command below.</td></tr>';
-    return;
+  if (!v5.length) {
+    tb.innerHTML = '<tr class="state"><td colspan="10">No verified v5 runs yet. Yours can be first — command below.</td></tr>';
   }
-  for (const [i, r] of rows.entries()) {
+  for (const r of v5) {
     const tr = document.createElement('tr');
     tr.innerHTML =
-      `<td class="rank">${i + 1}</td>` +
+      `<td class="rank">${r.rank ?? '—'}</td>` +
       `<td class="sigil">${sigil(r.nonce)}</td>` +
       `<td class="hw"></td>` +
-      `<td class="num verified">${r.proofs_per_sec.toFixed(4)}</td>` +
+      `<td class="num quiet">${tier(r.expected_attempts_per_win)}</td>` +
+      `<td class="num verified">${human(r.verified_zk_hashes_per_sec_lb)}</td>` +
+      `<td class="num quiet">${human(r.grind_zk_hashes_per_sec)}</td>` +
+      `<td class="num quiet">±${Math.round(r.sigma_frac * 100)}%</td>` +
+      `<td class="quiet prover"></td>` +
+      `<td class="num">${fmt(r.est_nock_per_day)}</td>` +
+      `<td class="num quiet">${usd(r.est_usd_per_day)}</td>`;
+    cell(tr, '.hw', r.hardware);
+    cell(tr, '.prover', prover(r));
+    tb.appendChild(tr);
+  }
+  if (!pre.length) return;
+  const pb = document.querySelector('#pre-board tbody');
+  for (const r of pre) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td class="rank">—</td>` +
+      `<td class="sigil">${sigil(r.nonce)}</td>` +
+      `<td class="hw"></td>` +
+      `<td class="num">${r.proofs_per_sec.toFixed(4)}</td>` +
       `<td class="num quiet">${r.self_reported_pps.toFixed(4)}</td>` +
       `<td class="num">${r.k}</td>` +
       `<td class="quiet prover"></td>`;
-    tr.querySelector('.hw').textContent = r.hardware;
-    tr.querySelector('.prover').textContent = prover(r);
-    tb.appendChild(tr);
+    cell(tr, '.hw', r.hardware);
+    cell(tr, '.prover', prover(r));
+    pb.appendChild(tr);
   }
+  document.getElementById('pre').hidden = false;
 }).catch(() => {
-  tb.innerHTML = '<tr class="state"><td colspan="7">Could not load the leaderboard — reload the page to retry, or read the <a href="/leaderboard">JSON</a> directly.</td></tr>';
+  tb.innerHTML = '<tr class="state"><td colspan="10">Could not load the leaderboard — reload the page to retry, or read the <a href="/leaderboard">JSON</a> directly.</td></tr>';
 });
 
 // A compact "3.1M"-style figure for the estimated network proving rate.
@@ -299,13 +349,17 @@ const tier = v => {
 };
 
 // AI-PoW track (M5): shown only once the endpoint has verified rows.
+// Ranked by the server: only rows under the current rules carry a rank.
 fetch('/leaderboard?track=ai').then(r => r.json()).then(rows => {
   if (!Array.isArray(rows) || !rows.length) return;
   const tb = document.querySelector('#ai-board tbody');
-  for (const [i, r] of rows.entries()) {
+  if (!rows.some(r => r.rank != null)) {
+    tb.innerHTML = '<tr class="state"><td colspan="11">No runs under the current rules yet; the rows below are unranked.</td></tr>';
+  }
+  for (const r of rows) {
     const tr = document.createElement('tr');
     tr.innerHTML =
-      `<td class="rank">${i + 1}</td>` +
+      `<td class="rank">${r.rank ?? '—'}</td>` +
       `<td class="hw"></td>` +
       `<td class="quiet stmt"></td>` +
       `<td class="num quiet">${tier(r.expected_attempts_per_win)}</td>` +

@@ -20,7 +20,9 @@ use sha2::{Digest, Sha256};
 
 #[cfg(feature = "gpu")]
 use tock::aipow_gpu;
-use tock::{aipow, aipow_moe, client, hardware, miner, nonce};
+#[cfg(feature = "zk-gpu")]
+use tock::zkv5_gpu;
+use tock::{aipow, aipow_moe, client, hardware, miner, nonce, zkv5};
 use tock::miner::DEFAULT_POW_LEN;
 
 #[derive(Parser)]
@@ -32,7 +34,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Benchmark this machine: k proofs, per-proof timings, proofs/sec.
+    /// Benchmark complete `%3` proving: k proofs, per-proof timings,
+    /// proofs/sec. A proving benchmark only: since Anthropos (height 147,500)
+    /// a ZK mining attempt is one Tip5 hash and mainnet takes `%5` proofs —
+    /// `zk-bench` measures that, and is what the registry ranks.
     Bench {
         /// Seed for nonce derivation; per-proof nonces are "<seed>/<i>".
         /// (Later, the registry challenge lands here.)
@@ -55,15 +60,57 @@ enum Command {
         /// Directory to write the proof jams into (kept only if given).
         #[arg(long)]
         keep_proofs: Option<PathBuf>,
-        /// Registry base URL. When set, fetches a challenge (which supplies
-        /// the seed, k, and pow-len — --seed/-k are ignored) and submits the
-        /// proof bundle after proving. Without it, bench stays fully local.
-        #[arg(long, value_name = "REGISTRY_URL")]
+        /// Retired: the registry no longer takes `%3` proofs/sec runs (it
+        /// answers 410 Gone). Use `zk-bench --submit`.
+        #[arg(long, value_name = "REGISTRY_URL", hide = true)]
         submit: Option<String>,
         /// Prover version string recorded on submission (the nockchain
         /// commit the kernel jams were built from).
         #[arg(long, default_value = tock::miner::NOCKCHAIN_PIN)]
         prover_version: String,
+    },
+    /// Benchmark ZK mining as mainnet does it since Anthropos (height
+    /// 147,500): grind Tip5 hashes of proof object 0 for nonces that meet a
+    /// target, then prove each winner (`%5`) through the miner kernel. The
+    /// registry ranks verified Tip5 hashes per second.
+    ZkBench {
+        /// Path to the compiled miner kernel jam (proves the winners).
+        #[arg(long)]
+        kernel: PathBuf,
+        /// Difficulty tier: expected Tip5 hashes per win, rounded to the
+        /// nearest power of two and clamped to [2^12, 2^31]. Skips the
+        /// self-calibration. Without it, zk-bench first measures this machine
+        /// (~2 s of grinding plus one throwaway proof, ~21 s on an M1 Max) and
+        /// sizes each win's grind at 2x that proof, so the registry's window
+        /// recovers 2/3 of the true hash rate on every host.
+        #[arg(long)]
+        attempts: Option<u64>,
+        /// Wins to find and prove. With --submit the registry's k applies.
+        #[arg(short, long, default_value_t = 1)]
+        k: u64,
+        /// CPU grind threads (default: every core). Proving is one kernel,
+        /// one proof at a time, whatever this says.
+        #[arg(short, long)]
+        threads: Option<usize>,
+        /// Grind on CUDA device 0 instead of the CPU. Needs a build with
+        /// `--features zk-gpu` (nvcc; arch from ZK_POW_CUDA_ARCH). Only the
+        /// search moves to the device: every winner is re-checked on the CPU
+        /// and proved there.
+        #[arg(long)]
+        gpu: bool,
+        /// Attempts per CUDA launch with --gpu.
+        #[arg(long, value_name = "N")]
+        gpu_batch: Option<u64>,
+        /// Registry base URL: mint a challenge there at the chosen tier, and
+        /// submit the proofs to it. Without it, zk-bench stays local.
+        #[arg(long, value_name = "REGISTRY_URL")]
+        submit: Option<String>,
+        /// Prover version string recorded on submission.
+        #[arg(long, default_value = tock::miner::NOCKCHAIN_PIN)]
+        prover_version: String,
+        /// Directory to write the winners' proof jams into.
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
     },
     /// Benchmark the Logos AI-PoW puzzle: grind attempts, prove a compact
     /// recursive certificate per jackpot win. `--statement` picks which AI-PoW
@@ -207,6 +254,20 @@ async fn main() {
                 }
             }
         }
+        Command::ZkBench {
+            kernel,
+            attempts,
+            k,
+            threads,
+            gpu,
+            gpu_batch,
+            submit,
+            prover_version,
+            out_dir,
+        } => {
+            let backend = resolve_zk_backend(gpu, gpu_batch, threads);
+            zk_bench(kernel, attempts, k, backend, submit, prover_version, out_dir).await
+        }
         Command::Prove {
             nonce,
             kernel,
@@ -252,6 +313,15 @@ async fn bench(
 ) {
     assert!(k >= 1, "k must be at least 1");
     assert!(threads >= 1, "threads must be at least 1");
+    if submit.is_some() {
+        eprintln!(
+            "bench --submit is retired: since height 147,500 (Anthropos) the registry ranks \
+             Tip5 hashes/s from %5 proofs, not complete %3 proofs/s. Run \
+             `tock zk-bench --kernel {} --submit <REGISTRY_URL>` instead.",
+            kernel.display()
+        );
+        std::process::exit(2);
+    }
     let hw = hardware::detect();
     let kernel_bytes = std::fs::read(kernel)
         .unwrap_or_else(|e| panic!("could not read kernel jam {}: {e}", kernel.display()));
@@ -952,6 +1022,223 @@ async fn ai_bench_moe(
             }
             Err(e) => {
                 eprintln!("submission failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+/// Which backend grinds a `zk-bench` run. As with [`Backend`], the `Gpu`
+/// variant only exists in a `zk-gpu` build, so "this binary cannot grind on a
+/// GPU" is reported once, in [`resolve_zk_backend`].
+#[derive(Clone, Copy)]
+enum ZkBackend {
+    Cpu {
+        threads: usize,
+    },
+    #[cfg(feature = "zk-gpu")]
+    Gpu {
+        batch: u64,
+    },
+}
+
+impl ZkBackend {
+    fn label(self) -> String {
+        match self {
+            Self::Cpu { threads } => format!("CPU, {threads} thread(s), upstream v5_pow_digest"),
+            #[cfg(feature = "zk-gpu")]
+            Self::Gpu { batch } => format!(
+                "CUDA device {} ({batch} attempts/launch, search only)",
+                zkv5_gpu::ZK_GPU_DEVICE
+            ),
+        }
+    }
+
+    fn hardware_descriptor(self, hw: &hardware::Hardware) -> String {
+        match self {
+            Self::Cpu { .. } => client::hardware_summary(hw),
+            #[cfg(feature = "zk-gpu")]
+            Self::Gpu { .. } => {
+                client::hardware_summary_with_device(zkv5_gpu::device_descriptor().as_deref(), hw)
+            }
+        }
+    }
+
+    fn calibrate(self) -> f64 {
+        let budget = std::time::Duration::from_secs_f64(zkv5::ZK_CALIBRATION_SECS);
+        match self {
+            Self::Cpu { threads } => zkv5::calibrate_cpu_hashes_per_sec(budget, threads),
+            #[cfg(feature = "zk-gpu")]
+            Self::Gpu { batch } => zkv5_gpu::calibrate_hashes_per_sec(budget, batch),
+        }
+    }
+
+    fn grind(self, commitment: zkv5::Belts5, target: zkv5::Belts5, k: usize) -> zkv5::GrindResult {
+        match self {
+            Self::Cpu { threads } => zkv5::grind_cpu(commitment, target, k, threads),
+            #[cfg(feature = "zk-gpu")]
+            Self::Gpu { batch } => zkv5_gpu::grind(commitment, target, k, batch),
+        }
+    }
+}
+
+fn resolve_zk_backend(gpu: bool, gpu_batch: Option<u64>, threads: Option<usize>) -> ZkBackend {
+    if !gpu {
+        if gpu_batch.is_some() {
+            eprintln!("note: --gpu-batch has no effect without --gpu");
+        }
+        let threads = threads.unwrap_or_else(zkv5::default_threads).max(1);
+        return ZkBackend::Cpu { threads };
+    }
+    if threads.is_some() {
+        eprintln!("note: --threads has no effect with --gpu");
+    }
+    #[cfg(not(feature = "zk-gpu"))]
+    {
+        let _ = gpu_batch;
+        eprintln!(
+            "--gpu requires a CUDA build of tock, which this binary is not: rebuild with \
+             `cargo build --release --features zk-gpu` on a machine with nvcc and a CUDA driver"
+        );
+        std::process::exit(2)
+    }
+    #[cfg(feature = "zk-gpu")]
+    {
+        ZkBackend::Gpu {
+            batch: gpu_batch.unwrap_or(zkv5_gpu::DEFAULT_ZK_GPU_BATCH),
+        }
+    }
+}
+
+/// `tock zk-bench`: calibrate (before any challenge exists), mint, grind,
+/// prove each winner, submit.
+async fn zk_bench(
+    kernel: PathBuf,
+    attempts: Option<u64>,
+    k: u64,
+    backend: ZkBackend,
+    submit: Option<String>,
+    prover_version: String,
+    out_dir: Option<PathBuf>,
+) {
+    use base64::Engine;
+    assert!(k >= 1, "k must be at least 1");
+    let hw = hardware::detect();
+    let kernel_bytes = std::fs::read(&kernel)
+        .unwrap_or_else(|e| panic!("could not read kernel jam {}: {e}", kernel.display()));
+    if let Some(dir) = &out_dir {
+        std::fs::create_dir_all(dir).expect("could not create --out-dir");
+    }
+    // Boot before anything that starts a clock.
+    let serf = miner::boot_kernel(kernel_bytes, NOCK_STACK_SIZE_TINY).await;
+
+    // The tier, BEFORE the challenge exists: it is a parameter of the request,
+    // and a calibration after the mint would be charged to the server window.
+    let tier = match attempts {
+        Some(requested) => {
+            let granted = zkv5::grant_attempts(requested);
+            if granted != requested {
+                eprintln!("--attempts {requested} rounded/clamped to the nearest tier: 2^{}", granted.ilog2());
+            }
+            granted
+        }
+        None => {
+            let rate = backend.calibrate();
+            let prove_secs = zkv5::calibrate_prove_secs(&serf).await;
+            let tier = zkv5::tier_for_prove_ratio(rate, prove_secs);
+            eprintln!(
+                "calibration: {rate:.0} hashes/s on {}, {prove_secs:.1}s per proof -> tier 2^{} \
+                 (~{:.0}s of grinding vs ~{:.0}s of proving per win)",
+                backend.label(),
+                tier.ilog2(),
+                tier as f64 / rate.max(1e-9),
+                prove_secs,
+            );
+            tier
+        }
+    };
+
+    let (registry_ch, commitment, target, k) = match &submit {
+        Some(base) => {
+            let ch = client::fetch_zk_challenge(base, Some(tier))
+                .await
+                .unwrap_or_else(|e| panic!("could not fetch a ZK challenge: {e}"));
+            if ch.attempts != tier {
+                eprintln!("note: asked for tier 2^{}, the registry granted 2^{}", tier.ilog2(), ch.attempts.ilog2());
+            }
+            if ch.k != k {
+                eprintln!("note: the registry wants k={} (asked for {k})", ch.k);
+            }
+            eprintln!(
+                "challenge {} from {base} (k={}, tier 2^{}); the clock is running",
+                ch.nonce,
+                ch.k,
+                ch.attempts.ilog2()
+            );
+            let (c, t, kk) = (ch.commitment, ch.target, ch.k);
+            (Some(ch), c, t, kk)
+        }
+        None => {
+            let t = zkv5::target_for_attempts(tier).expect("a granted tier has a target");
+            (None, zkv5::commitment_for_nonce(0), t, k)
+        }
+    };
+
+    eprintln!("grinding {k} win(s) on {}…", backend.label());
+    let g = backend.grind(commitment, target, k as usize);
+    let grind_secs = g.elapsed.as_secs_f64();
+    eprintln!(
+        "  {} winner(s) in {:.1}s ({} hashes, {:.0} hashes/s)",
+        g.winners.len(),
+        grind_secs,
+        g.hashes,
+        g.hashes as f64 / grind_secs.max(1e-9)
+    );
+
+    let mut proofs = Vec::with_capacity(g.winners.len());
+    let mut prove_ms = Vec::with_capacity(g.winners.len());
+    for (i, w) in g.winners.iter().enumerate() {
+        let out = zkv5::prove_win(&serf, &commitment, w, &target)
+            .await
+            .unwrap_or_else(|e| panic!("winner {i} ({w:?}) did not prove: {e}"));
+        eprintln!("  proof {i}: {:.2?} ({} bytes)", out.duration, out.proof_jam.len());
+        if let Some(dir) = &out_dir {
+            std::fs::write(dir.join(format!("proof-{i}.jam")), &out.proof_jam)
+                .expect("could not write proof jam");
+        }
+        prove_ms.push(out.duration.as_millis() as u64);
+        proofs.push(base64::engine::general_purpose::STANDARD.encode(&out.proof_jam));
+    }
+
+    let credited = k as f64 * zkv5::expected_attempts_per_win(&target);
+    let prove_total = prove_ms.iter().sum::<u64>() as f64 / 1000.0;
+    println!("tock zk-bench — ZK v5 (Anthropos): Tip5 hashes of proof object 0, %5 proofs");
+    println!("  backend:      {}", backend.label());
+    println!("  tier:         2^{} expected hashes/win", zkv5::expected_attempts_per_win(&target).log2().round());
+    println!("  wins:         {k}");
+    println!("  grind:        {grind_secs:.1}s, {:.0} credited hashes/s", credited / grind_secs.max(1e-9));
+    println!("  proving:      {prove_total:.1}s ({:.1}s per win)", prove_total / k as f64);
+    println!(
+        "  grind+prove:  {:.0} credited hashes/s (the registry's window adds network time)",
+        credited / (grind_secs + prove_total).max(1e-9)
+    );
+
+    if let (Some(base), Some(ch)) = (&submit, registry_ch) {
+        let sub = client::ZkSubmission {
+            nonce: ch.nonce,
+            hardware: backend.hardware_descriptor(&hw),
+            prover_version,
+            // Round up: never claim a faster grind than measured.
+            grind_elapsed_ms: (grind_secs * 1000.0).ceil().max(1.0) as u64,
+            proofs,
+        };
+        match client::submit_zk_run(base, &sub).await {
+            Ok(id) => {
+                println!("submitted: run {id}");
+                println!("  {}/runs/{id}?track=zk", base.trim_end_matches('/'));
+            }
+            Err(e) => {
+                eprintln!("submission REJECTED or failed: {e}");
                 std::process::exit(1);
             }
         }
