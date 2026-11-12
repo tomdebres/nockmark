@@ -127,6 +127,50 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
 5. **GPU sweep, both tracks** (3090 / 4090 / 5090; RunPod balance $8.64, the
    whole M6 programme cost $0.57), then a write-up answering "which puzzle
    should this card mine?", then revisit the announcement.
+   - **ZK half: done (PR #36, 2026-11-12).** Live runs, self-calibrated,
+     k = 16, client unchanged from step 3 (tock `1a704cd`). Logs and the
+     full analysis are in `bench-results/gpu/2026-11-12-zk-v5-sweep/`.
+
+     | card (pod CPU) | calibrated | sustained | verified (rank) | proof | tier | hashes / expected |
+     |---|---:|---:|---:|---:|---:|---:|
+     | 4090 (TR PRO 5975WX) | 14.65 MH/s | 14.03 | 10.03 (1) | 29.8 s | 2³⁰ | 0.989 |
+     | 5090 (EPYC 9654) | 17.83 MH/s | 17.30 | 9.53 (2) | 33.7 s | 2³⁰ | 1.246 |
+     | 3090 (EPYC 7663), step 3 | 6.11 MH/s | 5.18 | 4.82 (3) | 39.5 s | 2²⁹ | 0.676 |
+
+     The calibrations are within 1 % of upstream's #192 claims (14.5 and
+     18 MH/s).
+   - **Why verified is below raw:** verified ÷ calibrated = luck ×
+     sustained/calibrated × grind/window.
+     - 3090: 1.48 × 0.85 × 0.63 = 0.79.
+     - 4090: 1.01 × 0.96 × 0.71 = 0.69.
+     - 5090: 0.80 × 0.97 × 0.69 = 0.54.
+
+     At luck 1 the three runs recover 0.61, 0.68 and 0.62 of calibrated.
+     - The GPU idles while proving. zk-bench grinds all 16 wins, then proves
+       them one at a time on one core (1.0 of 64 or 192 cores busy, GPU
+       0 %): 28–35 % of the window. That is the R = 2 tier rule's
+       R/(R+1) cap, shifted per card by power-of-two rounding.
+     - Submit and both server verifiers take ~25 s (1.4 %).
+     - The 4090 and 5090 ran 3–4 % below their 2 s calibration, power-capped
+       at 400 W and 520 W.
+     - The 5090 ranks below the 4090 on luck alone (±25 % at k = 16): at
+       luck 1 it would be 11.0 vs 10.0 MH/s.
+   - **Follow-up fix, not done here** (rows must stay comparable):
+     - Pipeline zk-bench as upstream's miner does: prove each winner while
+       the GPU keeps grinding.
+     - The window becomes grind + one proof + submit, so recovery is
+       ≈ 1 − 1/(kR + 1) ≈ 97 %, still host-independent.
+     - Predicted at luck 1: 4090 13.4 MH/s, 5090 16.3, 3090 4.97.
+     - Probed on the same pods: 8 (4090 host) or 16 (5090 host) concurrent
+       proofs each ran within 4 % of a lone proof, and the 4090's grind was
+       14.50 MH/s alone vs 14.49 MH/s beside 8 proofs.
+     - Re-measure every row at once with the new client.
+   - **Digest uniformity at 2²⁹–2³⁰:** the 48 GPU wins took 46.58 expected
+     units (z −0.21; KS against an exponential, p ≈ 0.36). 2³¹ was not
+     exercised: no card's tier rounded up to it.
+   - **RunPod spend:** $0.90 (balance $7.75 → $6.85), community cloud,
+     4090 at $0.34/h and 5090 at $0.69/h, about 52 min each.
+   - **AI half and the write-up:** not started.
 
 ## Decisions
 

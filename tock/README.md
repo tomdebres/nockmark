@@ -99,9 +99,13 @@ ZK_POW_CUDA_ARCH=86 cargo build --release --features zk-gpu   # 89 Ada, 120 Blac
 ./target/release/tock zk-bench --kernel assets/miner.jam --gpu --submit https://nockmark.xyz
 ```
 
-`scripts/gpu_pod.py` (`up`, `push`, `build-zk`, `miner-jam`, `run`, `down`) is
-the RunPod recipe; `miner-jam` builds the jam on the pod with hoonc at the
-pinned rev rather than uploading 18 MB through RunPod's PTY proxy.
+`scripts/gpu_pod.py` (`up`, `push`, `prep-zk`, `run`, `down`) is the RunPod
+recipe. `prep-zk` runs `build-zk` and `miner-jam` side by side: `miner-jam`
+builds the jam on the pod with hoonc at the pinned rev rather than uploading
+18 MB through RunPod's PTY proxy. The CUDA arch follows the card
+(`NOCKMARK_GPU_TYPE`). Each `NOCKMARK_POD_STATE` file is its own pod slot, so
+two cards, or two sessions, can run at once without touching each other's
+pods.
 
 The nockchain `kernels-open-miner` crate, which `zk-pow-miner` depends on,
 embeds a miner jam at build time and fails the build without one. Nothing here
