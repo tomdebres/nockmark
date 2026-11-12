@@ -84,6 +84,11 @@ pub enum Statement {
     Dense,
     #[serde(rename = "canonical-moe")]
     CanonicalMoe,
+    /// M7 step 4: mainnet's production dense shape (#159's peak kernel,
+    /// m=4096 k=8192 n=32768 r=512, 16×16 tiles). Verified through the
+    /// consensus jet's own artifact entry point ([`crate::aipow_peak`]).
+    #[serde(rename = "dense-peak")]
+    DensePeak,
 }
 
 impl Statement {
@@ -91,6 +96,7 @@ impl Statement {
         match self {
             Self::Dense => tock::aipow_moe::STATEMENT_DENSE,
             Self::CanonicalMoe => tock::aipow_moe::STATEMENT_CANONICAL_MOE,
+            Self::DensePeak => tock::aipow_peak::STATEMENT_DENSE_PEAK,
         }
     }
 
@@ -101,8 +107,9 @@ impl Statement {
         match s {
             x if x == tock::aipow_moe::STATEMENT_DENSE => Ok(Self::Dense),
             x if x == tock::aipow_moe::STATEMENT_CANONICAL_MOE => Ok(Self::CanonicalMoe),
+            x if x == tock::aipow_peak::STATEMENT_DENSE_PEAK => Ok(Self::DensePeak),
             other => Err(format!(
-                "unknown statement {other:?} (expected \"dense\" or \"canonical-moe\")"
+                "unknown statement {other:?} (expected \"dense\", \"canonical-moe\" or \"dense-peak\")"
             )),
         }
     }
@@ -112,6 +119,7 @@ impl Statement {
         match self {
             Self::Dense => tock::aipow::AI_NONCE_RULE,
             Self::CanonicalMoe => tock::aipow_moe::AI_MOE_NONCE_RULE,
+            Self::DensePeak => tock::aipow_peak::AI_PEAK_NONCE_RULE,
         }
     }
 
@@ -124,6 +132,8 @@ impl Statement {
         match self {
             Self::Dense => tock::aipow::MAC_EQUIV_PER_ATTEMPT,
             Self::CanonicalMoe => tock::aipow_moe::MAC_EQUIV_PER_MOE_ATTEMPT,
+            // 16·16·8192 = 2^21: a dense-peak attempt is a 16×16 tile over k=8192.
+            Self::DensePeak => tock::aipow_peak::MAC_EQUIV_PER_PEAK_ATTEMPT,
         }
     }
 
@@ -141,6 +151,10 @@ impl Statement {
             Self::CanonicalMoe => {
                 tock::aipow_moe::expected_attempts_per_moe_win(target).unwrap_or(1.0)
             }
+            // Scaled like canonical-MoE (`T·F`), with this shape's F = 2^21.
+            Self::DensePeak => {
+                tock::aipow_peak::expected_attempts_per_peak_win(target).unwrap_or(1.0)
+            }
         }
     }
 
@@ -157,7 +171,31 @@ impl Statement {
     /// two statements, that is worth more than the four lines of arithmetic it
     /// replaces.
     pub fn target_for_attempts(self, attempts: u64) -> Option<[u8; 32]> {
-        tock::aipow::target_for_attempts(attempts, |t| self.expected_attempts_per_win(t))
+        tock::aipow::target_for_granted_tier(
+            attempts,
+            |n| self.grant_attempts(n),
+            |t| self.expected_attempts_per_win(t),
+        )
+    }
+
+    /// Clamp-and-round a requested tier into this statement's range:
+    /// `[2^12, 2^30]`, or `[2^12, 2^36]` for dense-peak, whose GPU grind runs
+    /// ~1.6e8 tiles/s and whose challenges live 3 h.
+    pub fn grant_attempts(self, requested: u64) -> u64 {
+        match self {
+            Self::Dense | Self::CanonicalMoe => tock::aipow::grant_attempts(requested),
+            Self::DensePeak => tock::aipow_peak::grant_peak_attempts(requested),
+        }
+    }
+
+    /// How long a challenge MINTED for this statement stays valid.
+    /// Dense-peak: 3 h (one certificate is ~60–76 s on an M1 Max and slower on
+    /// typical pod CPUs, so 16 wins at R = 2 do not fit 1 h). Others: 1 h.
+    pub fn window_ms(self) -> u64 {
+        match self {
+            Self::Dense | Self::CanonicalMoe => AI_WINDOW_MS,
+            Self::DensePeak => tock::aipow_peak::AI_PEAK_WINDOW_MS,
+        }
     }
 }
 
@@ -413,6 +451,13 @@ pub struct PendingChallenge {
     /// client was told to grind, not against whatever the instance is
     /// configured for now.
     pub target: Option<[u8; 32]>,
+    /// The statement the challenge was minted for, recorded only for
+    /// dense-peak (`None` = dense or canonical-MoE, whichever is submitted —
+    /// those two never pinned it). It sets the window ([`Statement::window_ms`])
+    /// and binds the submission: a dense-peak challenge takes only dense-peak
+    /// wins and dense-peak wins need a dense-peak challenge, so the 3 h window
+    /// and the higher tier ceiling cannot leak to the other statements.
+    pub statement: Option<Statement>,
 }
 
 /// Pending/used challenges + verified runs, one JSON event per line:
@@ -467,11 +512,22 @@ impl AiStore {
                         let target = v["target"]
                             .as_str()
                             .and_then(|s| tock::aipow::parse_hex32(s).ok());
+                        // Only dense-peak mints write `statement`; an
+                        // unknown value fails closed to "pinned to nothing
+                        // we accept" rather than to dense.
+                        let statement = match v["statement"].as_str() {
+                            None => None,
+                            Some(s) => match Statement::parse(s) {
+                                Ok(st) => Some(st),
+                                Err(_) => continue,
+                            },
+                        };
                         store.pending.insert(
                             nonce,
                             PendingChallenge {
                                 issued_at_ms: t,
                                 target,
+                                statement,
                             },
                         );
                     }
@@ -508,11 +564,28 @@ impl AiStore {
         issued_at_ms: u64,
         target: Option<[u8; 32]>,
     ) -> std::io::Result<()> {
+        self.record_challenge_for(nonce, issued_at_ms, target, None)
+    }
+
+    /// [`Self::record_challenge`] that also records the statement the
+    /// challenge was minted for (`Some` only for dense-peak; see
+    /// [`PendingChallenge::statement`]). `None` writes exactly the line
+    /// `record_challenge` always wrote.
+    pub fn record_challenge_for(
+        &mut self,
+        nonce: u64,
+        issued_at_ms: u64,
+        target: Option<[u8; 32]>,
+        statement: Option<Statement>,
+    ) -> std::io::Result<()> {
         let mut ev = serde_json::json!({
             "ev": "challenge", "nonce": nonce, "issued_at_ms": issued_at_ms,
         });
         if let Some(t) = &target {
             ev["target"] = serde_json::json!(tock::aipow::hex32(t));
+        }
+        if let Some(st) = statement {
+            ev["statement"] = serde_json::json!(st.as_str());
         }
         self.append(&ev)?;
         self.pending.insert(
@@ -520,6 +593,7 @@ impl AiStore {
             PendingChallenge {
                 issued_at_ms,
                 target,
+                statement,
             },
         );
         Ok(())
@@ -532,7 +606,8 @@ impl AiStore {
             return Err("nonce-used".into());
         }
         let pending = *self.pending.get(&nonce).ok_or("unknown-nonce")?;
-        if now_ms.saturating_sub(pending.issued_at_ms) > AI_WINDOW_MS {
+        let window = pending.statement.map_or(AI_WINDOW_MS, Statement::window_ms);
+        if now_ms.saturating_sub(pending.issued_at_ms) > window {
             return Err("stale-nonce".into());
         }
         Ok(pending)
@@ -702,7 +777,11 @@ pub fn require_hardened(rules: ProofRules) -> Result<(), String> {
 /// prefixes are considered, only when their pin segment differs from
 /// the current one, and a failed removal logs rather than aborting boot.
 pub fn sweep_stale_contexts(data_dir: &Path) {
-    const PREFIXES: [&str; 2] = ["aipow-verifier-context-", "aipow-moe-verifier-context-"];
+    const PREFIXES: [&str; 3] = [
+        "aipow-verifier-context-",
+        "aipow-moe-verifier-context-",
+        "aipow-peak-verifier-context-",
+    ];
     /// Pre-Phase-A contexts carry no pin segment at all (M5 wrote a bare
     /// `aipow-verifier-context.bin`). They are stale by definition — the
     /// pin they were built at predates pin-scoping — and the prefix rule
@@ -987,10 +1066,13 @@ mod tests {
 
         let current = format!("aipow-verifier-context-{pin}.bin");
         let current_moe = format!("aipow-moe-verifier-context-{pin}.bin");
+        let current_peak = format!("aipow-peak-verifier-context-{pin}.bin");
         write(&current);
         write(&current_moe);
+        write(&current_peak);
         write("aipow-verifier-context-1372f270.bin");
         write("aipow-moe-verifier-context-1372f270.bin");
+        write("aipow-peak-verifier-context-1372f270.bin");
         // The pre-Phase-A names, which have no pin segment. The live
         // volume carried one of these for a week after the first sweep
         // shipped, because the prefix rule expects a trailing hyphen.
@@ -1011,6 +1093,8 @@ mod tests {
             .collect();
         assert!(left.contains(&current), "current dense context kept");
         assert!(left.contains(&current_moe), "current MoE context kept");
+        assert!(left.contains(&current_peak), "current dense-peak context kept");
+        assert!(!left.contains("aipow-peak-verifier-context-1372f270.bin"), "stale dense-peak swept");
         assert!(left.contains("aipow-track.jsonl"), "run store untouched");
         assert!(left.contains("econ-history.jsonl"), "econ history untouched");
         assert!(
@@ -1041,7 +1125,8 @@ mod tests {
             store.challenge_status(7, 2_000),
             Ok(PendingChallenge {
                 issued_at_ms: 1_000,
-                target: None
+                target: None,
+                statement: None,
             })
         );
         assert_eq!(
@@ -1107,7 +1192,8 @@ mod tests {
             reloaded.challenge_status(9, 71_000),
             Ok(PendingChallenge {
                 issued_at_ms: 70_000,
-                target: Some(tiered)
+                target: Some(tiered),
+                statement: None,
             })
         );
         assert_eq!(reloaded.challenge_status(7, 71_000), Err("nonce-used".into()));
@@ -1282,6 +1368,60 @@ mod tests {
                 "tier 2^{a}: the MoE target read with the dense rule"
             );
         }
+    }
+
+    /// Dense-peak challenges live 3 h and the others 1 h; the statement a
+    /// challenge was minted for survives a replay of the store; a challenge
+    /// line naming a statement this binary does not know is dropped rather
+    /// than treated as dense.
+    #[test]
+    fn dense_peak_challenges_live_three_hours_and_replay_their_statement() {
+        let dir = std::env::temp_dir().join(format!("nockmark-aipeak-store-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = AiStore::path_in(&dir);
+        let _ = std::fs::remove_file(&path);
+        let h = 3_600_000u64;
+
+        let mut store = AiStore::load(path.clone()).unwrap();
+        store.record_challenge_for(1, 0, None, Some(Statement::DensePeak)).unwrap();
+        store.record_challenge(2, 0, None).unwrap();
+        for s in [&store, &AiStore::load(path.clone()).unwrap()] {
+            assert_eq!(s.challenge_status(1, 0).unwrap().statement, Some(Statement::DensePeak));
+            assert_eq!(s.challenge_status(2, 0).unwrap().statement, None);
+            assert!(s.challenge_status(1, 2 * h).is_ok(), "dense-peak is valid at 2 h");
+            assert!(s.challenge_status(1, 3 * h).is_ok(), "dense-peak is valid at 3 h");
+            assert_eq!(s.challenge_status(1, 3 * h + 1), Err("stale-nonce".into()));
+            assert!(s.challenge_status(2, h).is_ok());
+            assert_eq!(s.challenge_status(2, h + 1), Err("stale-nonce".into()));
+        }
+
+        crate::jsonl::append_line(
+            &path,
+            &serde_json::json!({"ev": "challenge", "nonce": 3, "issued_at_ms": 0,
+                                "statement": "sparse"}),
+        )
+        .unwrap();
+        let reloaded = AiStore::load(path).unwrap();
+        assert_eq!(reloaded.challenge_status(3, 0), Err("unknown-nonce".into()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Dense-peak's own tier range and scaled target: `T = 2^(235−a)`.
+    #[test]
+    fn dense_peak_tiers_round_trip_and_clamp_at_two_to_the_36() {
+        let st = Statement::DensePeak;
+        for a in 12..=36u32 {
+            let t = st.target_for_attempts(1 << a).unwrap();
+            assert_eq!(t, tock::aipow::pow2_target(235 - a).unwrap(), "tier 2^{a}");
+            assert_eq!(st.expected_attempts_per_win(&t), (1u64 << a) as f64);
+        }
+        assert_eq!(st.grant_attempts(u64::MAX), 1 << 36);
+        assert_eq!(st.grant_attempts(1), 1 << 12);
+        assert_eq!(Statement::CanonicalMoe.grant_attempts(1 << 36), 1 << 30);
+        assert_eq!(st.mac_equiv_per_attempt(), 2_097_152.0);
+        assert_eq!(Statement::parse("dense-peak"), Ok(st));
+        assert_eq!(st.window_ms(), 3 * AI_WINDOW_MS);
+        assert_eq!(Statement::CanonicalMoe.window_ms(), AI_WINDOW_MS);
     }
 
     /// Clamping at both ends, and the fact that a clamped request is granted

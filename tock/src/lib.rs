@@ -4,6 +4,8 @@ pub mod aipow;
 #[cfg(feature = "gpu")]
 pub mod aipow_gpu;
 pub mod aipow_moe;
+/// M7 step 4: mainnet's dense-peak AI statement (the #159 production shape).
+pub mod aipow_peak;
 pub mod client;
 pub mod hardware;
 pub mod miner;

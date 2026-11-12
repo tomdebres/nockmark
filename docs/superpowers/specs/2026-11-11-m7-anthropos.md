@@ -88,9 +88,42 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
    - rank Tip5 hashes/s = k × expected-attempts(T_b) / server window; tier sized
      against measured prove time (R = 2), as on the AI track;
    - earnings = hashes/s × 86400 / difficulty × reward.
-4. **Mainnet's AI statement.** Add `dense-peak` (the #159 production shape) as a
-   third statement on the AI board. Unknown: CPU prove time and peak RAM for
-   that cert — measure before committing to it.
+4. **Mainnet's AI statement** — built (PR #38, 2026-11-12). `dense-peak` (the
+   #159 production shape, `PEAK_PRODUCTION_PARAMS`: m=4096 k=8192 n=32768
+   r=512, 16×16 tiles) is the third statement on the AI board.
+   - **Gate 1, measured on the M1 Max** (10 cores, 32 GB; upstream's own path:
+     `PreparedReferenceDenseTemplate` → CPU `search_dense` →
+     `prove_with_rules(Hardened)`; two runs, CPU 75–78% idle, no builds):
+     grind 135.8 k / 142.5 k tiles/s = 2.85 / 2.99 × 10¹¹ MAC-equivalents/s
+     (≈ 2.5 × 10¹¹ with the 0.6 s per-extranonce transcript); certificate
+     75.8 s / 71.9 s cold, 64.1 s / 61.1 s with the prover setup reused; peak
+     RSS 12.0 GB (15.4 GB holding the setup); artifact 147 KB; all three certs
+     pass upstream's consensus verifier under `ConsensusBatch` (0.7 s each).
+   - **Consensus accounting** (upstream's, from the statement's own mining
+     config): F = 16·16·8192 = 2²¹ MAC-equivalents per tile, 2¹⁹ tiles per
+     extranonce, trace height 2¹⁷ (cap 2¹⁹); `ConsensusBatch` adds nothing
+     for dense (MoE multiplicity only). Matrices are miner-chosen in consensus.
+   - **Gate outcome:** k = 16 × (R = 2 grind + prove) ≈ 48 certificates ≈
+     54 min against the 1 h AI window; about 1 run in 4 would expire. Tom
+     chose (2026-11-12): dense-peak rows from **rented CPUs** (no M1 board
+     row), and dense-peak challenges live **3 h** (k = 16 and R = 2 kept, so
+     its rows recover 2/3 with ±25% like every other row).
+   - **Client** (`tock ai-bench --statement dense-peak`): upstream's CPU grind,
+     or `--features gpu --gpu` for the #159 kernel (`search_peak`, every winner
+     re-derived on the CPU); attempt index `extranonce · 2^19 + tile`
+     (`peak-extranonce-tile-v1`); first win proved cold, the rest with its
+     prover setup; tiers [2¹², 2³⁶]; each win submitted as the jammed
+     `%ai-pow` artifact.
+   - **Server:** bounded consensus decode; pins (dense, the dense-peak config
+     and m×n, the claimed tile, this challenge's header at the claimed
+     extranonce); then upstream's
+     `verify_ai_pow_block_artifact_with_verification_rules(.., ConsensusBatch)`
+     against a context derived from the shape
+     (`derive_compact_verifier_context_for_shape`, ~20–46 s once, persisted
+     pin-scoped, 1.2 KB) with its digest pinned. A dense-peak challenge
+     records its statement: it gets the 3 h window and takes only dense-peak
+     wins. Real-artifact fixtures (`registry/tests/fixtures/aipeak/`), every
+     new rejection seen red.
 5. **GPU sweep, both tracks** (3090 / 4090 / 5090; RunPod balance $8.64, the
    whole M6 programme cost $0.57), then a write-up answering "which puzzle
    should this card mine?", then revisit the announcement.

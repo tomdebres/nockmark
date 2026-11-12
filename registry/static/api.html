@@ -218,7 +218,9 @@
   kernel that still serves this shape. Two days after that pin upstream made
   a peak kernel on its own dense shape the production GPU path — the same
   card goes from 0.19 to 335 TMAC/s, about 1,700x. Read the GPU rows as a
-  floor for the hardware; that shape and a GPU re-run are pending. Nockchain
+  floor for the hardware. That shape is now the <code>dense-peak</code>
+  statement below (CPU rows first, from rented hosts); GPU re-runs are
+  pending. Nockchain
   also admits mining inside real model inference, at throughput comparable to
   the optimised dedicated kernel — the notable part being that the compute is
   dual-use, not that it is faster.</p>
@@ -253,6 +255,21 @@
       statement. The response says so explicitly:
       <code>params.shape_work_factor</code> and
       <code>params.target_is_scaled_by_shape_work_factor</code>.</li>
+    <li><code>dense-peak</code> — mainnet's production AI shape, the one
+      upstream's peak CUDA kernel grinds (#159): m=4096, k=8192, n=32768,
+      noise_rank=512, 16×16 tiles, production synthetic matrices. One
+      extranonce fixes a Pearl transcript; each of its 2<sup>19</sup> output
+      tiles is one attempt, worth F = 16·16·8192 = 2<sup>21</sup>
+      MAC-equivalents. Grind rule <code>peak-extranonce-tile-v1</code>: an
+      attempt index is <code>extranonce · 2^19 + tile</code> (tile =
+      <code>row_tile · 2048 + col_tile</code>, upstream's order), and a win is
+      <code>jackpot ≤ target × 2^21</code>. The challenge binds through the
+      Pearl header's aux commitment, as on <code>canonical-moe</code>. Tiers run
+      to 2<sup>36</sup>, the response carries <code>window_ms</code>, and the
+      challenge lives <b>3 h</b>: one certificate takes 60–76 s and 12–15 GB on
+      an M1 Max, so 16 wins at twice the proving time do not fit an hour. A
+      dense-peak challenge takes only dense-peak wins, and the other way
+      round.</li>
   </ul>
   <p><code>?attempts=</code> requests a difficulty <b>tier</b>: the expected
   grind attempts per win you want to be targeted at. The server derives the
@@ -266,7 +283,8 @@
     <li>Rounded to the nearest power of two internally, so the target is a
       single set bit and tier → target → score round-trips exactly and
       reproducibly.</li>
-    <li>Clamped to [2<sup>12</sup>, 2<sup>30</sup>]; compare the echoed
+    <li>Clamped to [2<sup>12</sup>, 2<sup>30</sup>] (dense-peak:
+      [2<sup>12</sup>, 2<sup>36</sup>]); compare the echoed
       <code>attempts</code> against what you asked for to see the clamp. The
       ceiling is the challenge expiry: at ~3 M attempts/s, 2<sup>30</sup> is
       ~6 min of grinding per win, and a challenge goes stale 1 h after it is
@@ -294,8 +312,8 @@
   compact STARK verify against the server's own setup.</p>
   <ul class="fields">
     <li><code>nonce</code> — the challenge's nonce (decimal string)</li>
-    <li><code>statement</code> — <code>dense</code> (default when absent) or <code>canonical-moe</code>; picks the verify rules, the target and the blob format</li>
-    <li><code>wins[k]</code> — <code>{extranonce, cert_b64}</code>, strictly ascending (ground 0, 1, 2, …). For <code>canonical-moe</code> the field carries the u32 ordinal.</li>
+    <li><code>statement</code> — <code>dense</code> (default when absent), <code>canonical-moe</code> or <code>dense-peak</code>; picks the verify rules, the target and the blob format</li>
+    <li><code>wins[k]</code> — <code>{extranonce, cert_b64}</code>, strictly ascending (ground 0, 1, 2, …). For <code>canonical-moe</code> the field carries the u32 ordinal; for <code>dense-peak</code>, the attempt index.</li>
     <li><code>hardware</code>, <code>prover_version</code> — self-described labels (rates are not self-described)</li>
     <li><code>grind_elapsed_ms</code> — client-measured grind window (proving excluded); displayed, never ranked</li>
   </ul>
@@ -304,27 +322,44 @@
   mining config, matrix commitments, routing, opened indices, jackpot — is
   re-derived here from <code>(challenge, ordinal)</code> and the jackpot is
   gated at <code>target × F</code> before the compact STARK verify.</p>
-  <pre>tock ai-bench --statement canonical-moe --submit https://nockmark.xyz</pre>
+  <p>For <code>dense-peak</code> each <code>cert_b64</code> is the jammed
+  <code>%ai-pow</code> block artifact a node receives (~147 KB, cap 160 KB).
+  Per win, the server decodes it with the consensus jet's own bounded decoder;
+  checks that it is dense (no MoE tail), carries dense-peak's mining config and
+  m×n, opens the tile the attempt index names, and carries this challenge's
+  Pearl header at that extranonce; then runs upstream's consensus verifier
+  (<code>verify_ai_pow_block_artifact_with_verification_rules</code>, the
+  function behind <code>%ai-pow-verify-v2</code>) under
+  <code>ConsensusBatch</code>: admission limits, canonical FRI witnesses, the
+  2<sup>19</sup> trace cap, the challenge bound as the block commitment,
+  <code>jackpot ≤ target × 2^21</code>, and the compact recursive STARK,
+  against a verifier setup this server derives from the shape and a key digest
+  it pins. As in consensus, the matrices are the miner's choice; a tile over
+  other matrices costs the same 2<sup>21</sup> MACs.</p>
+  <pre>tock ai-bench --statement canonical-moe --submit https://nockmark.xyz
+tock ai-bench --statement dense-peak --submit https://nockmark.xyz</pre>
 </div>
 
 <div class="endpoint">
   <div class="sigline"><span class="verb">GET</span>/leaderboard?track=ai</div>
-  <p>Both statements rank on this one board, by
+  <p>All three statements rank on this one board, by
   <code>verified_mac_per_sec_lb</code>. They share it because MAC-equivalents
   is precisely the unit consensus uses to compare AI work of different shapes:
   expected MAC-equivalents per block is <code>2^256 / T</code> whatever tile
   shape the miner picked, which is what makes the AI puzzle's fork-choice
-  weight meaningful in the first place. Each attempt is F = 2<sup>16</sup>
-  MAC-equivalents (an 8×8 tile over k=1024) on both statements; what differs is
-  the attempt count, because the target semantics differ — <code>2^256/(T+1)</code>
-  for <code>dense</code>, <code>2^256/(T·F+1)</code> for
-  <code>canonical-moe</code>. Every row carries its own <code>statement</code>
+  weight meaningful in the first place. An attempt is F = 2<sup>16</sup>
+  MAC-equivalents (an 8×8 tile over k=1024) on <code>dense</code> and
+  <code>canonical-moe</code>, and 2<sup>21</sup> (a 16×16 tile over k=8192) on
+  <code>dense-peak</code>; the attempt count follows each statement's target
+  semantics — <code>2^256/(T+1)</code> for <code>dense</code>,
+  <code>2^256/(T·F+1)</code> for <code>canonical-moe</code> and
+  <code>dense-peak</code>. Every row carries its own <code>statement</code>
   and its own <code>target</code>, so a re-calibration cannot rewrite how an
   older row was scored.</p>
   <ul class="fields">
-    <li><code>statement</code> — <code>dense</code> or <code>canonical-moe</code></li>
+    <li><code>statement</code> — <code>dense</code>, <code>canonical-moe</code> or <code>dense-peak</code></li>
     <li><code>expected_attempts_per_win</code> — the difficulty tier this run was measured at, derived from its own stored <code>target</code> (so rows from before tiers existed carry it too). A tighter lower bound comes with a harder tier, because more of the window was grinding and less of it proving.</li>
-    <li><code>verified_mac_per_sec_lb</code> — k · attempts-per-win · 2^16 / server window (issue → submit, proving included); the ranked lower bound</li>
+    <li><code>verified_mac_per_sec_lb</code> — k · attempts-per-win · F / server window (issue → submit, proving included); the ranked lower bound</li>
     <li><code>grind_mac_per_sec</code> — same numerator over the client grind window; informational only</li>
     <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 14,285,714, the consensus MAC↔ZK-attempt exchange rate since height 154,500; a ZK attempt is one Tip5 hash since Anthropos (rows served before M7 divided by the Logos rate, 25.75e9 per complete proof)</li>
     <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (k wins is Poisson: 1/√k)</li>

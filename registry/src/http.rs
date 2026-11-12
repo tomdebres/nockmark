@@ -206,6 +206,9 @@ pub struct AppState {
     pub ai_moe_target: [u8; 32],
     /// ZK v5 track (M7 step 3): pending challenges + verified runs, JSONL.
     pub zk: Arc<Mutex<crate::zkv5::ZkV5Store>>,
+    /// Dense-peak verifier setup (M7 step 4), derived from the shape on the
+    /// first dense-peak submission (`aipow_peak::AiPeakVerifier`).
+    pub ai_peak_verifier: Arc<tokio::sync::OnceCell<Arc<crate::aipow_peak::AiPeakVerifier>>>,
 }
 
 impl AppState {
@@ -244,6 +247,7 @@ impl AppState {
             ai_moe_verifier: Arc::new(tokio::sync::OnceCell::new()),
             ai_moe_target: crate::aipow_moe::moe_target_from_env(),
             zk: Arc::new(Mutex::new(zk)),
+            ai_peak_verifier: Arc::new(tokio::sync::OnceCell::new()),
         })
     }
 }
@@ -293,8 +297,9 @@ pub fn router(state: AppState) -> Router {
         .merge(limited)
         // Explicit request-size bound (M2 carry-forward): k=8 ZK proofs
         // are ~1.2 MiB base64 and k=4 AI cert blobs ~0.8 MiB, so 4 MiB is
-        // generous headroom for both tracks.
-        .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
+        // generous headroom for both tracks. Dense-peak artifacts are
+        // ~147 KB each; `aipow_peak::max_k_for_body` bounds its k by this.
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(state)
 }
 
@@ -338,6 +343,15 @@ fn gone() -> (StatusCode, Json<serde_json::Value>) {
 
 /// `?statement=` selects which AI-PoW statement, within the one AI track.
 /// Absent means `dense`, so every M5 request keeps its exact meaning.
+/// Request-body cap for every route.
+pub const BODY_LIMIT: usize = 4 * 1024 * 1024;
+
+/// The dense-peak target for an untiered challenge: tier 2^24 (~2 min of
+/// M1 Max CPU grinding per win). Clients normally ask for a tier.
+fn default_peak_target() -> [u8; 32] {
+    tock::aipow_peak::peak_target_for_attempts(1 << 24).expect("2^24 is a granted dense-peak tier")
+}
+
 fn statement_from_query(
     q: &std::collections::HashMap<String, String>,
 ) -> Result<crate::aipow::Statement, String> {
@@ -388,6 +402,16 @@ async fn new_challenge(
             Ok(a) => a,
             Err(e) => return bad(e),
         };
+        // k dense-peak artifacts must fit one request body, or the client
+        // grinds for up to 3 h and then meets a 413. Refuse before minting.
+        let peak_k_max = crate::aipow_peak::max_k_for_body(BODY_LIMIT);
+        if statement == crate::aipow::Statement::DensePeak && st.ai_k > peak_k_max {
+            return bad(format!(
+                "dense-peak needs k <= {peak_k_max} to fit {} MiB; this registry asks for k = {}",
+                BODY_LIMIT >> 20,
+                st.ai_k
+            ));
+        }
         // The tier's target is a pure function of (statement, granted tier), so
         // deriving it here — before the mint — keeps a derivation failure from
         // stranding a nonce. `grant_attempts` clamps and rounds first, so the
@@ -396,7 +420,7 @@ async fn new_challenge(
         let tier = match requested {
             None => None,
             Some(n) => {
-                let granted = tock::aipow::grant_attempts(n);
+                let granted = statement.grant_attempts(n);
                 match statement.target_for_attempts(granted) {
                     Some(target) => Some((granted, target)),
                     None => {
@@ -455,16 +479,33 @@ async fn new_challenge(
                     st.ai_moe_target,
                 )
             }
+            crate::aipow::Statement::DensePeak => {
+                let p = &tock::aipow_peak::AI_PEAK_PARAMS;
+                (
+                    json!({
+                        "m": p.m, "k": p.k, "n": p.n,
+                        "noise_rank": p.noise_rank, "tile": p.tile,
+                        "tiles_per_extranonce": tock::aipow_peak::PEAK_TICKETS_PER_EXTRANONCE,
+                        "shape_work_factor": tock::aipow_peak::MAC_EQUIV_PER_PEAK_ATTEMPT,
+                        "target_is_scaled_by_shape_work_factor": true,
+                    }),
+                    default_peak_target(),
+                )
+            }
         };
         // A requested tier overrides the instance's configured target, and is
         // recorded on the challenge so the wins are later verified against the
         // target the client was actually told to grind — not against whatever
         // the instance is configured for at submit time.
         let target = tier.map_or(instance_target, |(_, t)| t);
+        // Dense-peak challenges record their statement: it sets their 3 h
+        // window and binds the submission to dense-peak (see
+        // `aipow::PendingChallenge::statement`). Others write the M5 line.
+        let pinned = (statement == crate::aipow::Statement::DensePeak).then_some(statement);
         st.ai
             .lock()
             .await
-            .record_challenge(nonce, crate::aipow::unix_ms(), tier.map(|(_, t)| t))
+            .record_challenge_for(nonce, crate::aipow::unix_ms(), tier.map(|(_, t)| t), pinned)
             .expect("ai store append failed");
         let mut body = json!({
             "nonce": nonce.to_string(),
@@ -482,6 +523,9 @@ async fn new_challenge(
         // board-legible form of the same thing.
         if let Some((granted, _)) = tier {
             body["attempts"] = json!(granted);
+        }
+        if pinned.is_some() {
+            body["window_ms"] = json!(statement.window_ms());
         }
         (StatusCode::OK, Json(body))
     }
@@ -803,10 +847,19 @@ async fn submit_ai_run(
     {
         return bad("canonical-moe ordinals must fit in u32".into());
     }
+    // Dense-peak indices are `extranonce · 2^19 + tile` with a u32 extranonce.
+    if statement == crate::aipow::Statement::DensePeak
+        && extranonces
+            .iter()
+            .any(|x| tock::aipow_peak::split_attempt_index(*x).is_none())
+    {
+        return bad("dense-peak attempt indices must have a u32 extranonce".into());
+    }
     // Decode + size-cap every blob before any expensive work.
     let blob_max = match statement {
         crate::aipow::Statement::Dense => crate::aipow::AI_SUBMISSION_BLOB_MAX,
         crate::aipow::Statement::CanonicalMoe => crate::aipow_moe::AI_MOE_SUBMISSION_BLOB_MAX,
+        crate::aipow::Statement::DensePeak => tock::aipow_peak::AI_PEAK_SUBMISSION_BLOB_MAX,
     };
     let mut blobs: Vec<Vec<u8>> = Vec::with_capacity(sub.wins.len());
     for (i, win) in sub.wins.iter().enumerate() {
@@ -832,6 +885,17 @@ async fn submit_ai_run(
         Ok(p) => p,
         Err(reason) => return bad(reason),
     };
+    // A dense-peak challenge takes only dense-peak wins, and dense-peak wins
+    // need a dense-peak challenge: its 3 h window and 2^36 tier ceiling belong
+    // to that statement alone.
+    let peak = crate::aipow::Statement::DensePeak;
+    if (pending.statement == Some(peak)) != (statement == peak) {
+        return bad(format!(
+            "challenge was minted for {}, submission is {}",
+            pending.statement.map_or("dense or canonical-moe", |s| s.as_str()),
+            statement.as_str()
+        ));
+    }
     // The target these wins are verified AND scored against is the one this
     // challenge was issued at, when the client requested a difficulty tier.
     // Otherwise the instance's configured target, which is what every
@@ -849,6 +913,7 @@ async fn submit_ai_run(
     let target = pending.target.unwrap_or(match statement {
         crate::aipow::Statement::Dense => st.ai_target,
         crate::aipow::Statement::CanonicalMoe => st.ai_moe_target,
+        crate::aipow::Statement::DensePeak => default_peak_target(),
     });
     // Verifier context: built/loaded once per statement, lazily, on the
     // blocking pool (first submission of a statement pays the load from its
@@ -857,6 +922,7 @@ async fn submit_ai_run(
     enum AnyVerifier {
         Dense(Arc<crate::aipow::AiVerifier>),
         Moe(Arc<crate::aipow_moe::AiMoeVerifier>),
+        Peak(Arc<crate::aipow_peak::AiPeakVerifier>),
     }
     let verifier = match statement {
         crate::aipow::Statement::Dense => {
@@ -903,6 +969,28 @@ async fn submit_ai_run(
                 }
             }
         }
+        crate::aipow::Statement::DensePeak => {
+            let data_dir = st.data_dir.clone();
+            match st
+                .ai_peak_verifier
+                .get_or_try_init(|| async move {
+                    tokio::task::spawn_blocking(move || {
+                        crate::aipow_peak::AiPeakVerifier::load_or_build(&data_dir).map(Arc::new)
+                    })
+                    .await
+                    .map_err(|e| format!("dense-peak verifier init task failed: {e}"))?
+                })
+                .await
+            {
+                Ok(v) => AnyVerifier::Peak(v.clone()),
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": format!("dense-peak verifier unavailable: {e}") })),
+                    )
+                }
+            }
+        }
     };
     // Verify every win (CPU-bound) on the blocking pool. The challenge is
     // re-derived from the stored nonce — nothing challenge-shaped is taken
@@ -921,6 +1009,11 @@ async fn submit_ai_run(
                 // Range-checked above, so the cast is exact.
                 let ordinal = attempt as u32;
                 tokio::task::spawn_blocking(move || v.verify(&challenge, &target, ordinal, &blob))
+                    .await
+            }
+            AnyVerifier::Peak(v) => {
+                let v = v.clone();
+                tokio::task::spawn_blocking(move || v.verify(&challenge, &target, attempt, &blob))
                     .await
             }
         };

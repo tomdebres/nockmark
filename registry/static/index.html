@@ -172,12 +172,13 @@
     </table>
   </div>
   <p class="econ">Logos AI-PoW (INT8 matmul + recursive STARK certificate),
-  verified the same way. Dense and canonical-MoE runs share one board in
-  MAC-equivalents, the unit consensus compares them in. Only rows under
-  mainnet's current rules (Hardened) are ranked.</p>
+  verified the same way. Three statements share one board in MAC-equivalents,
+  the unit consensus compares them in: dense, canonical MoE, and
+  <b>dense-peak</b>, mainnet's production shape (4096 × 8192 × 32768, 16 × 16
+  tiles). Only rows under mainnet's current rules (Hardened) are ranked.</p>
   <p class="econ"><b>GPU rows are a floor.</b> They are legacy-rules runs of the
-  generic CUDA kernel; upstream's peak kernel does about 1,700× more on its
-  own shape. A re-run is next.</p>
+  generic CUDA kernel on canonical MoE; upstream's peak kernel does about
+  1,700× more on dense-peak. A re-run is next.</p>
 </section>
 
 <section class="submit">
@@ -338,7 +339,7 @@ fetch('/leaderboard?track=ai').then(r => r.json()).then(rows => {
     tr.querySelector('.prover').textContent = prover(r);
     // Rows written before the statement existed were all dense.
     tr.querySelector('.stmt').textContent =
-      (r.statement || 'dense') === 'canonical-moe' ? 'canonical MoE' : 'dense';
+      ({'canonical-moe': 'canonical MoE', 'dense-peak': 'dense-peak'})[r.statement] || 'dense';
     tb.appendChild(tr);
   }
   document.getElementById('ai').hidden = false;
