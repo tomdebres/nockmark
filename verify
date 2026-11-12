@@ -109,6 +109,9 @@ with tempfile.TemporaryDirectory() as d:
             r = subprocess.run(["node", "--check", p], capture_output=True, text=True)
             if r.returncode: print(f"{f} <script> #{i}:\n{r.stderr}", file=sys.stderr); bad = 1
 sys.exit(bad)' "${html[@]}"
+# The reviewer's bookkeeping (devkit's, verbatim). Node is on the runner and the Mac.
+step 'reviewer rounds (node --test test/review-round.test.mjs)' \
+  node --test test/review-round.test.mjs
 
 if [ "$mode" = full ]; then
   # ---- full only: slow, or needs something shared -------------------------

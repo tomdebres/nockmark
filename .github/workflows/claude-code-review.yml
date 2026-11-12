@@ -1,0 +1,94 @@
+name: Claude Code Review
+
+# Bugs only, against REVIEW.md. Claude finds and verifies; scripts/review-round.mjs
+# keeps the rounds (round 1 the whole diff, later rounds the new commits, three
+# at most) and decides the check: red only for an open Important finding or the
+# round cap. Every other failure (token, outage, timeout, turn limit) passes
+# with a warning, so an outage never blocks every merge.
+#
+# devkit's own reviewer (devkit a7a7482, itself bodyops's), copied from heerr
+# with only the repo name in the prompt changed; scripts/review-round.mjs and
+# test/review-round.test.mjs are devkit's, verbatim.
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - ready_for_review
+      - reopened
+
+concurrency:
+  group: review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        continue-on-error: true
+        with:
+          node-version: '22'
+      - name: Plan the round
+        id: plan
+        continue-on-error: true
+        run: node scripts/review-round.mjs plan
+      - name: Review
+        id: claude
+        if: steps.plan.outputs.mode == 'review'
+        continue-on-error: true
+        timeout-minutes: 15
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are the bug reviewer for nockmark pull request #${{ github.event.pull_request.number }}. Report bugs only.
+
+            1. Read REVIEW.md first. "What failure looks like here" is what to look for in this repo; "Findings" is how to tag.
+            2. The scope of this round is at the end. Review only that; anything else in the PR is context.
+            3. Verify every candidate before reporting it: read the code around it and name the concrete input or state that goes wrong. Drop what you can't confirm. A missed nit is better than a false alarm.
+            4. Not findings, so leave them out: style, naming, formatting, wording of comments or docs, refactors, performance that breaks nothing, missing tests, suggestions.
+            5. Severity:
+               - Important: in code this PR adds or changes, and it would reach a user, the data or a ship: wrong behaviour, a crash, lost or corrupted data, a security hole, or a REVIEW.md rule broken.
+               - Nit: a real bug, but minor or unlikely.
+               - Pre-existing: a bug in code this PR didn't change. Never Important.
+            6. Don't post comments or reviews yourself. Answer only with the JSON the output schema asks for: file is repo-relative, line is in the PR head's version, title is one line, detail is the failing scenario in a sentence or two. List each earlier finding's id under resolved or still_open.
+
+            ${{ steps.plan.outputs.context }}
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+            --json-schema '{"type":"object","properties":{"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["Important","Nit","Pre-existing"]},"file":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"detail":{"type":"string"}},"required":["severity","file","title","detail"]}},"resolved":{"type":"array","items":{"type":"string"}},"still_open":{"type":"array","items":{"type":"string"}}},"required":["summary","findings","resolved","still_open"]}'
+      - name: Verdict
+        if: ${{ !cancelled() }}
+        env:
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+          FINDINGS: ${{ steps.claude.outputs.structured_output }}
+        # Exit 1 is a finding or the cap. Anything else is the reviewer failing,
+        # and passes with a warning.
+        run: |
+          if [ ! -f scripts/review-round.mjs ]; then
+            echo "::warning::review skipped: no checkout; passing open"
+            exit 0
+          fi
+          code=0
+          node scripts/review-round.mjs report || code=$?
+          if [ "$code" -eq 0 ] || [ "$code" -eq 1 ]; then exit "$code"; fi
+          echo "::warning::review skipped: review-round.mjs report exited $code; passing open"
