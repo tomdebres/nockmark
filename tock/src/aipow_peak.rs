@@ -28,7 +28,8 @@
 //!   physical core.
 //! * GPU grind (`gpu` feature): `ai_pow_miner::peak::MultiGpuPeakSearchBackend::
 //!   search_peak`, the #159 kernel, with upstream's scalar recheck
-//!   (`checked_search_winner` + transcript/jackpot comparison).
+//!   (`checked_search_winner` + transcript/jackpot comparison). Upstream's
+//!   kernel runs only on compute capability 12.0 (RTX 5090 class).
 //! * Proof: `prove_with_rules(.., Hardened)` for the first win, then the same
 //!   prover with the first run's reusable setup
 //!   (`prove_pearl_merge_compact_recursive_certificate_checked_with_prover_cache_with_rules`).
@@ -585,9 +586,18 @@ pub mod gpu {
     pub fn backend(matrices: &PeakMatrices) -> MultiGpuPeakSearchBackend {
         let backend = MultiGpuPeakSearchBackend::new(vec![crate::aipow_gpu::GPU_DEVICE_ORDINAL])
             .expect("peak CUDA backend");
-        backend
-            .preflight(&matrices.a, &matrices.b)
-            .expect("peak CUDA preflight");
+        // Upstream's peak kernel checks the device itself and refuses anything
+        // but compute capability 12.0 (`ai_pow_v3_peak.cu`): an RTX 3090
+        // answers CUDA status 801, cudaErrorNotSupported (seen 2026-11-12).
+        if let Err(e) = backend.preflight(&matrices.a, &matrices.b) {
+            eprintln!(
+                "peak CUDA preflight failed: {e}\n\
+                 upstream's #159 peak kernel runs only on compute capability 12.0 \
+                 (RTX 5090 class); other cards report CUDA status 801. \
+                 Drop --gpu to grind dense-peak on the CPU."
+            );
+            std::process::exit(2);
+        }
         backend
     }
 

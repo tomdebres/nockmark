@@ -269,7 +269,8 @@
       challenge lives <b>3 h</b>: one certificate takes 60–76 s and 12–15 GB on
       an M1 Max, so 16 wins at twice the proving time do not fit an hour. A
       dense-peak challenge takes only dense-peak wins, and the other way
-      round.</li>
+      round. Its GPU path (<code>--gpu</code>) is upstream's peak kernel,
+      which runs only on compute capability 12.0 (RTX 5090 class).</li>
   </ul>
   <p><code>?attempts=</code> requests a difficulty <b>tier</b>: the expected
   grind attempts per win you want to be targeted at. The server derives the

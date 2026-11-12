@@ -88,7 +88,7 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
    - rank Tip5 hashes/s = k × expected-attempts(T_b) / server window; tier sized
      against measured prove time (R = 2), as on the AI track;
    - earnings = hashes/s × 86400 / difficulty × reward.
-4. **Mainnet's AI statement** — built (PR #38, 2026-11-12). `dense-peak` (the
+4. **Mainnet's AI statement** — done (PR #38, deployed 2026-11-12). `dense-peak` (the
    #159 production shape, `PEAK_PRODUCTION_PARAMS`: m=4096 k=8192 n=32768
    r=512, 16×16 tiles) is the third statement on the AI board.
    - **Gate 1, measured on the M1 Max** (10 cores, 32 GB; upstream's own path:
@@ -124,6 +124,19 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
      records its statement: it gets the 3 h window and takes only dense-peak
      wins. Real-artifact fixtures (`registry/tests/fixtures/aipeak/`), every
      new rejection seen red.
+   - **Live** (after deploy): run 9 on a RunPod RTX 3090 host's CPU (EPYC
+     7663, 23.8-CPU quota; the GPU idle), self-calibrated: 31.2 k tiles/s,
+     30.3 s per certificate → tier 2²¹, k = 16. 16 wins in 808.6 s (26.3 M
+     tiles, 0.78× expected), certificates 27.0–30.1 s. Ranked 1 among the
+     Hardened AI rows at **5.49 × 10¹⁰ MAC-eq/s verified** (grind window
+     8.70 × 10¹⁰), 0.0017 NOCK/day. That host proves 2.5× faster than the M1
+     Max. Pod spend $0.11.
+   - **The #159 kernel runs only on compute capability 12.0** (upstream's
+     `ai_pow_v3_peak.cu` refuses anything else: a 3090 returns CUDA status
+     801 at preflight). `--gpu` dense-peak builds and fails cleanly off a
+     5090; dense-peak GPU rows need an RTX 5090 (step 5). The M1 Max local
+     row (k = 4, tier 2²⁰) was accepted too; there is no M1 board row, by
+     Tom's choice.
 5. **GPU sweep, both tracks** (3090 / 4090 / 5090; RunPod balance $8.64, the
    whole M6 programme cost $0.57), then a write-up answering "which puzzle
    should this card mine?", then revisit the announcement.
