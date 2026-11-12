@@ -42,6 +42,12 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq --no-install-recommends protobuf-compiler clang
+      # The NockApp runtime maps a 64 GiB Nock stack (virtual). Linux's default
+      # heuristic overcommit refuses that on a 16 GB runner, and the registry
+      # tests fail to boot the Roswell verifier ("Nock stack exhausted during
+      # Serf initialization"). Upstream's README requires overcommit on Linux.
+      - name: Memory overcommit
+        run: sudo sysctl -w vm.overcommit_memory=1
       # ./verify builds tock/ and registry/ into one CARGO_TARGET_DIR=$PWD/target.
       - uses: Swatinem/rust-cache@v2
         with:
