@@ -63,8 +63,14 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
      store; registry.hoon is unchanged.
    - Credit per win p⁵/(T_b+1) (= 2^a exactly at tier 2^a). Tiers
      [2¹², 2³¹], k = 16.
-   - M1 Max: 151 k Tip5 hashes/s on 10 threads, 21.2 s per `%5` proof →
-     tier 2²³.
+   - Live after deploy (k = 16, self-calibrated): RTX 3090 (CUDA V5,
+     6.1 MH/s; 39.5 s proofs on the pod CPU, tier 2²⁹) → run 2, 4.82 MH/s
+     verified, 5.81 NOCK/day; M1 Max (CPU, 175 k H/s on 10 threads, 21.2 s
+     proofs, tier 2²³) → run 1, 91.0 kH/s verified. A 3090 is ≈ 35× an
+     M1 Max on this digest.
+   - Win-rate check on the 3090: 2³² nonces at tier 2¹⁸ gave 16,415 wins vs
+     16,384 expected (+0.2σ); top limb uniform down to 2²⁴. RunPod spend
+     $0.31.
    - `%3` submissions retired (410 Gone); both boards rank only current-rules
      rows (see Decisions).
 
