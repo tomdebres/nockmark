@@ -120,6 +120,19 @@ if [ "$mode" = full ]; then
   # One target dir for both crates (registry depends on tock), inside this
   # checkout so it goes when the worktree does. Cold: ~minutes; warm: seconds.
   export CARGO_TARGET_DIR="$PWD/target"
+  # The registry tests leak their NockApp data dirs on purpose
+  # (std::mem::forget(dir) in registry/tests/*.rs: dropping one under a
+  # running NockApp aborts), ~0.5 GB of .tmpXXXXXX a run. On 2026-11-12 they
+  # had reached 11 GB and filled the Studio's disk. So the cargo steps get a
+  # TMPDIR of this run's own, removed on exit, pass, fail or interrupt. CI's
+  # last step checks nothing is left.
+  base=${TMPDIR:-/tmp}
+  run_tmp=$(mktemp -d "${base%/}/nockmark-verify.XXXXXX")
+  trap 'rm -rf "$run_tmp"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  export TMPDIR="$run_tmp"
   # registry compiles roswell.jam in (KERNEL_JAM_PATH, registry/.cargo) and its
   # tests boot registry.jam; both are gitignored under tock/assets/. Seed them
   # from the committed deploy/assets/ copies, the ones production runs, only
