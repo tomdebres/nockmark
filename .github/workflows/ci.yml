@@ -1,0 +1,75 @@
+# Block style only: a ${{ }} inside a { } flow mapping is invalid YAML and the
+# workflow fails with no jobs (devkit, 2026-10-25).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    # Branch protection requires this check by its name: change both together.
+    name: Rust (./verify)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RUST_MIN_STACK: '8388608'
+      CARGO_TERM_COLOR: always
+      # Line tables only: backtraces keep file:line, and the dozen test
+      # binaries that each link the prover stack don't carry full DWARF.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # The Dockerfile's pin (TOOLCHAIN_DATE). The repo has no rust-toolchain
+      # file, so it becomes the default for every cargo ./verify runs.
+      - name: Rust nightly-2026-04-03
+        run: |
+          rustup toolchain install nightly-2026-04-03 --profile minimal
+          rustup default nightly-2026-04-03
+          rustc -V
+      - name: protoc and clang
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends protobuf-compiler clang
+      # ./verify builds tock/ and registry/ into one CARGO_TARGET_DIR=$PWD/target.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            tock -> ../target
+            registry -> ../target
+      # The registry tests leak their NockApp data dirs into the temp dir on
+      # purpose (std::mem::forget in registry/tests/*.rs). ./verify must not
+      # leave them behind: on 2026-11-12 they filled the Studio's disk.
+      - name: Temp dirs before ./verify
+        run: |
+          df -h /
+          find "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 \( -name '.tmp*' -o -name 'nockmark-verify.*' \) | sort > "$RUNNER_TEMP/tmp-before"
+          echo "$(wc -l < "$RUNNER_TEMP/tmp-before") temp dirs"
+      - name: ./verify
+        run: ./verify
+      # Also after a failed ./verify: it must clean up on failure too.
+      - name: ./verify left no temp dirs
+        if: ${{ !cancelled() }}
+        run: |
+          df -h /
+          find "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 \( -name '.tmp*' -o -name 'nockmark-verify.*' \) | sort > "$RUNNER_TEMP/tmp-after"
+          comm -13 "$RUNNER_TEMP/tmp-before" "$RUNNER_TEMP/tmp-after" > "$RUNNER_TEMP/tmp-left"
+          n=$(wc -l < "$RUNNER_TEMP/tmp-left")
+          if [ "$n" -gt 0 ]; then
+            size=$(tr '\n' '\0' < "$RUNNER_TEMP/tmp-left" | du -sch --files0-from=- | tail -1 | cut -f1)
+            echo "::error::./verify left $n temp dirs ($size) in ${TMPDIR:-/tmp}"
+            head -20 "$RUNNER_TEMP/tmp-left"
+            exit 1
+          fi
+          echo "./verify left no temp dirs"
