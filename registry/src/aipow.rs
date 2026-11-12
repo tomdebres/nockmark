@@ -43,7 +43,6 @@
 //! independently verified work inside the same server-observed window.
 
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use ai_pow::commit::matrix_commitment;
@@ -449,10 +448,14 @@ impl AiStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(store),
             r => r?,
         };
-        for line in raw.lines() {
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-                continue;
-            };
+        let (values, skipped) = crate::jsonl::parse_lines(&raw);
+        if skipped > 0 {
+            eprintln!(
+                "ai store: skipped {skipped} unparseable line(s) in {} (torn writes)",
+                store.path.display()
+            );
+        }
+        for v in values {
             match v["ev"].as_str() {
                 Some("challenge") => {
                     if let (Some(nonce), Some(t)) = (v["nonce"].as_u64(), v["issued_at_ms"].as_u64())
@@ -487,12 +490,10 @@ impl AiStore {
         Ok(store)
     }
 
+    /// One record per line, crash-safe for the records already written
+    /// ([`crate::jsonl::append_line`]).
     fn append(&self, v: &serde_json::Value) -> std::io::Result<()> {
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        writeln!(f, "{v}")
+        crate::jsonl::append_line(&self.path, v)
     }
 
     /// Record a freshly minted challenge (server-observed issue time), with the

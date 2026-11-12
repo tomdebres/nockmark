@@ -1,6 +1,6 @@
-//! Registry client for `tock bench --submit`: fetch a challenge, submit the
-//! proof bundle. Mirrors the manual seeding flow in
-//! docs/superpowers/specs/2026-07-15-m2-deploy-runbook.md.
+//! Registry client: fetch a challenge, submit the result — `zk-bench --submit`
+//! (ZK v5), `ai-bench --submit` (AI-PoW), and the retired `bench --submit`
+//! (complete `%3` proofs, which the registry now answers with 410 Gone).
 
 use std::time::Duration;
 
@@ -50,6 +50,144 @@ pub async fn fetch_challenge(base: &str) -> Result<Challenge, String> {
 pub async fn submit_run(base: &str, sub: &Submission) -> Result<u64, String> {
     let url = format!("{}/run", base.trim_end_matches('/'));
     let resp = http(Duration::from_secs(180))
+        .post(&url)
+        .json(sub)
+        .send()
+        .await
+        .map_err(|e| format!("POST {url}: {e}"))?;
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("POST {url}: reading response body: {e}"))?;
+    if !status.is_success() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(msg) = v["error"].as_str() {
+                return Err(msg.to_string());
+            }
+        }
+        let snippet: String = text.chars().take(200).collect();
+        return Err(format!("POST {url}: HTTP {status}: {snippet}"));
+    }
+    let body: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("POST {url}: bad response JSON: {e}"))?;
+    body["run_id"]
+        .as_u64()
+        .ok_or_else(|| format!("POST {url}: response missing run_id"))
+}
+
+// ---------------------------------------------------------------------------
+// ZK v5 track (M7 step 3): fetch a challenge, submit the winners' proofs
+// ---------------------------------------------------------------------------
+
+/// A ZK v5 challenge as the registry issues it. Belts arrive as 5 decimal
+/// strings, least significant first ([`crate::zkv5::belts_to_strings`]).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ZkChallenge {
+    pub nonce: String,
+    /// hex32 of `blake3("nockmark-zk-v5" ‖ LE8(nonce))`.
+    pub challenge: String,
+    pub commitment: Vec<String>,
+    pub commitment_rule: String,
+    /// T_b as base-p limbs.
+    pub target: Vec<String>,
+    /// The tier granted: expected Tip5 hashes per win.
+    pub attempts: u64,
+    pub k: u64,
+    pub pow_len: u64,
+    pub proof_version: u64,
+    pub nonce_rule: String,
+}
+
+/// A ZK challenge after the client's own consistency checks.
+#[derive(Debug, Clone)]
+pub struct CheckedZkChallenge {
+    pub nonce: String,
+    pub commitment: crate::zkv5::Belts5,
+    pub target: crate::zkv5::Belts5,
+    pub attempts: u64,
+    pub k: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ZkSubmission {
+    pub nonce: String,
+    pub hardware: String,
+    pub prover_version: String,
+    pub grind_elapsed_ms: u64,
+    /// base64 proof jams, one per win, in strictly ascending nonce order.
+    pub proofs: Vec<String>,
+}
+
+/// Mint a ZK v5 challenge at a tier (`attempts` expected hashes per win;
+/// `None` takes the registry default), and check it before any grinding: the
+/// rules match this tock's, the commitment is the one this tock derives from
+/// the nonce, and the target is the one this tock derives from the granted
+/// tier. A mismatch means the two sides disagree about the protocol, and
+/// grinding against it would waste the window.
+pub async fn fetch_zk_challenge(base: &str, attempts: Option<u64>) -> Result<CheckedZkChallenge, String> {
+    use crate::zkv5;
+    let mut url = format!("{}/challenge?track=zk", base.trim_end_matches('/'));
+    if let Some(n) = attempts {
+        url.push_str(&format!("&attempts={n}"));
+    }
+    let resp = http(Duration::from_secs(30))
+        .post(&url)
+        .send()
+        .await
+        .map_err(|e| format!("POST {url}: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("POST {url}: HTTP {status}: {}", text.chars().take(300).collect::<String>()));
+    }
+    let ch = resp
+        .json::<ZkChallenge>()
+        .await
+        .map_err(|e| format!("bad ZK challenge JSON from {url}: {e}"))?;
+    for (what, theirs, ours) in [
+        ("nonce rule", ch.nonce_rule.as_str(), zkv5::ZK_V5_NONCE_RULE),
+        ("commitment rule", ch.commitment_rule.as_str(), zkv5::ZK_V5_COMMITMENT_RULE),
+    ] {
+        if theirs != ours {
+            return Err(format!("registry {what} {theirs:?} != this tock's {ours:?} — update tock"));
+        }
+    }
+    if ch.pow_len != zkv5::ZK_V5_POW_LEN || ch.proof_version != zkv5::ZK_V5_PROOF_VERSION {
+        return Err(format!(
+            "registry wants proof version {} at pow_len {}; this tock proves {} at {}",
+            ch.proof_version,
+            ch.pow_len,
+            zkv5::ZK_V5_PROOF_VERSION,
+            zkv5::ZK_V5_POW_LEN
+        ));
+    }
+    let nonce: u64 = ch.nonce.parse().map_err(|e| format!("challenge nonce {:?}: {e}", ch.nonce))?;
+    let commitment = zkv5::belts_from_strings(&ch.commitment)?;
+    if commitment != zkv5::commitment_for_nonce(nonce) {
+        return Err("registry commitment differs from the one derived from its nonce".into());
+    }
+    let target = zkv5::belts_from_strings(&ch.target)?;
+    if Some(target) != zkv5::target_for_attempts(ch.attempts) {
+        return Err(format!(
+            "registry target is not the target of its granted tier {}",
+            ch.attempts
+        ));
+    }
+    Ok(CheckedZkChallenge {
+        nonce: ch.nonce,
+        commitment,
+        target,
+        attempts: ch.attempts,
+        k: ch.k,
+    })
+}
+
+/// Returns the recorded run id. The registry verifies every proof twice
+/// (native ~0.1 s, Hoon ~0.5 s each), hence the generous timeout.
+pub async fn submit_zk_run(base: &str, sub: &ZkSubmission) -> Result<u64, String> {
+    let url = format!("{}/run?track=zk", base.trim_end_matches('/'));
+    let resp = http(Duration::from_secs(300))
         .post(&url)
         .json(sub)
         .send()

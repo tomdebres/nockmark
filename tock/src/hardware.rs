@@ -103,3 +103,33 @@ fn run(cmd: &str, args: &[&str]) -> Option<String> {
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!s.is_empty()).then_some(s)
 }
+
+/// A CUDA device's name and memory from `nvidia-smi`, e.g.
+/// `"NVIDIA GeForce RTX 3090 24GB"`, for a GPU row's hardware descriptor.
+/// `None` if the query fails; callers then fall back to the host descriptor
+/// rather than invent a device name. Read from `nvidia-smi` rather than a CUDA
+/// binding: the tool is on every CUDA host, and both GPU backends
+/// (`aipow_gpu`, `zkv5_gpu`) share this one parser, so one card gets one
+/// descriptor on both boards.
+pub fn nvidia_smi_device(ordinal: u32) -> Option<String> {
+    let out = std::process::Command::new("nvidia-smi")
+        .arg("--query-gpu=name,memory.total")
+        .arg("--format=csv,noheader")
+        .arg(format!("--id={ordinal}"))
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let line = String::from_utf8_lossy(&out.stdout);
+    let line = line.lines().next()?.trim();
+    let (name, mem) = line.split_once(',')?;
+    let gib = mem
+        .trim()
+        .split_whitespace()
+        .next()
+        .and_then(|m| m.parse::<u64>().ok())
+        .map(|mib| format!(" {}GB", (mib + 512) / 1024))
+        .unwrap_or_default();
+    Some(format!("{}{gib}", name.trim()))
+}

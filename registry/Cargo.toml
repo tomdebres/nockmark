@@ -22,6 +22,10 @@ ai-pow-zk = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988
 # M6 Phase B: canonical-MoE statement re-derivation (`canonical_moe_statement_parts`)
 # lives behind ai-pow-miner's `node` feature, same as the client's grind path.
 ai-pow-miner = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4", features = ["node"] }
+# M7 step 3: upstream's V5 digest and base-p target comparison, the same code
+# the client grinds with (`zk_pow_miner::v5`). Its `kernels-open-miner` dep is
+# patched to an empty stub at the bottom of this file.
+zk-pow-miner = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4" }
 # Wire codec of the AI submission blob (same codec family the compact
 # certificate uses upstream).
 postcard = { version = "1.1.3", features = ["alloc"] }
@@ -43,6 +47,13 @@ tempfile = "3"
 
 [profile.release]
 opt-level = 3
+
+# Same patch as tock/Cargo.toml (a [patch] applies only to the root manifest's
+# build): tock's zk-pow-miner dep pulls `kernels-open-miner`, which would embed
+# whatever KERNEL_JAM_PATH names — roswell.jam here — as a miner kernel. Nothing
+# uses it; the stub is empty. See ../tock/stub/kernels-open-miner/src/lib.rs.
+[patch."https://github.com/nockchain/nockchain"]
+kernels-open-miner = { path = "../tock/stub/kernels-open-miner" }
 
 # The AI-track tests prove and verify real STARK certificates through the
 # ai-pow dependency tree; at dev's default opt-level 0 one compact

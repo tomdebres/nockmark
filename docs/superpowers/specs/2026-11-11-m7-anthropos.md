@@ -48,7 +48,27 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
    (`hardened`, or `legacy` for every earlier row); ZK rows carry
    `rules: pre-anthropos`. Ranking stays all-rows until step 3 (see
    Decisions).
-3. **ZK v5 track.** Mirror the AI track's tier design:
+3. **ZK v5 track** — done (PR #34, 2026-11-12). Built as designed below. Outcome:
+   - `tock zk-bench` grinds with upstream's own `v5_pow_digest`/`digest_le`
+     (`zk-pow-miner`, its embedded-kernel crate patched to an empty stub) or,
+     with `--features zk-gpu --gpu`, upstream's `CudaSession::search`; proves
+     winners through miner.jam with `[%5 commitment nonce T_b 64]`.
+   - Commitment: C = `blake3("nockmark-zk-v5" ‖ LE8(nonce))` written in base p
+     (injective; limb 4 is almost always 0 because p⁴ ≈ 2²⁵⁶(1 − 2⁻³⁰)).
+   - Server: everything in the list below, plus object 0 must be the canonical
+     puzzle object for its own fields (consensus-path digest of the submitted
+     object = upstream `v5_pow_digest`), `+canonical-pow-proof` on every
+     `%poly`, and the STARK verified twice (native and the consensus Hoon
+     verifier via roswell). Runs live in `zkv5-track.jsonl` beside the AI
+     store; registry.hoon is unchanged.
+   - Credit per win p⁵/(T_b+1) (= 2^a exactly at tier 2^a). Tiers
+     [2¹², 2³¹], k = 16.
+   - M1 Max: 151 k Tip5 hashes/s on 10 threads, 21.2 s per `%5` proof →
+     tier 2²³.
+   - `%3` submissions retired (410 Gone); both boards rank only current-rules
+     rows (see Decisions).
+
+   Design as approved:
    - challenge C → `block-commitment` = C reduced to 5 based belts;
    - the client grinds nonces against a benchmark target T_b with native
      `v5_pow_digest` (CPU) or `CudaSession::search` (GPU), proves k winners
@@ -80,3 +100,15 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
   files, so they go in sequence.
 - Each PR updates the docs its change makes stale. The dated write-ups stay as
   written, with a dated note on top.
+- **Step 3 (2026-11-12): the registry no longer accepts new `%3` ZK runs.**
+  Untracked `POST /challenge` and `POST /run` answer 410 Gone with a pointer
+  to `?track=zk`. A complete-proofs/sec row measures work mainnet has refused
+  since height 147,500 and could never be ranked. The 9 existing rows stay
+  listed, unranked, in their own table.
+- **Current-era ranking is live from step 3.** ZK: only `rules: anthropos`
+  (v5) rows carry a `rank`. AI: only `hardened` rows do; legacy rows follow,
+  `rank: null`, however fast. On the live board that leaves one ranked AI row
+  until GPU rows are re-measured under Hardened rules (step 5).
+- **ZK k = 16**, the AI track's k, for ±25% Poisson noise (k = 8 gave ±35%;
+  the first M1 Max row at k = 8 landed at 38% of its calibrated rate on 2.55×
+  bad luck). Tier ceiling 2³¹ so 16 wins fit the 1 h expiry on a 5090.

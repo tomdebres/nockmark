@@ -1,9 +1,10 @@
 # tock — Nockmark bench harness
 
-Benchmarks a machine against Nockchain's **real mainnet STARK prover** — the
-same miner kernel mining uses, run standalone (no node, no networking). Born
-as the M0 spike (`docs/superpowers/specs/2026-07-15-m0-spike-findings.md`);
-this is the M1 `tock bench --local` milestone.
+Benchmarks a machine at Nockchain mining: the ZK lottery (`zk-bench`: Tip5
+hashes of proof object 0, winners proved through the **real mainnet miner
+kernel**) and AI-PoW (`ai-bench`). Run standalone — no node, no networking
+beyond the registry. Born as the M0 spike
+(`docs/superpowers/specs/2026-07-15-m0-spike-findings.md`).
 
 See also: [M2 Registry Deployment Runbook](../docs/superpowers/specs/2026-07-15-m2-deploy-runbook.md)
 
@@ -61,7 +62,58 @@ NOCKCHAIN="$NOCKCHAIN" scripts/build-registry-jam.sh
 `deploy/assets/` holds the committed `roswell.jam` and `registry.jam` the
 deployed registry runs; copy fresh builds there on a re-pin.
 
-## Bench
+## ZK mining: `zk-bench`
+
+Since block 147,500 (Anthropos, ZK proof version 5) a ZK mining attempt is one
+Tip5 hash of proof object 0 for a nonce; a full STARK is built only for a nonce
+whose hash meets the target, and is bound to it. `zk-bench` does that:
+
+1. calibrate (unless `--attempts`): ~2 s of hashing, then one throwaway `%5`
+   proof, to size the tier at twice this machine's proving time;
+2. with `--submit`, mint a challenge at that tier (block commitment, target,
+   k); otherwise grind a local dev commitment;
+3. grind nonces with upstream's own `v5_pow_digest` on every core (or, with
+   `--gpu`, upstream's CUDA search) until k meet the target;
+4. prove each winner through the miner kernel with
+   `[%5 commitment nonce target 64]` — the kernel re-checks the digest and
+   refuses a loser;
+5. with `--submit`, send the proofs; the registry verifies and ranks them.
+
+```sh
+cargo build --release
+./target/release/tock zk-bench --kernel assets/miner.jam                 # local
+./target/release/tock zk-bench --kernel assets/miner.jam -k 2 --attempts 1048576
+./target/release/tock zk-bench --kernel assets/miner.jam --submit https://nockmark.xyz
+```
+
+`--threads N` caps the CPU grind (default: every core). Proving is one kernel,
+one proof at a time, whatever it says: the tier is sized against that, so the
+registry's window recovers the same 2/3 of the true hash rate on every host.
+
+GPU (NVIDIA, CUDA 12.8+): build with the `zk-gpu` feature and your card's
+arch, then add `--gpu`. Only the search moves to the device; every winner is
+re-checked on the CPU and proved there.
+
+```sh
+ZK_POW_CUDA_ARCH=86 cargo build --release --features zk-gpu   # 89 Ada, 120 Blackwell
+./target/release/tock zk-bench --kernel assets/miner.jam --gpu --submit https://nockmark.xyz
+```
+
+`scripts/gpu_pod.py` (`up`, `push`, `build-zk`, `miner-jam`, `run`, `down`) is
+the RunPod recipe; `miner-jam` builds the jam on the pod with hoonc at the
+pinned rev rather than uploading 18 MB through RunPod's PTY proxy.
+
+The nockchain `kernels-open-miner` crate, which `zk-pow-miner` depends on,
+embeds a miner jam at build time and fails the build without one. Nothing here
+uses that embedded kernel (tock reads `--kernel` at run time), so
+`Cargo.toml` patches it to an empty stub (`stub/kernels-open-miner`).
+
+## Complete-proof bench (pre-Anthropos `%3`)
+
+`tock bench` times complete `%3` proofs — the ZK mining unit until block
+147,500. It is still a fair CPU proving benchmark, but no longer a mining
+rate, and the registry no longer accepts its submissions (`--submit` exits
+with a pointer to `zk-bench`).
 
 ```sh
 cargo build --release
@@ -92,23 +144,12 @@ Reference timings (Tom's Apple M1, 8 GB): prove ~21 s/proof single-threaded
 (and ~21 s wall-clock for 2 proofs on 2 threads), verify ~0.5 s, proofs
 ~116 KB jammed.
 
-## Submitting to the public registry (M3)
+## Submitting to the public registry
 
-One command — it fetches a challenge, proves against it, and submits:
-
-    export PATH="$HOME/.rustup/toolchains/<your-nightly-2026-04-03>/bin:$PATH"
-    export RUST_MIN_STACK=8388608
-    ./target/release/tock bench \
-      --kernel assets/miner.jam \
-      --submit https://nockmark.xyz
-
-The registry supplies the nonce, k (currently 8), and pow-len; your
-`--seed`/`-k` flags are ignored in submit mode. `--pow-len` is supplied by
-the registry too, so any value you pass is ignored the same way.
-`--threads N` is honored.
-The published rate is computed **server-side** from the challenge-issue →
-submission window, so it is a cryptographically verified lower bound on
-your machine's proving rate: nothing you report can inflate it. Hardware
+`zk-bench --submit https://nockmark.xyz` (above) is the ZK path; `ai-bench
+--submit` the AI one. The registry supplies k, the tier's target and the
+commitment, and `zk-bench` checks the commitment and target against its own
+derivation before grinding. The published rate is computed **server-side**
+from the challenge-issue → submission window, so it is a verified lower bound
+on your machine's hash rate: nothing you report can inflate it. Hardware
 strings are self-reported and labelled as such.
-
-Fully offline benching (`tock bench` without `--submit`) is unchanged.

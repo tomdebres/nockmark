@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Drive ONE long-lived RunPod GPU pod for `tock ai-bench --gpu` (M6 B2b).
+"""Drive ONE long-lived RunPod GPU pod for `tock ai-bench --gpu` (M6 B2b) and
+`tock zk-bench --gpu` (M7 step 3).
 
 `runpod_harness` is the API layer — deploy, ssh, terminate, stray sweep — and
 is not reimplemented here. What this adds is the thing a *development* session
@@ -11,6 +12,8 @@ redeploy (minutes, plus a fresh cargo registry download).
     ./gpu_pod.py bootstrap           # re-run the bootstrap on the live pod
     ./gpu_pod.py push                # overlay the LOCAL tock/ onto the clone
     ./gpu_pod.py build               # cargo build --release --features gpu
+    ./gpu_pod.py build-zk            # cargo build --release --features zk-gpu
+    ./gpu_pod.py miner-jam           # build assets/miner.jam with hoonc at the pin
     ./gpu_pod.py run '<shell>'       # anything, with the toolchain on PATH
     ./gpu_pod.py pods                # what is live on the account, if anything
     ./gpu_pod.py down                # terminate + assert nothing is left
@@ -47,6 +50,9 @@ import runpod_harness as rp  # noqa: E402
 GPU_TYPE = os.environ.get("NOCKMARK_GPU_TYPE", "NVIDIA GeForce RTX 3090")
 CUDA_ARCH = os.environ.get("AI_POW_CUDA_ARCH", "compute_86")
 CUDA_CODE = os.environ.get("AI_POW_CUDA_CODE", "sm_86")
+# The ZK V5 kernel's build script takes bare architecture numbers (89 for a
+# 4090, 120 for a 5090), comma-separated; unset means the build host's GPU.
+ZK_CUDA_ARCH = os.environ.get("ZK_POW_CUDA_ARCH", "86")
 
 # The image already carries nvcc 12.8 and the driver; only the Rust side and
 # the protobuf compiler (nockapp-grpc's build script) are missing.
@@ -76,6 +82,7 @@ ENV = (
     "export PATH=/opt/rust/bin:/usr/local/cuda/bin:$PATH; "
     "export CUDA_HOME=/usr/local/cuda; "
     f"export AI_POW_CUDA_ARCH={CUDA_ARCH} AI_POW_CUDA_CODE={CUDA_CODE}; "
+    f"export ZK_POW_CUDA_ARCH={ZK_CUDA_ARCH}; "
     "export RUST_MIN_STACK=8388608; "
     "export CARGO_TERM_COLOR=never; "
 )
@@ -170,7 +177,13 @@ export DEBIAN_FRONTEND=noninteractive
 # "E: Could not get lock /var/lib/dpkg/lock-frontend ... held by process
 # 549 (apt-get)" — so wait for it instead. Ten minutes is far longer than
 # the ~40 s the startup install takes, and costs nothing when it is free.
-apt-get -o DPkg::Lock::Timeout=600 update -qq
+# DPkg::Lock::Timeout covers dpkg's lock only. `apt-get update` also takes
+# /var/lib/apt/lists/lock, which the startup install holds too — and fails at
+# once on it ("Could not get lock /var/lib/apt/lists/lock", seen 2026-11-12).
+# So wait for any apt/dpkg to finish first, and retry the update regardless.
+# (/proc, not pgrep: the CUDA image may not ship procps.)
+for i in $(seq 1 120); do grep -qxE 'apt-get|apt|dpkg' /proc/[0-9]*/comm 2>/dev/null || break; sleep 5; done
+for i in 1 2 3 4 5; do apt-get -o DPkg::Lock::Timeout=600 update -qq && break; sleep 10; done
 apt-get -o DPkg::Lock::Timeout=600 install -y -qq --no-install-recommends \
     git protobuf-compiler build-essential curl xz-utils pkg-config libssl-dev ca-certificates
 # Pinned nightly from static.rust-lang.org tarballs. The CUDA image has no
@@ -183,8 +196,8 @@ for c in rustc cargo rust-std; do
   tar xf "${{c}}-nightly-{TRIPLE}.tar.xz"
   "./${{c}}-nightly-{TRIPLE}/install.sh" --prefix=/opt/rust --disable-ldconfig >/dev/null
 done
-rm -rf /tmp/rust-dl
-mkdir -p {ROOT}
+cd / && rm -rf /tmp/rust-dl
+mkdir -p {ROOT} && cd {ROOT}
 [ -d {NOCKMARK} ] || git clone --quiet --filter=blob:none {NOCKMARK_REPO} {NOCKMARK}
 git -C {NOCKMARK} checkout --quiet main
 /opt/rust/bin/rustc --version
@@ -215,7 +228,8 @@ def push():
     """Overlay the local `tock/` onto the pod's clone."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for member in ("Cargo.toml", "Cargo.lock", "src"):
+        # `stub`: the empty kernels-open-miner that tock/Cargo.toml patches in.
+        for member in ("Cargo.toml", "Cargo.lock", "src", "stub"):
             path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tock", member)
             tar.add(os.path.abspath(path), arcname=member)
     payload = buf.getvalue()
@@ -225,6 +239,45 @@ def push():
                   + [f"tar xzf /tmp/tock.tgz -C {TOCK}", "echo pushed"]),
         timeout_s=900,
     ))
+
+
+def pinned_rev():
+    """The nockchain rev every git dep in tock/Cargo.toml is pinned to."""
+    import re
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tock", "Cargo.toml")
+    revs = set(re.findall(r'rev = "([0-9a-f]{40})"', open(path).read()))
+    if len(revs) != 1:
+        sys.exit(f"[gpu_pod] expected one pinned nockchain rev in tock/Cargo.toml, found {revs}")
+    return revs.pop()
+
+
+def miner_jam_script(rev):
+    """Build miner.jam on the pod with hoonc at `rev` (tock/README.md recipe).
+
+    18 MB does not travel well through RunPod's PTY proxy (see `_upload_lines`),
+    and the jam is a pure function of the pinned hoon tree, so the pod builds
+    its own and prints its sha256 to compare with the local one. hoonc parses
+    every file under the tree it is given, and upstream ships deliberately
+    unparseable fixtures in hoon/tests/compiler-errors/, which stop it with no
+    jam and exit 0 — so it compiles a copy without them, and the jam's
+    existence is checked.
+    """
+    nc = f"{ROOT}/nockchain"
+    return f"""
+[ -d {nc} ] || git clone --quiet --filter=blob:none https://github.com/nockchain/nockchain.git {nc}
+git -C {nc} fetch --quiet origin {rev} || true
+git -C {nc} checkout --quiet {rev}
+cd {nc} && cargo build --release -p hoonc 2>&1 | tail -3
+rm -rf {ROOT}/hoon-build && mkdir -p {ROOT}/hoon-build
+cp -RL {nc}/hoon {ROOT}/hoon-build/hoon
+rm -rf {ROOT}/hoon-build/hoon/tests/compiler-errors
+cd {ROOT}/hoon-build && rm -f miner.jam
+{nc}/target/release/hoonc --new --data-dir {ROOT}/hoonc-data-$$ --output miner.jam \
+    hoon/apps/dumbnet/miner.hoon hoon 2>&1 | tail -5
+[ -s miner.jam ] || {{ echo "hoonc wrote no miner.jam"; exit 1; }}
+mkdir -p {TOCK}/assets && mv miner.jam {TOCK}/assets/miner.jam
+sha256sum {TOCK}/assets/miner.jam
+"""
 
 
 def main():
@@ -241,6 +294,10 @@ def main():
         push()
     elif cmd == "build":
         sys.exit(remote(f"cd {TOCK} && cargo build --release --features gpu 2>&1 | tail -60"))
+    elif cmd == "build-zk":
+        sys.exit(remote(f"cd {TOCK} && cargo build --release --features zk-gpu 2>&1 | tail -60"))
+    elif cmd == "miner-jam":
+        sys.exit(remote(miner_jam_script(pinned_rev()), timeout_s=3600))
     elif cmd == "run":
         sys.exit(remote(" ".join(sys.argv[2:]), timeout_s=5400))
     elif cmd == "pods":

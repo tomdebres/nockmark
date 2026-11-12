@@ -104,27 +104,7 @@ pub const GPU_DEVICE_ORDINAL: usize = 0;
 /// Returns `None` if the query fails for any reason; the caller then falls
 /// back to the host descriptor rather than inventing a device name.
 pub fn device_descriptor() -> Option<String> {
-    let out = std::process::Command::new("nvidia-smi")
-        .arg("--query-gpu=name,memory.total")
-        .arg("--format=csv,noheader")
-        .arg(format!("--id={GPU_DEVICE_ORDINAL}"))
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    // "NVIDIA GeForce RTX 3090, 24576 MiB" -> "NVIDIA GeForce RTX 3090 24GB"
-    let line = String::from_utf8_lossy(&out.stdout);
-    let line = line.lines().next()?.trim();
-    let (name, mem) = line.split_once(',')?;
-    let gib = mem
-        .trim()
-        .split_whitespace()
-        .next()
-        .and_then(|m| m.parse::<u64>().ok())
-        .map(|mib| format!(" {}GB", (mib + 512) / 1024))
-        .unwrap_or_default();
-    Some(format!("{}{gib}", name.trim()))
+    crate::hardware::nvidia_smi_device(GPU_DEVICE_ORDINAL as u32)
 }
 
 /// Default attempts per CUDA launch (`ai-bench --gpu-batch`).
