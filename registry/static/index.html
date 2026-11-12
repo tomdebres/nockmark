@@ -2,13 +2,13 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nockmark — verified Nockchain proving benchmarks</title>
+<title>Nockmark — verified Nockchain mining benchmarks</title>
 <meta name="description" content="A public registry of Nockchain mining benchmarks. Every rate is computed server-side from verified proofs of a server-issued challenge.">
 <link rel="canonical" href="https://nockmark.xyz/">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://nockmark.xyz/">
 <meta property="og:site_name" content="Nockmark">
-<meta property="og:title" content="Nockmark — verified Nockchain proving benchmarks">
+<meta property="og:title" content="Nockmark — verified Nockchain mining benchmarks">
 <meta property="og:description" content="The leaderboard that cannot lie: STARK-verified proving rates, computed by the server from challenges it issued. One command to get your machine on the board.">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext x='1' y='13' font-family='monospace' font-size='15' fill='%23555'%3E~%3C/text%3E%3C/svg%3E">
@@ -110,10 +110,9 @@
 
 <header>
   <div class="mark"><span class="sig">~</span>nockmark</div>
-  <p class="thesis">Nockchain proving benchmarks, <em>verified</em>. Every rate
-  below was computed by this server, from STARK proofs it checked, of a
-  challenge it issued. Nobody can inflate their number — including the
-  submitter.</p>
+  <p class="thesis">Nockchain mining benchmarks, <em>verified</em>. Every rate
+  below was computed by this server from proofs it checked, of a challenge it
+  issued. Nobody can inflate it, the submitter included.</p>
 </header>
 
 <section>
@@ -132,23 +131,12 @@
     </table>
   </div>
   <p class="econ" id="econ" hidden></p>
-  <p class="econ">Since block 147,500 (Anthropos, ZK proof version 5) a ZK
-  mining attempt is one Tip5 hash of proof object 0 — the puzzle for one
-  nonce — and a miner builds the full STARK only for a nonce whose hash meets
-  the target. So this board ranks hashes per second. A run grinds nonces for a
-  commitment derived from this server's challenge, against a target it
-  issued, and proves k winners. For each one the server re-derives the hash
-  from the proof itself, checks the commitment, the length, the version and
-  the target, and verifies the STARK twice, with upstream's native verifier
-  and with the consensus Hoon verifier. Only then does it credit k × the
-  expected hashes per win, over the window it observed. A nonce counts once,
-  whatever the proof bytes.</p>
-  <p class="econ"><b>Tier</b> is the expected hashes per win a run asked for.
-  Clients size it at twice their own proving time, so the proving inside the
-  window costs every host the same third of its true rate, and the ranking
-  holds. CPU and GPU rows rank together: the GPU path is upstream's
-  open-source CUDA V5 search, which only finds winners; each one is re-checked
-  and proved on the CPU, then verified here like any other.</p>
+  <p class="econ">Since block 147,500 a ZK attempt is one Tip5 hash, and only
+  a winning nonce gets a full proof. Each run proves k winners of this
+  server's challenge; every proof is verified twice, and the rate is k × the
+  tier's expected hashes over the server's own clock. <b>Tier</b>: hashes per
+  win, set at twice the machine's proving time. A GPU only searches; the CPU
+  proves. Details on <a href="/api">/api</a>.</p>
   <div id="pre" hidden>
     <div class="eyebrow sub">Before Anthropos — complete proofs per second, unranked</div>
     <div class="scroll">
@@ -163,9 +151,8 @@
         <tbody></tbody>
       </table>
     </div>
-    <p class="econ">Complete %3 proofs per second: the ZK mining unit until
-    block 147,500. Kept as a CPU proving benchmark. These rows are not ranked
-    or priced, and the registry no longer accepts new ones.</p>
+    <p class="econ">The ZK unit before block 147,500. Not ranked, priced or
+    accepted any more.</p>
   </div>
 </section>
 
@@ -184,32 +171,13 @@
       <tbody></tbody>
     </table>
   </div>
-  <p class="econ">The Logos AI-PoW puzzle (INT8 tiled matmul + recursive STARK
-  certificate), verified the same way: every rate computed by this server from
-  certificates it checked, of challenges it derived. Two statements share this
-  board — <b>dense</b>, the single-tile benchmark, and <b>canonical MoE</b>, the
-  block mainnet AI miners actually run — because MAC-equivalents is the unit
-  consensus itself uses to compare work of different shapes. <b>Tier</b> is the
-  expected grind attempts per win the run was measured at — clients pick it, so
-  fast hardware can grind long enough to be measured rather than being drowned
-  out by the fixed certificate-proving cost inside the window. Picking a tier
-  cannot inflate a number: an easy tier earns less credit against that same
-  fixed cost, and a hard one has to actually be ground out, attempt by verified
-  attempt. CPU and GPU rows rank together: the device only searches for jackpots, and every win it finds is
-  re-checked and certified on the CPU before this server verifies it.</p>
-  <p class="econ">New wins are verified under mainnet's current rules
-  (Hardened since block 154,500, exact MoE routing since 170,000); a legacy
-  certificate is rejected. Only those rows are ranked. Rows accepted before
-  that are marked <b>legacy rules</b> and listed after them, unranked.</p>
-  <p class="econ"><b>These GPU figures are behind upstream.</b> They were
-  measured at pin c8d6b13e with the generic CUDA kernel, which still serves
-  this shape. Two days after that pin, upstream made a peak kernel on its own
-  dense shape the production GPU path and reports the same card going from
-  0.19 to 335 TMAC/s — about 1,700× — so treat the GPU rows here as a floor
-  for the hardware, not a measurement of it. That shape and a GPU re-run are
-  next on the list. (Nockchain also admits mining inside real model inference, at
-  throughput comparable to the optimised dedicated kernel; the interesting
-  part there is that the compute is dual-use, not that it is faster.)</p>
+  <p class="econ">Logos AI-PoW (INT8 matmul + recursive STARK certificate),
+  verified the same way. Dense and canonical-MoE runs share one board in
+  MAC-equivalents, the unit consensus compares them in. Only rows under
+  mainnet's current rules (Hardened) are ranked.</p>
+  <p class="econ"><b>GPU rows are a floor.</b> They are legacy-rules runs of the
+  generic CUDA kernel; upstream's peak kernel does about 1,700× more on its
+  own shape. A re-run is next.</p>
 </section>
 
 <section class="submit">
@@ -219,15 +187,11 @@
 </section>
 
 <footer>
-  <p>Each mark in the second column is drawn from that run's challenge
-  nonce — a fingerprint of the workload the machine actually proved.
-  Hardware descriptors are self-reported; rates are not.</p>
-  <p>nock/day and usd/day are estimates: the attempt-lottery model at the
-  difficulty and price observed above, shown only when this instance has
-  actually observed them. They exclude electricity, hardware, pool fees and
-  solo-mining variance, and both difficulty and price drift — so read every
-  figure as a snapshot, not a forecast. <a href="/economics">/economics</a>
-  publishes every input, so you can redo the arithmetic yourself.</p>
+  <p>The mark beside each ZK row is drawn from its challenge nonce. Hardware
+  is self-reported; rates are not.</p>
+  <p>nock/day and usd/day: the lottery model at the difficulty and price
+  above, before power, hardware, fees and luck — a snapshot, not a forecast.
+  <a href="/economics">/economics</a> has every input.</p>
   <p><a href="https://github.com/tomdebres/nockmark">How it works</a> ·
   <a href="/api">API</a> ·
   <a href="/leaderboard">JSON</a> ·
