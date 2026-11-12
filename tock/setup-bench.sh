@@ -14,9 +14,9 @@
 #   3. ssh -i key.pem ubuntu@<ip> 'bash setup-bench.sh 2>&1 | tee setup.log'
 #   4. scp -i key.pem 'ubuntu@<ip>:bench-results/*.json' bench-results/
 #
-# Pin these to what the local benches used (see the findings doc / bench JSON):
-NOCKCHAIN_REPO=${NOCKCHAIN_REPO:-https://github.com/tomdebres/nockchain.git}
-NOCKCHAIN_COMMIT=${NOCKCHAIN_COMMIT:-31b8a015}
+# The nockchain pin is the `rev` on every nockchain line of tock/Cargo.toml:
+# cargo fetches those crates by git, so the box needs no nockchain checkout.
+# miner.jam must be compiled at that same rev (tock/README.md) and scp'd over.
 NOCKMARK_REPO=${NOCKMARK_REPO:-}   # if empty, tock sources must be scp'd to ~/tock
 TOOLCHAIN_DATE=2026-04-03
 K_SINGLE=${K_SINGLE:-6}
@@ -51,34 +51,25 @@ export PATH="$TC/bin:$PATH"
 export RUST_MIN_STACK=8388608
 cargo --version
 
-# --- nockchain at the pinned commit --------------------------------------
-cd "$HOME"
-if [ ! -d nockchain ]; then
-  git clone --filter=blob:none "$NOCKCHAIN_REPO" nockchain
-fi
-git -C nockchain checkout "$NOCKCHAIN_COMMIT"
-
 # --- tock (this repo's harness) -------------------------------------------
-# Path deps expect nockchain at ../../../nockchain relative to tock/, i.e.
-# layout <root>/nockmark/m0-prover-spike/tock and <root>/nockchain.
-mkdir -p nockmark/m0-prover-spike
+cd "$HOME"
 if [ -n "$NOCKMARK_REPO" ]; then
   [ -d nockmark-src ] || git clone "$NOCKMARK_REPO" nockmark-src
-  cp -r nockmark-src/tock nockmark/m0-prover-spike/tock
+  TOCK="$HOME/nockmark-src/tock"
 elif [ -d "$HOME/tock" ]; then
-  cp -r "$HOME/tock" nockmark/m0-prover-spike/tock
+  TOCK="$HOME/tock"
 else
   echo "no tock sources: set NOCKMARK_REPO or scp the tock/ dir to ~/tock" >&2
   exit 1
 fi
 
-# miner.jam must have been scp'd to ~ (42 MB beats a 23-minute hoonc run)
-mkdir -p nockmark/m0-prover-spike/tock/assets
-cp "$HOME/miner.jam" nockmark/m0-prover-spike/tock/assets/
+# miner.jam must have been scp'd to ~ (18 MB beats an 8-minute hoonc run)
+mkdir -p "$TOCK/assets"
+cp "$HOME/miner.jam" "$TOCK/assets/"
 
-cd nockmark/m0-prover-spike/tock
-cargo build --release
-cargo test --release
+cd "$TOCK"
+cargo build --release --locked
+cargo test --release --locked
 
 # --- standard bench matrix -------------------------------------------------
 CORES=$(nproc)

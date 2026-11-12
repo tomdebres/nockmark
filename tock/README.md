@@ -30,22 +30,36 @@ export RUST_MIN_STACK=8388608
 ## One-time: compile the kernel jams
 
 The prover/verifier are Hoon kernels, compiled with hoonc (built once in the
-nockchain repo). Two hoonc quirks: it writes the output jam into the
-**current directory** (ignores the directory part of `--output`), and a data
-dir cannot be reused — use a fresh one per kernel.
+nockchain repo). hoonc quirks:
+
+- It writes the output jam into the **current directory** (ignores the
+  directory part of `--output`).
+- `--new` needs an empty data dir, and a data dir cannot be reused: use a
+  fresh one per kernel and per attempt.
+- It parses every file under the tree it is given. Since `ed1edfcc` that
+  includes deliberately unparseable fixtures in `hoon/tests/compiler-errors/`,
+  which stop it **without a jam and with exit status 0**. Compile from a copy
+  of the tree without them (`-L`: `hoon/common/hoon.hoon` is a symlink), and
+  check the jam exists afterwards.
 
 ```sh
 cd "$NOCKCHAIN"   # checked out at the rev pinned in Cargo.toml
 cargo build --release -p hoonc
-# miner kernel (the prover — the kernel mainnet mining uses), ~6 min
-target/release/hoonc --new --data-dir /tmp/hoonc-miner \
+B=$(mktemp -d) && cp -RL hoon "$B/hoon" && rm -rf "$B/hoon/tests/compiler-errors"
+cd "$B"
+# miner kernel (the prover — the kernel mainnet mining uses), ~8 min at ed1edfcc
+"$NOCKCHAIN/target/release/hoonc" --new --data-dir "$B/data-miner" \
   --output miner.jam hoon/apps/dumbnet/miner.hoon hoon
-mv miner.jam <nockmark>/tock/assets/
-# roswell kernel (test harness exposing %verify-proof), ~17 min
-target/release/hoonc --new --data-dir /tmp/hoonc-roswell \
+# roswell kernel (test harness exposing %verify-proof), ~30 min at ed1edfcc
+"$NOCKCHAIN/target/release/hoonc" --new --data-dir "$B/data-roswell" \
   --output roswell.jam hoon/apps/roswell/roswell.hoon hoon
-mv roswell.jam <nockmark>/tock/assets/
+ls -l miner.jam roswell.jam && mv miner.jam roswell.jam <nockmark>/tock/assets/
+# the registry kernel (hoon/registry.hoon), same treatment, from the repo root:
+NOCKCHAIN="$NOCKCHAIN" scripts/build-registry-jam.sh
 ```
+
+`deploy/assets/` holds the committed `roswell.jam` and `registry.jam` the
+deployed registry runs; copy fresh builds there on a re-pin.
 
 ## Bench
 

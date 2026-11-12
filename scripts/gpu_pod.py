@@ -52,18 +52,17 @@ CUDA_CODE = os.environ.get("AI_POW_CUDA_CODE", "sm_86")
 # the protobuf compiler (nockapp-grpc's build script) are missing.
 IMAGE = "nvidia/cuda:12.8.1-devel-ubuntu24.04"
 
-NOCKCHAIN_REPO = "https://github.com/tomdebres/nockchain.git"
-NOCKCHAIN_COMMIT = "c8d6b13e"
 NOCKMARK_REPO = "https://github.com/tomdebres/nockmark.git"
 TOOLCHAIN_DATE = "2026-04-03"
 TRIPLE = "x86_64-unknown-linux-gnu"
 
-# tock's path deps read `../../../nockchain` from `<repo>/tock/`, i.e.
-# `<repo>/../../nockchain` — so the nockmark checkout must sit exactly two
-# levels below the directory that holds nockchain. Same layout the registry
-# Dockerfile builds (`/build/nockchain` + `/build/nockmark/<worktree>`).
+# No nockchain checkout on the pod: tock's nockchain crates are git deps
+# pinned by `rev` in tock/Cargo.toml, and cargo fetches them (CUDA sources
+# included — ai-pow-miner's build.rs compiles them) into ~/.cargo/git. The pin
+# therefore travels with `push`: whatever rev the local Cargo.toml/Cargo.lock
+# say is what the pod builds.
 ROOT = "/build"
-NOCKMARK = f"{ROOT}/nockmark/m6-gpu"
+NOCKMARK = f"{ROOT}/nockmark"
 TOCK = f"{NOCKMARK}/tock"
 
 STATE = os.path.expanduser(
@@ -185,10 +184,7 @@ for c in rustc cargo rust-std; do
   "./${{c}}-nightly-{TRIPLE}/install.sh" --prefix=/opt/rust --disable-ldconfig >/dev/null
 done
 rm -rf /tmp/rust-dl
-mkdir -p {ROOT}/nockmark
-cd {ROOT}
-[ -d nockchain ] || git clone --quiet --filter=blob:none {NOCKCHAIN_REPO} nockchain
-git -C nockchain checkout --quiet {NOCKCHAIN_COMMIT}
+mkdir -p {ROOT}
 [ -d {NOCKMARK} ] || git clone --quiet --filter=blob:none {NOCKMARK_REPO} {NOCKMARK}
 git -C {NOCKMARK} checkout --quiet main
 /opt/rust/bin/rustc --version

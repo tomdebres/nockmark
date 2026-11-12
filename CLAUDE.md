@@ -25,12 +25,18 @@ history keeps milestones; the worktree gets torn down.
 ## Big outputs live outside the checkout
 
 The bulk was never source — it was `registry/target` and `tock/target` (cargo
-caches) and `registry/.data.roswell/` (the registry node's event-log SQLite +
-PMA checkpoints, 3–8 GB each). None of it belongs in a worktree.
+caches) and `registry/.data.roswell/` (3–8 GB each). None of it belongs in a
+worktree. `.data.roswell` is the **roswell verifier's** NockApp scratch, made in
+whatever directory the registry runs from; it is not registry state. The
+registry kernel's own state (event log + PMA) lives in `--data-dir`
+(`./registry-data` by default, `/data` on Railway).
 
 - Registry node state and benchmark output go in **`~/data/nockmark-runs/<name>/`**,
   never inside a checkout. The preserved pre-consolidation state is parked there
-  now — copy from it if a run needs prior registry state.
+  now (`registry-data.roswell`, despite the name, is registry state: every copy
+  boots at c8d6b13e and ed1edfcc) — copy from it if a run needs prior registry
+  state. A `.data.roswell` taken from a crate directory is not, and boots under
+  no registry binary.
 - `target/` and `.data.roswell/` are gitignored; keep them so. `tock/assets/*.jam`
   are regenerable via `tock/setup-bench.sh` — don't commit them.
 - A worktree must stay cheap to create and delete. If it's carrying gigabytes,

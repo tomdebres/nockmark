@@ -63,6 +63,7 @@ use ai_pow_zk::recursion::{
     verify_compact_batch_recursive_certificate_with_context, AiPowCompactBatchVerifierContext,
     AI_POW_COMPACT_BATCH_VERIFIER_KEY_DIGEST_BYTES,
 };
+use ai_pow_zk::proof_rules::ProofRules;
 use ai_pow_zk::CircuitConfig;
 use serde::{Deserialize, Serialize};
 use tock::aipow::{nonce_extranonce, AiCertBlob, AI_PARAMS};
@@ -345,6 +346,26 @@ pub fn rates(
 // AI store: append-only JSONL, replayed at boot (like econ-history.jsonl)
 // ---------------------------------------------------------------------------
 
+/// The AI-PoW proof rules a run was VERIFIED under: the server's own at
+/// acceptance, never a client claim (`prover_version` is self-described).
+///
+/// Mainnet switched to Hardened at height 154,500, after which legacy
+/// certificates are inadmissible. Every row written before pin ed1edfcc was
+/// verified under the legacy rules and predates this field, so a missing
+/// field replays as `Legacy`. This binary boots only Hardened verifier
+/// contexts ([`require_hardened`]) and stamps [`CURRENT_AI_RULES`] on every
+/// run it commits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiRules {
+    #[default]
+    Legacy,
+    Hardened,
+}
+
+/// The rules every run committed by this binary was verified under.
+pub const CURRENT_AI_RULES: AiRules = AiRules::Hardened;
+
 /// One verified AI run, exactly as persisted (and served, with computed
 /// rates alongside).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -359,6 +380,10 @@ pub struct AiRunRecord {
     /// rows written before M6 Phase B1, which were all dense.
     #[serde(default)]
     pub statement: Statement,
+    /// The proof rules the wins were verified under (server-attested; absent,
+    /// hence `Legacy`, on rows from before pin ed1edfcc).
+    #[serde(default)]
+    pub rules: AiRules,
     /// Wins verified (k at submission time).
     pub k: u64,
     /// hex32 of the jackpot target the wins were verified against —
@@ -536,6 +561,7 @@ impl AiStore {
             hardware: hardware.to_string(),
             prover_version: prover_version.to_string(),
             statement,
+            rules: CURRENT_AI_RULES,
             k: win_extranonces.len() as u64,
             target: tock::aipow::hex32(target),
             grind_elapsed_ms,
@@ -562,8 +588,9 @@ impl AiStore {
 // Verifier: compact batch-STARK context + full submission verify
 // ---------------------------------------------------------------------------
 
-/// The verifier-owned compact setup (~1 GB resident) plus the pinned
-/// 40-byte verifier-key digest derived from it.
+/// The verifier-owned compact setup plus the pinned 40-byte verifier-key
+/// digest derived from it. (~1 GB serialized up to pin c8d6b13e; from
+/// ed1edfcc upstream keeps only common verifier data in it, well under 1 MB.)
 ///
 /// The digest is re-derived from the context's own metadata/FRI binding via
 /// `validate_setup_binding` on every load — the context file is
@@ -583,8 +610,8 @@ impl AiVerifier {
     /// one is for a different constraint system). A new pin simply misses
     /// this path and rebuilds by proving (~25 s) on the first submission —
     /// rotation is automatic, old blobs are inert leftovers — which
-    /// [`sweep_stale_contexts`] deletes at boot, because they are ~1 GB
-    /// each and two accumulate per re-pin.
+    /// [`sweep_stale_contexts`] deletes at boot, because two accumulate
+    /// per re-pin (and the pre-ed1edfcc ones are ~1 GB each).
     pub fn context_path(data_dir: &Path) -> PathBuf {
         data_dir.join(format!(
             "aipow-verifier-context-{}.bin",
@@ -615,6 +642,7 @@ impl AiVerifier {
         let digest = context
             .validate_setup_binding()
             .map_err(|e| format!("verifier context failed setup binding: {e:?}"))?;
+        require_hardened(context.proof_rules())?;
         Ok(Self {
             pinned_digest: compact_batch_verifier_key_digest_to_bytes(&digest),
             context,
@@ -641,11 +669,30 @@ impl AiVerifier {
     }
 }
 
+/// Refuse a verifier context that is not `ProofRules::Hardened`.
+///
+/// Mainnet has admitted only Hardened AI certificates since height 154,500;
+/// Legacy ones are inadmissible. The registry verifies against its own
+/// context, so the context's rules are the registry's rules: Hardened, or the
+/// AI track does not boot. Loaded or built, both statements check this, so a
+/// Legacy blob provisioned onto the volume — or an upstream default that
+/// drifted — fails loudly at the first submission instead of admitting
+/// certificates mainnet would reject.
+pub fn require_hardened(rules: ProofRules) -> Result<(), String> {
+    match rules {
+        ProofRules::Hardened => Ok(()),
+        other => Err(format!(
+            "verifier context uses {other:?} proof rules; mainnet requires Hardened (height >= 154,500)"
+        )),
+    }
+}
+
 /// Delete verifier-context blobs left behind by earlier pins.
 ///
-/// Contexts are pin-scoped (~1 GB each, two per pin once the MoE
-/// statement is in play), so without a sweep every re-pin adds ~2 GB to
-/// a 5 GB volume. Stale blobs are inert: nothing re-verifies a stored
+/// Contexts are pin-scoped (two per pin once the MoE statement is in
+/// play; ~1 GB each up to pin c8d6b13e, well under 1 MB from ed1edfcc), so
+/// without a sweep every re-pin used to add ~2 GB to a 5 GB volume. Stale
+/// blobs are inert: nothing re-verifies a stored
 /// run — verification happens once, at submission — and a context for
 /// any pin can be rebuilt by proving. Deleting is therefore safe and
 /// the only thing standing between us and a full disk.
@@ -848,6 +895,13 @@ pub fn verify_submission(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_hardened_contexts_are_accepted() {
+        assert!(require_hardened(ProofRules::Hardened).is_ok());
+        let err = require_hardened(ProofRules::Legacy).unwrap_err();
+        assert!(err.contains("Legacy") && err.contains("154,500"), "{err}");
+    }
 
     /// Locks the nonce→challenge derivation. If either assertion breaks,
     /// AI_CHALLENGE_DOMAIN must be version-bumped — silently changing the
@@ -1092,6 +1146,8 @@ mod tests {
         });
         let run: AiRunRecord = serde_json::from_value(legacy).unwrap();
         assert_eq!(run.statement, Statement::Dense);
+        // …and, written before pin ed1edfcc, was verified under legacy rules.
+        assert_eq!(run.rules, AiRules::Legacy);
         // …and a round-trip through the record now carries it explicitly.
         let v = serde_json::to_value(&run).unwrap();
         assert_eq!(v["statement"], "dense");
@@ -1140,6 +1196,11 @@ mod tests {
         assert_eq!(reloaded.runs(), store.runs());
         let statements: Vec<Statement> = reloaded.runs().iter().map(|r| r.statement).collect();
         assert_eq!(statements, vec![Statement::Dense, Statement::CanonicalMoe]);
+        // Every run this binary commits is stamped with the server's rules,
+        // and the stamp is on disk, not recomputed at load.
+        assert!(reloaded.runs().iter().all(|r| r.rules == AiRules::Hardened));
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(raw.matches(r#""rules":"hardened""#).count(), 2, "{raw}");
         std::fs::remove_file(&path).unwrap();
     }
 

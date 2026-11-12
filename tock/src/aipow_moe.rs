@@ -7,7 +7,7 @@
 //! tile, matrices synthesized from the challenge. That is a real AI-PoW
 //! workload, but it is not the one `ai-pow-mine` submits: the production
 //! gateway-free miner grinds the **canonical MoE (GROUPED_GEMM) block**
-//! (`ai_pow_miner::canonical`), and the upcoming CUDA backend accelerates
+//! (`ai_pow_miner::reference`), and the upcoming CUDA backend accelerates
 //! exactly that. So this module adds the canonical statement as a peer of the
 //! dense one inside the ONE AI track, not as a third leaderboard: consensus
 //! itself compares heterogeneous AI work in MAC-equivalents (`ai_pow::
@@ -37,7 +37,7 @@
 //!
 //! The dense benchmark compares `jackpot ≤ T_b` with no shape factor —
 //! `T_b` is the effective threshold directly. The canonical path does NOT:
-//! `ai_pow_miner::run::canonical_grind_threshold` is
+//! `ai_pow_miner::run::reference_grind_threshold` is
 //! `effective_jackpot_threshold(target, F) = target · F`, the same value the
 //! consensus verifier derives via `PearlPublicProofParams::
 //! nockchain_adjusted_target` (pinned equal upstream by
@@ -62,12 +62,12 @@ use ai_pow::pearl_compat::{
 use ai_pow::pearl_moe_routing::{build_routing_data, RoutingData};
 use ai_pow::synth::{synth_matrices, AI_POW_PROD_SYNTH_SEED};
 use ai_pow::tile_hash::hash_le_target;
-use ai_pow_miner::canonical::{
-    canonical_mining_config, canonical_public_params, evaluate_canonical_moe_jackpot,
-    prove_canonical_moe_block_at, PreparedCanonicalMoeTemplate,
+use ai_pow_miner::reference::{
+    reference_mining_config, reference_public_params, evaluate_reference_moe_jackpot,
+    prove_reference_moe_block_at, PreparedReferenceMoeTemplate,
 };
 use ai_pow_miner::certificate_noun::AiProofNode;
-use ai_pow_miner::run::canonical_grind_threshold;
+use ai_pow_miner::run::reference_grind_threshold;
 use ai_pow_zk::composite_public::CompositePublicInputs;
 use serde::{Deserialize, Serialize};
 
@@ -107,7 +107,7 @@ pub const AI_MOE_MAX_PATTERN_LEN: usize = 4096;
 /// [`crate::aipow::AI_NONCE_RULE`]. `v3` names the production Pearl **V3**
 /// statement this rule belongs to: the attempt selector is a u32 ordinal that
 /// offsets the synthetic Pearl header timestamp
-/// (`PreparedCanonicalMoeTemplate::header_for`). It is NOT an 8-byte
+/// (`PreparedReferenceMoeTemplate::header_for`). It is NOT an 8-byte
 /// little-endian nonce and must never be encoded as one. Versioned; the
 /// registry advertises it on the challenge and clients must match it.
 pub const AI_MOE_NONCE_RULE: &str = "canonical-ordinal-v3";
@@ -153,11 +153,11 @@ pub fn moe_shape_work_factor() -> Result<u128, String> {
 // ---------------------------------------------------------------------------
 
 /// The effective jackpot threshold `Θ = T · F` for the canonical shape —
-/// upstream's [`canonical_grind_threshold`], used unchanged so the benchmark's
+/// upstream's [`reference_grind_threshold`], used unchanged so the benchmark's
 /// accept predicate is byte-for-byte the miner's (and, transitively, the
 /// consensus verifier's).
 pub fn moe_threshold(target: &[u8; 32]) -> Result<[u8; 32], String> {
-    canonical_grind_threshold(target).map_err(|e| e.to_string())
+    reference_grind_threshold(target).map_err(|e| e.to_string())
 }
 
 /// The calibrated canonical-MoE benchmark target `T_b = 2^224`.
@@ -264,7 +264,7 @@ pub struct AiMoeChallenge {
 /// canonical path the ENTIRE statement — header, mining config, matrix
 /// commitments, routing, opened indices, jackpot — is a deterministic function
 /// of `(challenge, ordinal)`, so the registry re-derives all of it with
-/// `canonical_moe_statement_parts` and needs nothing from the prover but the
+/// `reference_moe_statement_parts` and needs nothing from the prover but the
 /// certificate and its Layer-0 public inputs. Even `trace_height` is omitted:
 /// the verify path recomputes it from the re-derived opened schedule, so
 /// carrying a claimed one would only add trust surface.
@@ -325,7 +325,7 @@ pub fn dev_challenge() -> [u8; 32] {
 
 /// Grind ordinals 0, 1, 2, … strictly ascending until `k` jackpot wins.
 ///
-/// Uses [`PreparedCanonicalMoeTemplate`] — upstream's own search template,
+/// Uses [`PreparedReferenceMoeTemplate`] — upstream's own search template,
 /// which hoists the schedule and the (challenge-independent) matrices and
 /// recomputes every attempt-dependent value: `kappa`, both matrix commitments,
 /// both noise seeds, both noised strips, the tile matmul and the jackpot. There
@@ -333,21 +333,21 @@ pub fn dev_challenge() -> [u8; 32] {
 /// (`canonical_extranonce_forces_fresh_tile_inference`).
 ///
 /// Every winner is re-checked against the scalar oracle
-/// [`evaluate_canonical_moe_jackpot`] before it is allowed to reach the prover,
+/// [`evaluate_reference_moe_jackpot`] before it is allowed to reach the prover,
 /// mirroring `grind_canonical_block_with_backend` — the same guard that keeps a
 /// (future, Phase B2) GPU backend from reporting a jackpot the CPU disagrees
 /// with.
 pub fn grind_moe(ch: &AiMoeChallenge) -> MoeGrindResult {
     assert!(ch.k >= 1, "k must be at least 1");
     let threshold = moe_threshold(&ch.target).expect("canonical grind threshold");
-    let template = PreparedCanonicalMoeTemplate::new(
+    let template = PreparedReferenceMoeTemplate::new(
         &AI_MOE_PARAMS,
         AI_MOE_HW,
         AI_MOE_E,
         AI_MOE_TOP_K,
         ch.challenge,
     )
-    .expect("PreparedCanonicalMoeTemplate::new");
+    .expect("PreparedReferenceMoeTemplate::new");
     let mut scratch = template.scratch();
 
     let t0 = Instant::now();
@@ -360,7 +360,7 @@ pub fn grind_moe(ch: &AiMoeChallenge) -> MoeGrindResult {
         if hash_le_target(&out.jackpot_hash, &threshold) {
             // Scalar-oracle recheck: the template's batched transcript must
             // agree with the standalone evaluator the prover will certify.
-            let oracle = evaluate_canonical_moe_jackpot(
+            let oracle = evaluate_reference_moe_jackpot(
                 &AI_MOE_PARAMS,
                 AI_MOE_HW,
                 AI_MOE_E,
@@ -406,14 +406,14 @@ pub fn grind_moe(ch: &AiMoeChallenge) -> MoeGrindResult {
 /// (and skipping the comparison removes any chance of a throwaway win reaching
 /// the prover).
 pub fn calibrate_moe_attempts_per_sec(budget: Duration) -> f64 {
-    let template = PreparedCanonicalMoeTemplate::new(
+    let template = PreparedReferenceMoeTemplate::new(
         &AI_MOE_PARAMS,
         AI_MOE_HW,
         AI_MOE_E,
         AI_MOE_TOP_K,
         dev_challenge(),
     )
-    .expect("PreparedCanonicalMoeTemplate::new");
+    .expect("PreparedReferenceMoeTemplate::new");
     let mut scratch = template.scratch();
     let t0 = Instant::now();
     let mut attempts: u64 = 0;
@@ -437,7 +437,7 @@ pub fn calibrate_moe_attempts_per_sec(budget: Duration) -> f64 {
 /// minted, for the reason [`calibrate_moe_attempts_per_sec`] gives.
 /// [`crate::aipow::tier_for_prove_ratio`] is denominated in this number.
 ///
-/// Simpler than the dense peer in one respect: [`prove_canonical_moe_block_at`]
+/// Simpler than the dense peer in one respect: [`prove_reference_moe_block_at`]
 /// takes no target at all — the canonical statement is a function of
 /// `(challenge, ordinal)` alone — so the throwaway needs no contrived win, just
 /// [`dev_challenge`] at ordinal 0. The block is dropped on return.
@@ -447,7 +447,7 @@ pub fn calibrate_moe_attempts_per_sec(budget: Duration) -> f64 {
 /// host and not of the backend.
 pub fn calibrate_moe_prove_secs() -> f64 {
     let t0 = Instant::now();
-    prove_canonical_moe_block_at(
+    prove_reference_moe_block_at(
         &AI_MOE_PARAMS,
         AI_MOE_HW,
         AI_MOE_E,
@@ -465,7 +465,7 @@ pub fn calibrate_moe_prove_secs() -> f64 {
 
 /// Prove a canonical MoE block per winning ordinal (~25-30 s each on CPU).
 ///
-/// Uses upstream's [`prove_canonical_moe_block_at`] verbatim — the same call
+/// Uses upstream's [`prove_reference_moe_block_at`] verbatim — the same call
 /// the gateway-free production miner makes on a jackpot hit — so the certified
 /// statement is byte-identical to a real submission's. Note it exposes no
 /// prover-cache reuse (unlike the dense path's
@@ -475,7 +475,7 @@ pub fn prove_moe_wins(ch: &AiMoeChallenge, win_ordinals: &[u32]) -> Vec<AiMoeWin
     let mut wins = Vec::with_capacity(win_ordinals.len());
     for &ordinal in win_ordinals {
         let t0 = Instant::now();
-        let block = prove_canonical_moe_block_at(
+        let block = prove_reference_moe_block_at(
             &AI_MOE_PARAMS,
             AI_MOE_HW,
             AI_MOE_E,
@@ -537,14 +537,14 @@ pub fn run(ch: &AiMoeChallenge) -> AiMoeBenchSummary {
 ///
 /// Exists for exactly one caller: the registry's build-by-proving of its
 /// canonical-MoE compact verifier context. Upstream's `canonical_moe_inputs` is
-/// private and `prove_canonical_moe_block_at` discards the verifier context it
+/// private and `prove_reference_moe_block_at` discards the verifier context it
 /// produced, so the context cannot be obtained through the public miner API.
 ///
 /// Everything fragile is still taken from the crate rather than restated: the
 /// synthetic Pearl header (with its aux commitment and coinbase merkle root —
 /// the part that binds our challenge) comes from
-/// [`canonical_public_params`], the mining config from
-/// [`canonical_mining_config`], the commitments from
+/// [`reference_public_params`], the mining config from
+/// [`reference_mining_config`], the commitments from
 /// `derive_pearl_moe_work_commitments`. Only the routing/pattern schedule is
 /// re-expressed, and `tests::prove_inputs_match_the_crate` pins that against the
 /// crate's own ticket.
@@ -571,7 +571,7 @@ pub fn moe_prove_inputs(challenge: &[u8; 32], ordinal: u32) -> Result<MoeProveIn
         return Err(format!("n={n} not divisible by e={AI_MOE_E}"));
     }
     let n_e = n / AI_MOE_E;
-    let config = canonical_mining_config(&params, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K);
+    let config = reference_mining_config(&params, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K);
     // Round-robin token→expert assignment, upstream's `canonical_moe_schedule`.
     let topk: Vec<u32> = (0..m).map(|t| (t % AI_MOE_E) as u32).collect();
     let routing = build_routing_data(&topk, m, AI_MOE_TOP_K, AI_MOE_E)
@@ -589,7 +589,7 @@ pub fn moe_prove_inputs(challenge: &[u8; 32], ordinal: u32) -> Result<MoeProveIn
     // matrices (the dense path is the other way round).
     let (a, b) = synth_matrices(AI_POW_PROD_SYNTH_SEED, &params);
     let header =
-        canonical_public_params(&params, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K, *challenge, ordinal)
+        reference_public_params(&params, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K, *challenge, ordinal)
             .map_err(|e| format!("canonical public params: {e}"))?
             .block_header;
     let mu = config.to_bytes().map_err(|e| format!("config bytes: {e:?}"))?;
@@ -620,7 +620,7 @@ pub fn moe_prove_inputs(challenge: &[u8; 32], ordinal: u32) -> Result<MoeProveIn
 
 #[cfg(test)]
 mod tests {
-    use ai_pow_miner::canonical::{canonical_moe_statement_parts, evaluate_canonical_moe_ticket};
+    use ai_pow_miner::reference::{reference_moe_statement_parts, evaluate_reference_moe_ticket};
 
     use super::*;
 
@@ -648,9 +648,9 @@ mod tests {
         // the verifier's route. Upstream pins miner == verifier; this pins
         // OUR constant == both.
         let config =
-            canonical_mining_config(&AI_MOE_PARAMS, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K);
+            reference_mining_config(&AI_MOE_PARAMS, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K);
         assert_eq!(config.shape_work_factor().expect("config factor"), f);
-        let public = canonical_public_params(
+        let public = reference_public_params(
             &AI_MOE_PARAMS, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K, [0x5a; 32], 0,
         )
         .expect("canonical public params");
@@ -664,7 +664,7 @@ mod tests {
     /// and the routing the crate itself produces.
     #[test]
     fn canonical_shape_matches_upstream() {
-        let (public, moe_art) = canonical_moe_statement_parts(
+        let (public, moe_art) = reference_moe_statement_parts(
             &AI_MOE_PARAMS, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K, [0x42; 32], 0,
         )
         .expect("statement parts");
@@ -681,7 +681,7 @@ mod tests {
 
     /// **Threshold semantics: SCALED here, RAW on the dense path.**
     ///
-    /// `canonical_grind_threshold(T)` must equal `T · F` and must equal the
+    /// `reference_grind_threshold(T)` must equal `T · F` and must equal the
     /// consensus verifier's `nockchain_adjusted_target(T)` — never `T` itself.
     /// The dense benchmark compares against `T` unscaled, so the same `T` means
     /// two different amounts of work on the two statements; conflating them is
@@ -698,7 +698,7 @@ mod tests {
         assert_ne!(theta, target, "the canonical threshold is NOT the raw target");
 
         // …and it is exactly what the consensus verifier derives.
-        let public = canonical_public_params(
+        let public = reference_public_params(
             &AI_MOE_PARAMS, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K, [0x5a; 32], 0,
         )
         .expect("public params");
@@ -758,7 +758,7 @@ mod tests {
     #[test]
     #[ignore]
     fn moe_grind_rate() {
-        let template = PreparedCanonicalMoeTemplate::new(
+        let template = PreparedReferenceMoeTemplate::new(
             &AI_MOE_PARAMS, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K, [0x5a; 32],
         )
         .expect("template");
@@ -795,7 +795,7 @@ mod tests {
         assert_ne!(AI_MOE_NONCE_RULE, crate::aipow::AI_NONCE_RULE);
         assert_eq!(AI_MOE_NONCE_RULE, "canonical-ordinal-v3");
 
-        let template = PreparedCanonicalMoeTemplate::new(
+        let template = PreparedReferenceMoeTemplate::new(
             &AI_MOE_PARAMS, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K, [0x33; 32],
         )
         .expect("template");
@@ -827,11 +827,11 @@ mod tests {
         let challenge = [0x42u8; 32];
         for ordinal in [0u32, 1, 7] {
             let inputs = moe_prove_inputs(&challenge, ordinal).expect("prove inputs");
-            let ticket = evaluate_canonical_moe_ticket(
+            let ticket = evaluate_reference_moe_ticket(
                 &AI_MOE_PARAMS, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K, challenge, ordinal,
             )
             .expect("crate ticket");
-            let (public, moe_art) = canonical_moe_statement_parts(
+            let (public, moe_art) = reference_moe_statement_parts(
                 &AI_MOE_PARAMS, AI_MOE_HW, AI_MOE_E, AI_MOE_TOP_K, challenge, ordinal,
             )
             .expect("statement parts");

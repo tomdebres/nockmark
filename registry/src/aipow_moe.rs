@@ -36,7 +36,7 @@
 //! commitment. We never receive a statement at all. The registry RE-DERIVES the
 //! entire canonical statement — synthetic Pearl header, mining config, matrix
 //! commitments, routing, opened indices, and the jackpot — from
-//! `(challenge, ordinal)` with `canonical_moe_statement_parts`, and the
+//! `(challenge, ordinal)` with `reference_moe_statement_parts`, and the
 //! submission carries only the certificate and its Layer-0 public inputs. There
 //! is no aux-binding step here because there is nothing prover-supplied left to
 //! bind: the challenge is ours, the ordinal is ours, and everything downstream
@@ -44,12 +44,12 @@
 
 use std::path::{Path, PathBuf};
 
-use ai_pow::pearl_compat::verify_pearl_moe_compatible_work;
+use ai_pow::pearl_compat::{verify_pearl_moe_compatible_work_with_limits, PearlAdmissionLimits};
 use ai_pow::zk_bridge::{
     prove_pearl_moe_compact_recursive_certificate, verify_pearl_moe_compact_recursive_certificate,
     PearlMoeCompactProveRun,
 };
-use ai_pow_miner::canonical::canonical_moe_statement_parts;
+use ai_pow_miner::reference::reference_moe_statement_parts;
 use ai_pow_zk::recursion::{
     compact_batch_verifier_key_digest_to_bytes, decode_compact_batch_recursive_certificate,
     encode_compact_batch_recursive_certificate, AiPowCompactBatchVerifierContext,
@@ -148,10 +148,21 @@ impl AiMoeVerifier {
         let digest = context
             .validate_setup_binding()
             .map_err(|e| format!("moe verifier context failed setup binding: {e:?}"))?;
+        crate::aipow::require_hardened(context.proof_rules())?;
         Ok(Self {
             pinned_digest: compact_batch_verifier_key_digest_to_bytes(&digest),
             context,
         })
+    }
+
+    /// The verifier-owned compact setup (for consensus cross-checks in tests).
+    pub fn context(&self) -> &AiPowCompactBatchVerifierContext {
+        &self.context
+    }
+
+    /// The 40-byte verifier-key digest this registry pins.
+    pub fn pinned_digest(&self) -> &[u8; AI_POW_COMPACT_BATCH_VERIFIER_KEY_DIGEST_BYTES] {
+        &self.pinned_digest
     }
 
     /// Verify one canonical-MoE win end-to-end (blocking): see
@@ -177,7 +188,7 @@ impl AiMoeVerifier {
 /// Build the canonical-MoE compact verifier context by proving one throwaway
 /// canonical block, then persist it for the next boot.
 ///
-/// Upstream's `prove_canonical_moe_block_at` discards the verifier context it
+/// Upstream's `prove_reference_moe_block_at` discards the verifier context it
 /// produced and the variant that returns it is `#[cfg(test)] pub(crate)`, so
 /// the context is reached through `zk_bridge`'s prover with the canonical
 /// inputs assembled by [`moe_prove_inputs`]. Before the context is persisted it
@@ -264,9 +275,12 @@ fn build_context_by_proving(path: &Path) -> Result<AiPowCompactBatchVerifierCont
 ///    header (whose coinbase carries this challenge as the aux commitment),
 ///    mining config, `H_A`/`H_B`, routing, opened indices, and the real
 ///    `hash_jackpot`. Nothing here comes from the client.
-/// 3. `verify_pearl_moe_compatible_work`: MoE envelope, routing-consistency
-///    binding, and the difficulty gate `jackpot ≤ target · F` — the SCALED
-///    comparison, unlike the dense track's raw one.
+/// 3. `verify_pearl_moe_compatible_work_with_limits` under mainnet's current
+///    admission (`CONSENSUS_BATCH`, height ≥ 170,000): MoE envelope,
+///    routing-consistency binding, exact routing multiplicity (every token
+///    routed exactly `top_k` times), and the difficulty gate
+///    `jackpot ≤ target · F` — the SCALED comparison, unlike the dense
+///    track's raw one.
 /// 4. Bind `pis.hash_jackpot` to the statement's jackpot, so the gate in (3) is
 ///    about the tile the certificate actually proves.
 /// 5. Pin check: both the certificate and the verifier context must declare the
@@ -296,7 +310,7 @@ pub fn verify_moe_submission(
     }
 
     // (2) Re-derive the statement from trusted data only.
-    let (public, moe_art) = canonical_moe_statement_parts(
+    let (public, moe_art) = reference_moe_statement_parts(
         &AI_MOE_PARAMS,
         AI_MOE_HW,
         AI_MOE_E,
@@ -306,14 +320,16 @@ pub fn verify_moe_submission(
     )
     .map_err(|e| format!("statement re-derivation: {e}"))?;
 
-    // (3) The node's MoE work precheck: envelope + routing binding + the
-    //     jackpot difficulty gate at `target · F`.
-    let work = verify_pearl_moe_compatible_work(
+    // (3) The node's MoE work precheck under mainnet's current admission
+    //     (consensus batch, height >= 170,000): envelope + routing binding +
+    //     exact routing multiplicity + the jackpot gate at `target · F`.
+    let work = verify_pearl_moe_compatible_work_with_limits(
         &public,
         &moe_art.moe,
         &moe_art.routing_data,
         target,
         AI_MOE_MAX_PATTERN_LEN,
+        PearlAdmissionLimits::CONSENSUS_BATCH,
     )
     .map_err(|e| format!("moe work precheck: {e:?}"))?;
 

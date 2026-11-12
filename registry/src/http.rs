@@ -30,6 +30,11 @@ pub struct LeaderboardEntry {
     pub proofs_per_sec: f64,
     /// k / client-reported elapsed_ms — informational only.
     pub self_reported_pps: f64,
+    /// The consensus era the row's unit belongs to. Every ZK row so far
+    /// measures complete %3 STARK proofs/sec, the mining unit before
+    /// Anthropos (height 147,500) made a ZK attempt one Tip5 hash, so all of
+    /// them are `pre-anthropos`, whatever pin proved them.
+    pub rules: &'static str,
     // No earnings fields. Every row here is complete %3 proofs/sec from a
     // pre-Anthropos pin, and since height 147,500 a ZK mining attempt is one
     // Tip5 hash: there is nothing to price it against
@@ -37,6 +42,9 @@ pub struct LeaderboardEntry {
     // M7 these rows printed est_nock_per_day ≈ 0 and a network_share; both
     // were artefacts of dividing proofs by hashes.
 }
+
+/// [`LeaderboardEntry::rules`] for every ZK proofs/sec row.
+pub const ZK_PROOF_ROW_RULES: &str = "pre-anthropos";
 
 fn round4(x: f64) -> f64 {
     (x * 10_000.0).round() / 10_000.0
@@ -52,6 +60,7 @@ fn to_entry(run: RunRecord) -> LeaderboardEntry {
         server_window_ms,
         proofs_per_sec,
         self_reported_pps,
+        rules: ZK_PROOF_ROW_RULES,
     }
 }
 
