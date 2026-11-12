@@ -118,7 +118,8 @@ uses that embedded kernel (tock reads `--kernel` at run time), so
 (`ai_pow_miner::PEAK_PRODUCTION_PARAMS`: m=4096, k=8192, n=32768, r=512, 16×16
 tiles) through upstream's own code: `PreparedReferenceDenseTemplate`, the CPU
 `CpuSearchBackend::search_dense` (or, with `--features gpu --gpu`, the #159
-peak kernel via `MultiGpuPeakSearchBackend::search_peak`), and
+peak kernel via `MultiGpuPeakSearchBackend::search_peak` — compute capability
+12.0 only, i.e. an RTX 5090; a 3090 gets CUDA status 801), and
 `prove_with_rules(Hardened)`, with the first win's prover setup reused for the
 rest. Each win is submitted as the jammed `%ai-pow` artifact.
 

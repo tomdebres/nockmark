@@ -82,7 +82,9 @@ transcript serves 2¹⁹ tiles. Dense-peak challenges therefore live 3 h instead
 of 1 h.
 
 On an NVIDIA GPU, `--gpu` grinds the canonical-MoE statement on upstream's
-CUDA backend, and the dense-peak statement on upstream's #159 peak kernel. It needs a build with the `gpu` feature, which requires `nvcc`
+CUDA backend, and the dense-peak statement on upstream's #159 peak kernel —
+which runs only on compute capability 12.0 (RTX 5090 class); upstream's kernel
+refuses other cards. It needs a build with the `gpu` feature, which requires `nvcc`
 (the feature is off by default so CPU-only machines build unchanged), and the
 arch flags for your card — `compute_86`/`sm_86` for Ampere, `compute_89`/
 `sm_89` for Ada, `compute_120`/`sm_120` for Blackwell:
