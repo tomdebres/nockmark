@@ -356,7 +356,20 @@ pub fn target_for_attempts(
     attempts: u64,
     expected: impl Fn(&[u8; 32]) -> f64,
 ) -> Option<[u8; 32]> {
-    if attempts != grant_attempts(attempts) {
+    target_for_granted_tier(attempts, grant_attempts, expected)
+}
+
+/// [`target_for_attempts`] for a statement with its OWN tier range: `grant` is
+/// that statement's clamp-and-round rule (e.g.
+/// [`crate::aipow_peak::grant_peak_attempts`], whose ceiling is higher because
+/// a dense-peak attempt is a 16×16 tile and its challenges live 3 h). The
+/// inversion is the same function, so tier and score still cannot disagree.
+pub fn target_for_granted_tier(
+    attempts: u64,
+    grant: impl Fn(u64) -> u64,
+    expected: impl Fn(&[u8; 32]) -> f64,
+) -> Option<[u8; 32]> {
+    if attempts != grant(attempts) {
         return None;
     }
     let want = attempts as f64;
@@ -381,10 +394,19 @@ pub fn target_for_attempts(
 /// fixed grind budget by `k`, which is precisely how raising `k` used to make
 /// the proving share of the window grow.
 pub fn tier_for_prove_ratio(attempts_per_sec: f64, prove_secs: f64) -> u64 {
+    tier_for_prove_ratio_with(attempts_per_sec, prove_secs, grant_attempts)
+}
+
+/// [`tier_for_prove_ratio`] under a statement's own tier range (`grant`).
+pub fn tier_for_prove_ratio_with(
+    attempts_per_sec: f64,
+    prove_secs: f64,
+    grant: impl Fn(u64) -> u64,
+) -> u64 {
     let per_win = attempts_per_sec * AI_TIER_PROVE_RATIO * prove_secs;
     // `as u64` saturates on overflow; the NaN guard is the only case it does
-    // not cover, and [`grant_attempts`] clamps both ends regardless.
-    grant_attempts(if per_win.is_finite() && per_win > 0.0 {
+    // not cover, and `grant` clamps both ends regardless.
+    grant(if per_win.is_finite() && per_win > 0.0 {
         per_win as u64
     } else {
         0

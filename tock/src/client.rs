@@ -229,6 +229,9 @@ pub enum AiStatement {
     Dense,
     /// The canonical MoE block mainnet miners run ([`crate::aipow_moe`]).
     CanonicalMoe,
+    /// Mainnet's production dense shape, ground by the #159 peak kernel
+    /// ([`crate::aipow_peak`]).
+    DensePeak,
 }
 
 impl AiStatement {
@@ -236,6 +239,7 @@ impl AiStatement {
         match self {
             Self::Dense => crate::aipow_moe::STATEMENT_DENSE,
             Self::CanonicalMoe => crate::aipow_moe::STATEMENT_CANONICAL_MOE,
+            Self::DensePeak => crate::aipow_peak::STATEMENT_DENSE_PEAK,
         }
     }
 
@@ -243,8 +247,9 @@ impl AiStatement {
         match s {
             crate::aipow_moe::STATEMENT_DENSE => Ok(Self::Dense),
             crate::aipow_moe::STATEMENT_CANONICAL_MOE => Ok(Self::CanonicalMoe),
+            crate::aipow_peak::STATEMENT_DENSE_PEAK => Ok(Self::DensePeak),
             other => Err(format!(
-                "unknown AI statement {other:?} (expected \"dense\" or \"canonical-moe\")"
+                "unknown AI statement {other:?} (expected \"dense\", \"canonical-moe\" or \"dense-peak\")"
             )),
         }
     }
@@ -256,6 +261,7 @@ impl AiStatement {
         match self {
             Self::Dense => crate::aipow::AI_NONCE_RULE,
             Self::CanonicalMoe => crate::aipow_moe::AI_MOE_NONCE_RULE,
+            Self::DensePeak => crate::aipow_peak::AI_PEAK_NONCE_RULE,
         }
     }
 
@@ -273,6 +279,9 @@ impl AiStatement {
             Self::CanonicalMoe => {
                 crate::aipow_moe::expected_attempts_per_moe_win(target).unwrap_or(1.0)
             }
+            Self::DensePeak => {
+                crate::aipow_peak::expected_attempts_per_peak_win(target).unwrap_or(1.0)
+            }
         }
     }
 
@@ -285,7 +294,20 @@ impl AiStatement {
     /// same way, by inverting its own scoring function, and the client simply
     /// uses what it sent back. `None` unless `attempts` is a granted tier.
     pub fn target_for_attempts(self, attempts: u64) -> Option<[u8; 32]> {
-        crate::aipow::target_for_attempts(attempts, |t| self.expected_attempts_per_win(t))
+        crate::aipow::target_for_granted_tier(
+            attempts,
+            |n| self.grant_attempts(n),
+            |t| self.expected_attempts_per_win(t),
+        )
+    }
+
+    /// This statement's tier rule: `[2^12, 2^30]` for dense and canonical-MoE,
+    /// `[2^12, 2^36]` for dense-peak (see `aipow_peak::AI_PEAK_ATTEMPTS_MAX`).
+    pub fn grant_attempts(self, requested: u64) -> u64 {
+        match self {
+            Self::Dense | Self::CanonicalMoe => crate::aipow::grant_attempts(requested),
+            Self::DensePeak => crate::aipow_peak::grant_peak_attempts(requested),
+        }
     }
 }
 
@@ -524,7 +546,8 @@ mod tests {
     fn ai_statement_wire_values_and_dense_body_is_unchanged() {
         assert_eq!(AiStatement::Dense.as_str(), "dense");
         assert_eq!(AiStatement::CanonicalMoe.as_str(), "canonical-moe");
-        for st in [AiStatement::Dense, AiStatement::CanonicalMoe] {
+        assert_eq!(AiStatement::DensePeak.as_str(), "dense-peak");
+        for st in [AiStatement::Dense, AiStatement::CanonicalMoe, AiStatement::DensePeak] {
             assert_eq!(AiStatement::parse(st.as_str()).unwrap(), st);
         }
         assert!(AiStatement::parse("sparse").is_err());

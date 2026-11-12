@@ -108,6 +108,31 @@ embeds a miner jam at build time and fails the build without one. Nothing here
 uses that embedded kernel (tock reads `--kernel` at run time), so
 `Cargo.toml` patches it to an empty stub (`stub/kernels-open-miner`).
 
+## AI track: dense-peak
+
+`ai-bench --statement dense-peak` benchmarks mainnet's production AI shape
+(`ai_pow_miner::PEAK_PRODUCTION_PARAMS`: m=4096, k=8192, n=32768, r=512, 16×16
+tiles) through upstream's own code: `PreparedReferenceDenseTemplate`, the CPU
+`CpuSearchBackend::search_dense` (or, with `--features gpu --gpu`, the #159
+peak kernel via `MultiGpuPeakSearchBackend::search_peak`), and
+`prove_with_rules(Hardened)`, with the first win's prover setup reused for the
+rest. Each win is submitted as the jammed `%ai-pow` artifact.
+
+```sh
+cargo build --release
+./target/release/tock ai-bench --statement dense-peak -k 1          # local, self-calibrated
+./target/release/tock ai-bench --statement dense-peak --submit https://nockmark.xyz
+```
+
+An attempt is one 16×16 tile (F = 2²¹ MAC-equivalents); an extranonce holds
+2¹⁹ of them, and the attempt index is `extranonce · 2^19 + tile`. Measured on
+an M1 Max (10 cores, 32 GB) at ed1edfcc: grind 136–142 k tiles/s (2.9×10¹¹
+MAC-equivalents/s, ~2.5×10¹¹ including the per-extranonce transcript), 0.6 s
+per transcript, certificates 72–76 s cold and 61–64 s warm, peak RSS 12 GB
+(15 GB holding the reusable setup), artifacts ~147 KB. The calibration proves
+one throwaway certificate before minting, so budget ~2 minutes and that
+memory before the run starts.
+
 ## Complete-proof bench (pre-Anthropos `%3`)
 
 `tock bench` times complete `%3` proofs — the ZK mining unit until block

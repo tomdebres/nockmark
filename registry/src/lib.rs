@@ -6,6 +6,8 @@
 //! hash-rate track (`zkv5`), which replaced complete-proof ZK submissions.
 pub mod aipow;
 pub mod aipow_moe;
+/// M7 step 4: dense-peak verification (mainnet's production AI shape).
+pub mod aipow_peak;
 pub mod economics;
 pub mod http;
 /// Append-only JSONL for the run stores, safe against torn writes.

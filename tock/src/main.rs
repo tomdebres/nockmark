@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 use tock::aipow_gpu;
 #[cfg(feature = "zk-gpu")]
 use tock::zkv5_gpu;
-use tock::{aipow, aipow_moe, client, hardware, miner, nonce, zkv5};
+use tock::{aipow, aipow_moe, aipow_peak, client, hardware, miner, nonce, zkv5};
 use tock::miner::DEFAULT_POW_LEN;
 
 #[derive(Parser)]
@@ -118,8 +118,10 @@ enum Command {
     /// MAC-equivalents per second. `--gpu` moves the canonical-MoE grind (and
     /// nothing else) onto CUDA.
     AiBench {
-        /// Which statement to benchmark: `dense` (M5, single-tile) or
-        /// `canonical-moe` (the block mainnet AI miners actually run).
+        /// Which statement to benchmark: `dense` (M5, single-tile),
+        /// `canonical-moe` (the reference MoE block) or `dense-peak`
+        /// (mainnet's production dense shape, m=4096 k=8192 n=32768, 16x16
+        /// tiles; ~75 s and ~12-15 GB per certificate on an M1 Max).
         #[arg(long, default_value = "dense")]
         statement: String,
         /// 32-byte challenge, hex (the registry challenge lands here later).
@@ -158,7 +160,8 @@ enum Command {
         #[arg(long, value_name = "REGISTRY_URL")]
         submit: Option<String>,
         /// Grind on the CUDA backend instead of the CPU (`--statement
-        /// canonical-moe` only). Requires a build with the `gpu` feature:
+        /// canonical-moe` or `dense-peak`; dense-peak uses upstream's #159
+        /// peak kernel). Requires a build with the `gpu` feature:
         /// `cargo build --release --features gpu`. Only the jackpot SEARCH
         /// moves to the device — every win is still re-checked against the
         /// scalar oracle and certified by the CPU prover.
@@ -240,6 +243,12 @@ async fn main() {
             // Which backend grinds — settled before the calibration, because
             // the calibration must measure the backend that will do the work.
             let backend = resolve_backend(statement, gpu, gpu_batch);
+            if statement == client::AiStatement::DensePeak {
+                // Dense-peak calibrates on the same matrices and backend it
+                // then grinds with, so it resolves its own tier.
+                return ai_bench_peak(challenge, target, attempts, k, out_dir, submit, backend)
+                    .await;
+            }
             // Resolve the difficulty tier FIRST, before anything that starts a
             // clock: the calibration grind must not land inside the reported
             // grind window, nor (with --submit) inside the server window, which
@@ -252,6 +261,7 @@ async fn main() {
                 client::AiStatement::CanonicalMoe => {
                     ai_bench_moe(challenge, target, tier, k, out_dir, submit, backend).await
                 }
+                client::AiStatement::DensePeak => unreachable!("dispatched above"),
             }
         }
         Command::ZkBench {
@@ -569,11 +579,12 @@ fn resolve_backend(statement: client::AiStatement, gpu: bool, gpu_batch: Option<
         }
         return Backend::Cpu;
     }
-    if statement != client::AiStatement::CanonicalMoe {
+    if statement == client::AiStatement::Dense {
         eprintln!(
-            "--gpu is implemented for --statement {} only (asked for {:?}); \
+            "--gpu is implemented for --statement {} and {} only (asked for {:?}); \
              the dense statement has no validated CUDA path",
             aipow_moe::STATEMENT_CANONICAL_MOE,
+            aipow_peak::STATEMENT_DENSE_PEAK,
             statement.as_str()
         );
         std::process::exit(2);
@@ -621,7 +632,7 @@ fn resolve_tier(
     k: u64,
 ) -> Option<u64> {
     if let Some(requested) = attempts {
-        let granted = aipow::grant_attempts(requested);
+        let granted = statement.grant_attempts(requested);
         if granted != requested {
             eprintln!(
                 "--attempts {requested} rounded/clamped to the nearest tier: \
@@ -646,6 +657,7 @@ fn resolve_tier(
             aipow_gpu::calibrate_moe_attempts_per_sec(budget, batch_attempts)
         }
         (client::AiStatement::CanonicalMoe, _) => aipow_moe::calibrate_moe_attempts_per_sec(budget),
+        (client::AiStatement::DensePeak, _) => unreachable!("dense-peak calibrates in ai_bench_peak"),
     };
     // The prove half is chosen by STATEMENT and not by backend, because
     // certificates are proved on the CPU on every path — the GPU only grinds.
@@ -653,6 +665,7 @@ fn resolve_tier(
     let prove_secs = match statement {
         client::AiStatement::Dense => aipow::calibrate_prove_secs(),
         client::AiStatement::CanonicalMoe => aipow_moe::calibrate_moe_prove_secs(),
+        client::AiStatement::DensePeak => unreachable!("dense-peak calibrates in ai_bench_peak"),
     };
     // No k: the tier is sized per win against one certificate, and both halves
     // scale with k, so the grind/prove mix the board sees is the same at any k.
@@ -1014,6 +1027,212 @@ async fn ai_bench_moe(
                 })
                 .collect(),
             statement: Some(aipow_moe::STATEMENT_CANONICAL_MOE),
+        };
+        match client::submit_ai_run(base, &sub).await {
+            Ok(id) => {
+                println!("submitted: ai run {id}");
+                println!("  {}/runs/{id}?track=ai", base.trim_end_matches('/'));
+            }
+            Err(e) => {
+                eprintln!("submission failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+/// The dense-peak backend as printed: [`Backend::label`] names the canonical-MoE
+/// paths.
+fn peak_backend_label(backend: Backend) -> String {
+    match backend {
+        Backend::Cpu => format!(
+            "CPU, {} workers (upstream CpuSearchBackend::search_dense)",
+            ai_pow_miner::search::CpuSearchBackend::default_worker_count()
+        ),
+        #[cfg(feature = "gpu")]
+        Backend::Gpu { .. } => format!(
+            "CUDA device {} (upstream #159 peak kernel, search only)",
+            aipow_gpu::GPU_DEVICE_ORDINAL
+        ),
+    }
+}
+
+/// `tock ai-bench --statement dense-peak`: mainnet's production dense shape
+/// (see `tock::aipow_peak`). The same shape of run as [`ai_bench_moe`] —
+/// calibrate, mint at a tier, grind to k wins, prove each, submit — with three
+/// differences: the calibration needs the 288 MB production matrices and the
+/// grind backend, so it happens here rather than in [`resolve_tier`]; the
+/// tier range is dense-peak's own (`[2^12, 2^36]`); and its challenges live
+/// 3 h, because one certificate costs ~60-76 s on an M1 Max.
+async fn ai_bench_peak(
+    challenge: Option<String>,
+    target: Option<String>,
+    attempts: Option<u64>,
+    k: u64,
+    out_dir: Option<PathBuf>,
+    submit: Option<String>,
+    backend: Backend,
+) {
+    assert!(k >= 1, "k must be at least 1");
+    let statement = client::AiStatement::DensePeak;
+    let matrices = aipow_peak::PeakMatrices::synth();
+    let cpu = ai_pow_miner::search::CpuSearchBackend::default();
+    #[cfg(feature = "gpu")]
+    let gpu = match backend {
+        Backend::Gpu { .. } => Some(aipow_peak::gpu::backend(&matrices)),
+        Backend::Cpu => None,
+    };
+
+    // Tier: --attempts, else (unless --target) calibrate before anything is
+    // minted, exactly as resolve_tier does for the other statements.
+    let tier = match (attempts, target.is_some()) {
+        (Some(requested), _) => {
+            let granted = statement.grant_attempts(requested);
+            if granted != requested {
+                eprintln!(
+                    "--attempts {requested} rounded/clamped to the nearest tier: 2^{} ({granted})",
+                    granted.ilog2()
+                );
+            }
+            Some(granted)
+        }
+        (None, true) => None,
+        (None, false) => {
+            let budget = std::time::Duration::from_secs_f64(aipow::AI_CALIBRATION_SECS);
+            let rate = match &backend {
+                #[cfg(feature = "gpu")]
+                Backend::Gpu { .. } => aipow_peak::gpu::calibrate_attempts_per_sec(
+                    &matrices,
+                    gpu.as_ref().expect("gpu backend"),
+                    budget,
+                ),
+                Backend::Cpu => {
+                    aipow_peak::calibrate_peak_cpu_attempts_per_sec(&matrices, &cpu, budget)
+                }
+            };
+            eprintln!("calibration: {rate:.0} attempts/sec on {}; proving one throwaway certificate…", peak_backend_label(backend));
+            let prove_secs = aipow_peak::calibrate_peak_prove_secs(&matrices, &cpu);
+            let tier = aipow::tier_for_prove_ratio_with(rate, prove_secs, aipow_peak::grant_peak_attempts);
+            let est = tier as f64 * k as f64 / rate.max(1e-9) + prove_secs * k as f64;
+            eprintln!(
+                "calibration: {prove_secs:.1}s per certificate -> tier 2^{} ({tier} expected \
+                 attempts/win), ~{:.0} min for k={k} against a {} h window",
+                tier.ilog2(),
+                est / 60.0,
+                aipow_peak::AI_PEAK_WINDOW_MS / 3_600_000,
+            );
+            if est * 1000.0 > aipow_peak::AI_PEAK_WINDOW_MS as f64 * 0.8 {
+                eprintln!("warning: that is over 80% of the challenge window; Poisson luck may expire it");
+            }
+            Some(tier)
+        }
+    };
+
+    let registry_ch = match &submit {
+        Some(base) => Some(
+            client::fetch_ai_challenge(base, statement, tier)
+                .await
+                .unwrap_or_else(|e| panic!("fetch AI challenge: {e}")),
+        ),
+        None => None,
+    };
+    note_k_mismatch(registry_ch.as_ref(), tier, k);
+    let (challenge, target, k) = match &registry_ch {
+        Some(rc) => (
+            aipow::parse_hex32(&rc.challenge).unwrap_or_else(|e| panic!("registry challenge: {e}")),
+            aipow::parse_hex32(&rc.target).unwrap_or_else(|e| panic!("registry target: {e}")),
+            rc.k,
+        ),
+        None => (
+            match &challenge {
+                Some(hex) => aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --challenge: {e}")),
+                None => aipow_peak::dev_challenge(),
+            },
+            match &target {
+                Some(hex) => aipow::parse_hex32(hex).unwrap_or_else(|e| panic!("bad --target: {e}")),
+                None => tier
+                    .and_then(aipow_peak::peak_target_for_attempts)
+                    .unwrap_or_else(aipow_peak::max_peak_target),
+            },
+            k,
+        ),
+    };
+    aipow_peak::expected_attempts_per_peak_win(&target)
+        .unwrap_or_else(|e| panic!("target is outside the dense-peak domain: {e}"));
+    let hw = hardware::detect();
+    let ch = aipow_peak::AiPeakChallenge { challenge, target, k };
+    let summary = match &backend {
+        #[cfg(feature = "gpu")]
+        Backend::Gpu { .. } => aipow_peak::gpu::run(&ch, &matrices, gpu.as_ref().expect("gpu backend")),
+        Backend::Cpu => aipow_peak::run_cpu(&ch, &matrices, &cpu),
+    };
+
+    let p = &aipow_peak::AI_PEAK_PARAMS;
+    println!("tock ai-bench — Logos AI-PoW, dense-peak (mainnet production shape)");
+    println!("  statement:    {}", aipow_peak::STATEMENT_DENSE_PEAK);
+    println!(
+        "  shape:        m={} k={} n={} r={} tile={} ({} tiles per extranonce)",
+        p.m, p.k, p.n, p.noise_rank, p.tile, aipow_peak::PEAK_TICKETS_PER_EXTRANONCE
+    );
+    println!("  backend:      {}", peak_backend_label(backend));
+    println!("  challenge:    {}", aipow::hex32(&ch.challenge));
+    println!("  target:       {} (x F = 2^21)", aipow::hex32(&ch.target));
+    print_tier(statement, &ch.target, tier, registry_ch.as_ref());
+    println!("  nonce rule:   {}", aipow_peak::AI_PEAK_NONCE_RULE);
+    println!(
+        "  hardware:     {} ({} cores)",
+        hw.cpu_model.as_deref().unwrap_or("unknown CPU"),
+        hw.logical_cores.map(|c| c.to_string()).unwrap_or_else(|| "?".into())
+    );
+    println!(
+        "  grind:        {} win(s) in {:.2}s, {} attempts",
+        summary.wins.len(),
+        summary.grind_elapsed_ms as f64 / 1000.0,
+        summary.total_attempts
+    );
+    println!(
+        "  grind rate:   {:.1} attempts/sec ({:.3e} MAC-equiv/s at F=2^21)",
+        summary.attempts_per_sec,
+        summary.attempts_per_sec * aipow_peak::MAC_EQUIV_PER_PEAK_ATTEMPT
+    );
+    let prove_ms: Vec<u64> = summary.wins.iter().map(|w| w.prove_ms).collect();
+    let min = prove_ms.iter().min().copied().unwrap_or(0);
+    let max = prove_ms.iter().max().copied().unwrap_or(0);
+    let mean = prove_ms.iter().sum::<u64>() as f64 / prove_ms.len().max(1) as f64;
+    println!("  cert prove:   min {min} ms / mean {mean:.0} ms / max {max} ms (outside the grind window)");
+    for w in &summary.wins {
+        println!(
+            "  win:          attempt {} — artifact {} bytes, proved in {} ms",
+            w.index,
+            w.artifact_jam.len(),
+            w.prove_ms
+        );
+    }
+    if let Some(dir) = &out_dir {
+        std::fs::create_dir_all(dir).expect("could not create --out-dir");
+        for w in &summary.wins {
+            let path = dir.join(format!("peak-artifact-{}.jam", w.index));
+            std::fs::write(&path, &w.artifact_jam).expect("could not write artifact");
+        }
+        println!("  artifacts:    {} written to {}", summary.wins.len(), dir.display());
+    }
+
+    if let (Some(base), Some(rc)) = (&submit, &registry_ch) {
+        use base64::Engine;
+        let sub = client::AiSubmission {
+            nonce: rc.nonce.clone(),
+            hardware: backend.hardware_descriptor(&hw),
+            prover_version: miner::NOCKCHAIN_PIN.into(),
+            grind_elapsed_ms: summary.grind_elapsed_ms,
+            wins: summary
+                .wins
+                .iter()
+                .map(|w| client::AiWinSubmission {
+                    extranonce: w.index,
+                    cert_b64: base64::engine::general_purpose::STANDARD.encode(&w.artifact_jam),
+                })
+                .collect(),
+            statement: Some(aipow_peak::STATEMENT_DENSE_PEAK),
         };
         match client::submit_ai_run(base, &sub).await {
             Ok(id) => {

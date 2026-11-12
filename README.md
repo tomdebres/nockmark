@@ -64,16 +64,25 @@ open-source miner). Same trustless model:
 ./target/release/tock ai-bench --submit https://nockmark.xyz
 ```
 
-That track benchmarks two statements, on one board. The default is the
+That track benchmarks three statements, on one board. The default is the
 single-tile `dense` benchmark; `--statement canonical-moe` benchmarks the
-canonical MoE block the production gateway-free miner actually submits:
+canonical MoE block the gateway-free reference miner submits; and
+`--statement dense-peak` benchmarks mainnet's production AI shape, the one
+upstream's peak CUDA kernel grinds (m=4096, k=8192, n=32768, 16×16 tiles):
 
 ```sh
 ./target/release/tock ai-bench --statement canonical-moe --submit https://nockmark.xyz
+./target/release/tock ai-bench --statement dense-peak --submit https://nockmark.xyz
 ```
 
+A dense-peak certificate is heavy: 72–76 s and 12–15 GB of RAM on an M1 Max
+(61–64 s once the prover setup is reused across wins). Its CPU grind is fast —
+about 140,000 tiles/s, 2.9×10¹¹ MAC-equivalents/s on that machine — because one
+transcript serves 2¹⁹ tiles. Dense-peak challenges therefore live 3 h instead
+of 1 h.
+
 On an NVIDIA GPU, `--gpu` grinds the canonical-MoE statement on upstream's
-CUDA backend. It needs a build with the `gpu` feature, which requires `nvcc`
+CUDA backend, and the dense-peak statement on upstream's #159 peak kernel. It needs a build with the `gpu` feature, which requires `nvcc`
 (the feature is off by default so CPU-only machines build unchanged), and the
 arch flags for your card — `compute_86`/`sm_86` for Ampere, `compute_89`/
 `sm_89` for Ada, `compute_120`/`sm_120` for Blackwell:
@@ -136,7 +145,10 @@ registry answers `410 Gone`. Their rows stay on the board, unranked.
 
 AI-track wins are verified the same way, against mainnet's current rules:
 `Hardened` proofs (block 154,500 on) and, for canonical MoE, exact routing
-multiplicity (block 170,000 on). A legacy certificate is rejected. Rows
+multiplicity (block 170,000 on). A legacy certificate is rejected. Dense-peak
+wins arrive as the `%ai-pow` block artifact a node receives and go through
+upstream's consensus verifier itself, after the registry pins the statement
+(shape, tile, and this challenge's header). Rows
 accepted under earlier pins stay on the board, marked `rules: legacy`, after
 the ranked rows and unranked.
 
