@@ -171,6 +171,13 @@ impl RegistryKernel {
         let mut cli = <BootCli as clap::Parser>::parse_from(["nockmark-registry"]);
         cli.data_dir = Some(data_dir.to_path_buf());
         cli.stack_size = NockStackSize::Medium;
+        // NockApp logs nothing until a tracing subscriber exists, so a failed
+        // boot reports only "Serf load error". NOCKMARK_TRACE=1 (with RUST_LOG)
+        // installs NockApp's own subscriber, which prints the kernel's +load
+        // trace and the PMA/kernel-hash lines a state-migration question needs.
+        if std::env::var_os("NOCKMARK_TRACE").is_some() {
+            boot::init_default_tracing(&cli);
+        }
         let app = boot::setup(jam, cli, &produce_prover_hot_state(), "registry", None)
             .await
             .map_err(|e| NockAppError::OtherError(format!("boot registry: {e}")))?;

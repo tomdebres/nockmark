@@ -19,21 +19,21 @@ default = []
 gpu = ["ai-pow-miner/gpu"]
 
 [dependencies]
-nockapp = { git = "https://github.com/nockchain/nockchain", rev = "c8d6b13e2569cdf438d99f620e81ea9979c9a5a0" }
-nockvm = { git = "https://github.com/nockchain/nockchain", rev = "c8d6b13e2569cdf438d99f620e81ea9979c9a5a0" }
-nockvm_macros = { git = "https://github.com/nockchain/nockchain", rev = "c8d6b13e2569cdf438d99f620e81ea9979c9a5a0" }
-zkvm-jetpack = { git = "https://github.com/nockchain/nockchain", rev = "c8d6b13e2569cdf438d99f620e81ea9979c9a5a0" }
+nockapp = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4" }
+nockvm = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4" }
+nockvm_macros = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4" }
+zkvm-jetpack = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4" }
 # M5 AI-PoW track: `zk` pulls ai-pow-zk + bincode into ai-pow's zk_bridge;
 # `parallel` mirrors the production rayon prover. `recursion` = the compact
 # final-layer batch-STARK certificate APIs.
-ai-pow = { git = "https://github.com/nockchain/nockchain", rev = "c8d6b13e2569cdf438d99f620e81ea9979c9a5a0", features = ["zk", "parallel"] }
-ai-pow-zk = { git = "https://github.com/nockchain/nockchain", rev = "c8d6b13e2569cdf438d99f620e81ea9979c9a5a0", features = ["recursion"] }
+ai-pow = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4", features = ["zk", "parallel"] }
+ai-pow-zk = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4", features = ["recursion"] }
 # M6 Phase B: the canonical-MoE statement mainnet GPU miners actually run.
 # `node` is the feature gate on upstream's `canonical` + `run` modules (the
 # grind template, the jackpot evaluator, the block prover and the grind
 # threshold all live behind it); it also pulls the gRPC/nockapp tree, which
 # tock already links for the ZK track.
-ai-pow-miner = { git = "https://github.com/nockchain/nockchain", rev = "c8d6b13e2569cdf438d99f620e81ea9979c9a5a0", features = ["node"] }
+ai-pow-miner = { git = "https://github.com/nockchain/nockchain", rev = "ed1edfcc988d1a6846e4dfdb10eff0fd05295ff4", features = ["node"] }
 # Wire codec of the AI-track submission blob (same codec family the compact
 # certificate uses upstream).
 postcard = { version = "1.1.3", features = ["alloc"] }

@@ -4,7 +4,7 @@
 //! ## What moves to the GPU, and what emphatically does not
 //!
 //! Exactly one thing moves: **jackpot search**. Upstream's
-//! [`GpuSearchBackend`] takes a [`PreparedCanonicalMoeTemplate`] and a
+//! [`GpuSearchBackend`] takes a [`PreparedReferenceMoeTemplate`] and a
 //! [`SearchBatch`] of contiguous ordinals and returns at most the LOWEST
 //! ordinal in that batch whose jackpot clears the threshold. Everything that
 //! decides whether a win is real stays where [`crate::aipow_moe`] put it:
@@ -13,8 +13,8 @@
 //! |---|---|---|
 //! | attempt evaluation | `template.evaluate` per ordinal | one CUDA launch per batch |
 //! | jackpot ≤ Θ | `hash_le_target` in Rust | in-kernel, then re-checked in Rust |
-//! | scalar recheck | [`evaluate_canonical_moe_jackpot`] | [`evaluate_canonical_moe_jackpot`], unchanged |
-//! | certificate | [`prove_canonical_moe_block_at`] on CPU | [`prove_canonical_moe_block_at`] on CPU |
+//! | scalar recheck | [`evaluate_reference_moe_jackpot`] | [`evaluate_reference_moe_jackpot`], unchanged |
+//! | certificate | [`prove_reference_moe_block_at`] on CPU | [`prove_reference_moe_block_at`] on CPU |
 //!
 //! So the trust story is byte-for-byte the one B1 shipped. The GPU is a
 //! *filter*: it proposes ordinals, and a winner only reaches the prover after
@@ -60,7 +60,7 @@
 //! device never certifies anything. That is the entire reason M6 shipped tiers
 //! before it shipped CUDA: at the CPU-calibrated `T_b = 2^224` a GPU finishes
 //! the grind in milliseconds and the run degenerates into a measurement of
-//! `prove_canonical_moe_block_at`, which is not the thing the AI board ranks.
+//! `prove_reference_moe_block_at`, which is not the thing the AI board ranks.
 //! Let the machine measure itself and the tier moves with it.
 //!
 //! Observed on the 3090 (see [`MEASURED_3090_ATTEMPTS_PER_SEC`]): the
@@ -74,7 +74,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ai_pow_miner::canonical::{evaluate_canonical_moe_jackpot, PreparedCanonicalMoeTemplate};
+use ai_pow_miner::reference::{evaluate_reference_moe_jackpot, PreparedReferenceMoeTemplate};
 use ai_pow_miner::gpu::GpuSearchBackend;
 use ai_pow_miner::search::{OrderedBatchScheduler, SearchBackend, SearchBatch};
 
@@ -206,26 +206,26 @@ const UNREACHABLE_THRESHOLD: [u8; 32] = [0u8; 32];
 fn warm_backend(
     challenge: [u8; 32],
     batch_attempts: u64,
-) -> (GpuSearchBackend, Arc<PreparedCanonicalMoeTemplate>) {
+) -> (GpuSearchBackend, Arc<PreparedReferenceMoeTemplate>) {
     let backend = GpuSearchBackend::new(GPU_DEVICE_ORDINAL, batch_attempts).unwrap_or_else(|e| {
         panic!("CUDA backend on device {GPU_DEVICE_ORDINAL} (batch {batch_attempts}): {e}")
     });
     let template = Arc::new(
-        PreparedCanonicalMoeTemplate::new(
+        PreparedReferenceMoeTemplate::new(
             &AI_MOE_PARAMS,
             AI_MOE_HW,
             AI_MOE_E,
             AI_MOE_TOP_K,
             challenge,
         )
-        .expect("PreparedCanonicalMoeTemplate::new"),
+        .expect("PreparedReferenceMoeTemplate::new"),
     );
     // One ordinal at an unreachable threshold: allocates the session for the
     // full `batch_attempts` (upstream sizes it from the backend, not from this
     // batch) and cannot produce a winner.
     let warmup = SearchBatch::new(0, 1, UNREACHABLE_THRESHOLD).expect("one-attempt warm-up batch");
     let none = backend
-        .search_canonical(Arc::clone(&template), warmup)
+        .search_reference(Arc::clone(&template), warmup)
         .expect("CUDA session creation");
     assert!(none.is_none(), "the zero threshold must be unwinnable");
     (backend, template)
@@ -246,7 +246,7 @@ fn warm_backend(
 /// CPU loop would have found: both walk the ordinal space in strictly
 /// ascending order and neither can hop over a winning ordinal.
 ///
-/// Every winner is re-checked against [`evaluate_canonical_moe_jackpot`] — the
+/// Every winner is re-checked against [`evaluate_reference_moe_jackpot`] — the
 /// standalone scalar oracle, byte-identical to the CPU path's guard — before it
 /// is allowed to reach the prover. A GPU that reports a jackpot the CPU
 /// disagrees with aborts the run; it does not submit.
@@ -269,7 +269,7 @@ pub fn grind_moe_gpu(ch: &AiMoeChallenge, batch_attempts: u64) -> MoeGrindResult
             )
         });
         match backend
-            .search_canonical(Arc::clone(&template), batch)
+            .search_reference(Arc::clone(&template), batch)
             .expect("CUDA canonical search")
         {
             Some(winner) => {
@@ -280,7 +280,7 @@ pub fn grind_moe_gpu(ch: &AiMoeChallenge, batch_attempts: u64) -> MoeGrindResult
                     .expect("canonical ordinals are u32 by the scheduler's end bound");
                 // Scalar-oracle recheck: the device's transcript must agree
                 // with the standalone evaluator the prover will certify.
-                let oracle = evaluate_canonical_moe_jackpot(
+                let oracle = evaluate_reference_moe_jackpot(
                     &AI_MOE_PARAMS,
                     AI_MOE_HW,
                     AI_MOE_E,
@@ -348,7 +348,7 @@ pub fn calibrate_moe_attempts_per_sec(budget: Duration, batch_attempts: u64) -> 
         let batch = SearchBatch::new(start, batch_attempts, UNREACHABLE_THRESHOLD)
             .expect("calibration batch");
         let none = backend
-            .search_canonical(Arc::clone(&template), batch)
+            .search_reference(Arc::clone(&template), batch)
             .expect("CUDA canonical search");
         assert!(none.is_none(), "the zero threshold must be unwinnable");
         attempts += batch_attempts;

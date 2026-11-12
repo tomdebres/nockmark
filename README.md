@@ -97,15 +97,20 @@ attempt by verified attempt.
 1. `POST /challenge` returns a nonce; your proofs are derived from it, so
    nothing can be precomputed.
 2. `tock` proves k=8 real mainnet workloads (proof version 3 since the Zoe
-   fork, pow-len 64, miner kernel pinned at nockchain `1372f270` and
+   fork, pow-len 64, miner kernel pinned at nockchain `ed1edfcc` and
    fingerprinted by sha256).
 3. `POST /run` submits the proofs. The registry verifies each STARK with a
    verifier kernel compiled from the same pinned nockchain tree, and
    computes proofs/sec from `submitted_at − issued_at` on its own clock.
    Client-reported timings are displayed but never ranked.
 
-What is *not* verified: the hardware descriptor is self-reported. Anything
-rate-related is.
+AI-track wins are verified the same way, against mainnet's current rules:
+`Hardened` proofs (block 154,500 on) and, for canonical MoE, exact routing
+multiplicity (block 170,000 on). A legacy certificate is rejected. Rows
+accepted under earlier pins stay on the board, marked `rules: legacy`.
+
+What is *not* verified: the hardware descriptor and `prover_version` are
+self-reported. Anything rate-related is.
 
 ## Layout
 

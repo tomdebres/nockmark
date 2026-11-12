@@ -476,11 +476,14 @@ async fn economics_estimates_and_annotates_the_board() {
             "nonce",
             "proofs_per_sec",
             "prover_version",
+            "rules",
             "self_reported_pps",
             "server_window_ms",
             "submitted_at",
         ]
     );
+    // Every ZK row measures complete proofs/sec: the pre-Anthropos unit.
+    assert_eq!(v[0]["rules"], "pre-anthropos");
     // …and /economics says why, in words.
     let (_, e) = get_json(app, "/economics").await;
     assert!(e["notes"]["zk_board"].as_str().unwrap().contains("147,500"));

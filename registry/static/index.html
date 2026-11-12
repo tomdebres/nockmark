@@ -170,13 +170,18 @@
   fixed cost, and a hard one has to actually be ground out, attempt by verified
   attempt. CPU and GPU rows rank together: the device only searches for jackpots, and every win it finds is
   re-checked and certified on the CPU before this server verifies it.</p>
+  <p class="econ">New wins are verified under mainnet's current rules
+  (Hardened since block 154,500, exact MoE routing since 170,000); a legacy
+  certificate is rejected. Rows accepted before that are marked <b>legacy
+  rules</b> in the prover column and stay ranked: the grind they measure is
+  the same work.</p>
   <p class="econ"><b>These GPU figures are behind upstream.</b> They were
-  measured with the generic CUDA kernel at the nockchain commit this registry
-  pins. Two days after that pin, upstream made a peak kernel the production
-  default and reports the same card on the same statement going from 0.19 to
-  335 TMAC/s — about 1,700× — so treat the GPU rows here as a floor for the
-  hardware, not a measurement of it. A re-pin and re-run is the next thing on
-  the list. (Nockchain also admits mining inside real model inference, at
+  measured at pin c8d6b13e with the generic CUDA kernel, which still serves
+  this shape. Two days after that pin, upstream made a peak kernel on its own
+  dense shape the production GPU path and reports the same card going from
+  0.19 to 335 TMAC/s — about 1,700× — so treat the GPU rows here as a floor
+  for the hardware, not a measurement of it. That shape and a GPU re-run are
+  next on the list. (Nockchain also admits mining inside real model inference, at
   throughput comparable to the optimised dedicated kernel; the interesting
   part there is that the compute is dual-use, not that it is faster.)</p>
 </section>
@@ -238,6 +243,12 @@ const fmt = v => v == null ? '—' :
 const usd = v => v == null ? '—' : '$' + (v >= 1 ? v.toFixed(2) : v.toPrecision(3));
 const tb = document.querySelector('#board tbody');
 
+// The prover cell: the client's pin label, then the rules the row was
+// measured under (server-side). Set as text: prover_version is whatever the
+// submitter sent.
+const RULES = { 'pre-anthropos': 'pre-Anthropos', legacy: 'legacy rules', hardened: 'Hardened' };
+const prover = r => r.rules ? `${r.prover_version} · ${RULES[r.rules] || r.rules}` : r.prover_version;
+
 fetch('/leaderboard').then(r => r.json()).then(rows => {
   tb.textContent = '';
   if (!rows.length) {
@@ -253,8 +264,9 @@ fetch('/leaderboard').then(r => r.json()).then(rows => {
       `<td class="num verified">${r.proofs_per_sec.toFixed(4)}</td>` +
       `<td class="num quiet">${r.self_reported_pps.toFixed(4)}</td>` +
       `<td class="num">${r.k}</td>` +
-      `<td class="quiet">${r.prover_version}</td>`;
+      `<td class="quiet prover"></td>`;
     tr.querySelector('.hw').textContent = r.hardware;
+    tr.querySelector('.prover').textContent = prover(r);
     tb.appendChild(tr);
   }
 }).catch(() => {
@@ -301,10 +313,11 @@ fetch('/leaderboard?track=ai').then(r => r.json()).then(rows => {
       `<td class="num quiet">${human(r.grind_mac_per_sec)}</td>` +
       `<td class="num quiet">${r.zk_attempt_equiv_per_sec.toExponential(2)}</td>` +
       `<td class="num quiet">±${Math.round(r.sigma_frac * 100)}%</td>` +
-      `<td class="quiet">${r.prover_version}</td>` +
+      `<td class="quiet prover"></td>` +
       `<td class="num">${fmt(r.est_nock_per_day)}</td>` +
       `<td class="num quiet">${usd(r.est_usd_per_day)}</td>`;
     tr.querySelector('.hw').textContent = r.hardware;
+    tr.querySelector('.prover').textContent = prover(r);
     // Rows written before the statement existed were all dense.
     tr.querySelector('.stmt').textContent =
       (r.statement || 'dense') === 'canonical-moe' ? 'canonical MoE' : 'dense';

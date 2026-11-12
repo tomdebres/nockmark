@@ -83,6 +83,7 @@
   <ul class="fields">
     <li><code>proofs_per_sec</code> — k / server-observed window; the ranked, trustless rate (a lower bound)</li>
     <li><code>self_reported_pps</code> — k / client-reported elapsed time; informational only</li>
+    <li><code>rules</code> — the consensus era of the row's unit: <code>pre-anthropos</code> on every ZK row, since each one measures complete proofs per second</li>
   </ul>
   <p>ZK rows carry no earnings estimate. Every row was proved before height
   147,500 (Anthropos, ZK proof version 5), as complete proofs per second;
@@ -170,11 +171,12 @@
 
 <div class="endpoint">
   <p><b>What these rates cover.</b> The AI track grinds the canonical block
-  shape, and the GPU rows are behind upstream: they use the generic CUDA
-  kernel at the nockchain commit this registry pins, and two days after that
-  pin upstream made a peak kernel the production default — the same card on
-  the same statement goes from 0.19 to 335 TMAC/s, about 1,700x. Read the GPU
-  rows as a floor for the hardware; a re-pin and re-run is pending. Nockchain
+  shape, and the GPU rows are behind upstream: they were measured at pin
+  <code>c8d6b13e</code>, under the legacy proof rules, with the generic CUDA
+  kernel that still serves this shape. Two days after that pin upstream made
+  a peak kernel on its own dense shape the production GPU path — the same
+  card goes from 0.19 to 335 TMAC/s, about 1,700x. Read the GPU rows as a
+  floor for the hardware; that shape and a GPU re-run are pending. Nockchain
   also admits mining inside real model inference, at throughput comparable to
   the optimised dedicated kernel — the notable part being that the compute is
   dual-use, not that it is faster. The ZK track is CPU-only for a
@@ -286,12 +288,20 @@
     <li><code>grind_mac_per_sec</code> — same numerator over the client grind window; informational only</li>
     <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 14,285,714, the consensus MAC↔ZK-attempt exchange rate since height 154,500; a ZK attempt is one Tip5 hash since Anthropos (rows served before M7 divided by the Logos rate, 25.75e9 per complete proof)</li>
     <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (k wins is Poisson: 1/√k)</li>
+    <li><code>rules</code> — the proof rules the wins were verified under, recorded by this server at acceptance: <code>hardened</code> or <code>legacy</code></li>
   </ul>
-  <p>Runs are era-labeled by <code>prover_version</code>. Entries proved
-  before pin <code>c8d6b13e</code> used the pre-Pearl-V3 statement, whose
-  AIR was later hardened upstream (urange8 lookup fix). Cross-era rate
-  comparisons are fine — the workload cost is the same — but era-1
-  certificates were verified under the older constraint system.</p>
+  <p>Mainnet has admitted only <code>Hardened</code> AI certificates since
+  height 154,500, and since 170,000 a canonical-MoE block must also route
+  every token exactly <code>top_k</code> times. This registry pins nockchain
+  <code>ed1edfcc</code> and verifies new wins under exactly those rules: a
+  legacy certificate is rejected. Rows accepted before that pin carry
+  <code>rules: legacy</code> and stay on the board. Older still, rows proved
+  before pin <code>c8d6b13e</code> used the pre-Pearl-V3 statement, whose AIR
+  was later hardened upstream (urange8 lookup fix). Cross-era rate
+  comparisons are fair — the grind is the same work — but each row's
+  certificates were verified under its own era's rules.
+  <code>prover_version</code> is the client's own label; <code>rules</code> is
+  the server's.</p>
   <pre>curl 'https://nockmark.xyz/leaderboard?track=ai'</pre>
 </div>
 

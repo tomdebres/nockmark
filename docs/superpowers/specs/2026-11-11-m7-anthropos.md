@@ -24,13 +24,14 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
 
 ## Steps
 
-1. **Economics** (this PR). Per-track units and constants: ZK 500 s, AI 214 s,
+1. **Economics** — done (PR #32, deployed 2026-11-11). Per-track units and constants: ZK 500 s, AI 214 s,
    reward read from the chain (× 0.8), exchange rate 14,285,714. nockscan
    `mining-metrics` is the primary source (both difficulties, reward, the
    chain's own exchange rate, no key); NockBlocks RPC is the fallback. ZK
    proofs/sec rows carry no estimate. AI rows get NOCK/day and USD/day for the
    first time (from the unmerged August `econ-roi` work, adapted).
-2. **Re-pin to `ed1edfcc`.** Git deps make it a `rev` bump plus the
+2. **Re-pin to `ed1edfcc`** — done (PR #33, 2026-11-12). Git deps make
+   it a `rev` bump plus the
    `ai_pow_miner::canonical` → `reference` renames (`canonical_*` →
    `reference_*`, `PreparedCanonicalMoeTemplate` → `PreparedReferenceMoeTemplate`,
    `canonical_grind_threshold` → `reference_grind_threshold`). Rebuild miner,
@@ -38,6 +39,15 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
    cached contexts rebuild (already pin-scoped). Bump `NOCKCHAIN_PIN`, the
    Dockerfile and `scripts/gpu_pod.py`; drop the Dockerfile's now-unused
    nockchain clone. Check the 170,000 multiplicity rule against our MoE certs.
+   Outcome: the registry boots only Hardened verifier contexts and admits MoE
+   wins under consensus-batch limits (exact routing multiplicity);
+   `registry/tests/aipow_mainnet_rules.rs` runs a real canonical-MoE
+   certificate through upstream's consensus verifier under `ConsensusBatch`
+   (passes; e=2, top_k=1 routes each token once) and shows a Legacy
+   certificate rejected. AI rows carry a server-attested `rules`
+   (`hardened`, or `legacy` for every earlier row); ZK rows carry
+   `rules: pre-anthropos`. Ranking stays all-rows until step 3 (see
+   Decisions).
 3. **ZK v5 track.** Mirror the AI track's tier design:
    - challenge C → `block-commitment` = C reduced to 5 based belts;
    - the client grinds nonces against a benchmark target T_b with native
@@ -63,7 +73,9 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
 
 - Old rows stay in the data, labelled with the rules they were measured under;
   ranking only current-era rows comes with steps 2–3, when current-era rows
-  exist (until then the boards would be empty).
+  exist (until then the boards would be empty). Step 2 labels; the switch to
+  current-era ranking lands in step 3, when the ZK board gets its first v5
+  rows and the AI board has had time to gather Hardened ones.
 - Each step is its own branch and PR from `main`; steps 2–4 touch the same
   files, so they go in sequence.
 - Each PR updates the docs its change makes stale. The dated write-ups stay as
