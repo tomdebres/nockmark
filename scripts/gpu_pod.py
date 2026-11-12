@@ -8,15 +8,26 @@ needs and a one-shot sweep does not: a pod that survives between invocations,
 so a compile error costs one `build` (seconds to re-dispatch) instead of a
 redeploy (minutes, plus a fresh cargo registry download).
 
-    ./gpu_pod.py up                  # sweep strays, deploy, bootstrap, keep
+    ./gpu_pod.py up                  # sweep this slot's strays, deploy, bootstrap, keep
     ./gpu_pod.py bootstrap           # re-run the bootstrap on the live pod
     ./gpu_pod.py push                # overlay the LOCAL tock/ onto the clone
     ./gpu_pod.py build               # cargo build --release --features gpu
     ./gpu_pod.py build-zk            # cargo build --release --features zk-gpu
     ./gpu_pod.py miner-jam           # build assets/miner.jam with hoonc at the pin
+    ./gpu_pod.py prep-zk             # build-zk and miner-jam at once (one wait, not two)
     ./gpu_pod.py run '<shell>'       # anything, with the toolchain on PATH
     ./gpu_pod.py pods                # what is live on the account, if anything
-    ./gpu_pod.py down                # terminate + assert nothing is left
+    ./gpu_pod.py down                # terminate this slot's pod + assert it is gone
+
+One state file is one SLOT: one pod, named after the file
+(`NOCKMARK_POD_STATE=~/.cache/nockmark/zk-4090.json` → pod `nockmark-zk-4090`).
+Two sessions (or two cards) use two state files. A slot only ever sweeps or
+terminates its own pod, never another slot's, so a second agent's pod on the
+same account is safe. `NOCKMARK_GPU_TYPE` picks the card at `up`; the CUDA
+arch flags then follow the card recorded in the slot (3090 sm_86, 4090 sm_89,
+5090 sm_120), unless set explicitly. Deploys are community cloud only:
+`NOCKMARK_POD_WAIT_S` (default 1800) bounds the wait for stock, and secure
+cloud is never chosen silently — it costs 2–3x.
 
 The safety trade this makes, stated plainly: `runpod_harness.deploy` registers
 an atexit teardown the instant a pod exists, and `up` deliberately unregisters
@@ -43,16 +54,20 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import runpod_harness as rp  # noqa: E402
 
-# The 3090 is the development GPU: $0.22/hr, Ampere, and every CUDA arch flag
-# below follows from that choice. 4090 is compute_89/sm_89, 5090 is
-# compute_120/sm_120 — both cost 3-6x more per hour and neither tells you
-# anything a 3090 has not already told you about whether the code COMPILES.
+# The 3090 is the development GPU: $0.22/hr, Ampere. 4090 and 5090 cost 3-6x
+# more per hour and tell you nothing a 3090 has not about whether the code
+# COMPILES — they are for measuring.
 GPU_TYPE = os.environ.get("NOCKMARK_GPU_TYPE", "NVIDIA GeForce RTX 3090")
-CUDA_ARCH = os.environ.get("AI_POW_CUDA_ARCH", "compute_86")
-CUDA_CODE = os.environ.get("AI_POW_CUDA_CODE", "sm_86")
-# The ZK V5 kernel's build script takes bare architecture numbers (89 for a
-# 4090, 120 for a 5090), comma-separated; unset means the build host's GPU.
-ZK_CUDA_ARCH = os.environ.get("ZK_POW_CUDA_ARCH", "86")
+
+# CUDA arch per card, for both kernels: (AI_POW_CUDA_ARCH, AI_POW_CUDA_CODE,
+# ZK_POW_CUDA_ARCH). The ZK V5 build script takes bare numbers. A fixed sm_86
+# default built SASS a 5090 (sm_120) cannot load, so the flags follow the card
+# the slot was deployed on; an explicit env var still wins.
+CUDA_ARCHES = {
+    "NVIDIA GeForce RTX 3090": ("compute_86", "sm_86", "86"),
+    "NVIDIA GeForce RTX 4090": ("compute_89", "sm_89", "89"),
+    "NVIDIA GeForce RTX 5090": ("compute_120", "sm_120", "120"),
+}
 
 # The image already carries nvcc 12.8 and the driver; only the Rust side and
 # the protobuf compiler (nockapp-grpc's build script) are missing.
@@ -74,15 +89,27 @@ TOCK = f"{NOCKMARK}/tock"
 STATE = os.path.expanduser(
     os.environ.get("NOCKMARK_POD_STATE", "~/.cache/nockmark/gpu-pod.json")
 )
+# The slot's pod name: the only pods this slot will ever sweep.
+POD_NAME = rp.NAME_PREFIX + os.path.splitext(os.path.basename(STATE))[0]
+
+
+def cuda_env(gpu):
+    """The arch exports for `gpu`: the card's own, unless set explicitly."""
+    ai_arch, ai_code, zk_arch = CUDA_ARCHES.get(gpu, CUDA_ARCHES["NVIDIA GeForce RTX 3090"])
+    ai_arch = os.environ.get("AI_POW_CUDA_ARCH", ai_arch)
+    ai_code = os.environ.get("AI_POW_CUDA_CODE", ai_code)
+    zk_arch = os.environ.get("ZK_POW_CUDA_ARCH", zk_arch)
+    return (f"export AI_POW_CUDA_ARCH={ai_arch} AI_POW_CUDA_CODE={ai_code}; "
+            f"export ZK_POW_CUDA_ARCH={zk_arch}; ")
+
 
 # Everything a remote command needs: the tarball-installed toolchain, nvcc,
-# the arch flags upstream's build.rs reads, and the 8 MB stack the ai-pow
-# provers want (RUST_MIN_STACK, same as every other Nockmark build).
+# the arch flags upstream's build.rs reads (from `cuda_env`), and the 8 MB
+# stack the ai-pow provers want (RUST_MIN_STACK, same as every other Nockmark
+# build).
 ENV = (
     "export PATH=/opt/rust/bin:/usr/local/cuda/bin:$PATH; "
     "export CUDA_HOME=/usr/local/cuda; "
-    f"export AI_POW_CUDA_ARCH={CUDA_ARCH} AI_POW_CUDA_CODE={CUDA_CODE}; "
-    f"export ZK_POW_CUDA_ARCH={ZK_CUDA_ARCH}; "
     "export RUST_MIN_STACK=8388608; "
     "export CARGO_TERM_COLOR=never; "
 )
@@ -153,7 +180,7 @@ def remote(command, timeout_s=3600):
     makes "the command ended" and "the session ended" the same event.
     """
     state = load_state()
-    script = "set -euo pipefail\n" + ENV + "\n" + command + "\n"
+    script = "set -euo pipefail\n" + ENV + cuda_env(state["gpu"]) + "\n" + command + "\n"
     lines = _upload_lines(script.encode(), "/tmp/nm-cmd.sh")
     lines.append(f'bash /tmp/nm-cmd.sh </dev/null 2>&1; echo "{DONE}_$?_"')
     rc, out = rp.ssh(state["host_id"], "\n".join(lines), timeout_s=timeout_s)
@@ -206,17 +233,61 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 """
 
 
+def sweep_slot():
+    """Terminate leftovers of THIS slot only (pods named `POD_NAME`).
+
+    `runpod_harness.sweep_strays` kills every `nockmark-` pod on the account,
+    which is right for a one-shot sweep and wrong when another session is
+    measuring on its own pod at the same time.
+    """
+    mine = [p for p in rp.list_pods() if p["name"] == POD_NAME]
+    for p in mine:
+        print(f"[gpu_pod] sweeping this slot's stray pod {p['id']} (${p['costPerHr']}/hr)", flush=True)
+        rp.terminate(p["id"])
+    return len(mine)
+
+
+def deploy_community():
+    """One community-cloud pod, retrying while stock is out.
+
+    `attempts=1` keeps `runpod_harness.deploy` off its secure-cloud fallback
+    (which fires on the last of several attempts): secure costs 2-3x, and
+    paying it is a decision, not a retry policy.
+    """
+    wait_s = float(os.environ.get("NOCKMARK_POD_WAIT_S", "1800"))
+    deadline = time.time() + wait_s
+    while True:
+        try:
+            return rp.deploy(GPU_TYPE, POD_NAME, image=IMAGE, container_disk=60, attempts=1)
+        except rp.RunPodError as e:
+            if time.time() + 60 > deadline:
+                sys.exit(f"[gpu_pod] no community {GPU_TYPE} within {wait_s:.0f}s; last: {e}")
+            print(f"[gpu_pod] no community stock yet ({e}); retrying in 60 s", flush=True)
+            time.sleep(60)
+
+
 def up():
-    swept = rp.sweep_strays()
+    if os.path.exists(STATE):
+        sys.exit(f"[gpu_pod] {STATE} already holds a pod; `down` it first (or use another "
+                 f"NOCKMARK_POD_STATE)")
+    swept = sweep_slot()
     if swept:
         print(f"[gpu_pod] swept {swept} stray pod(s) before deploying", flush=True)
-    pod = rp.deploy(GPU_TYPE, f"{rp.NAME_PREFIX}m6-gpu", image=IMAGE, container_disk=60)
+    pod = deploy_community()
     host = rp.host_id(pod["id"])
-    rp.wait_for_ssh_ready(host)
-    save_state({"pod_id": pod["id"], "host_id": host, "gpu": GPU_TYPE})
-    print(f"[gpu_pod] bootstrapping {pod['id']} ({host})", flush=True)
-    if remote(BOOTSTRAP, timeout_s=1800) != 0:
-        sys.exit("[gpu_pod] bootstrap failed — pod will be torn down")
+    # `remote` reads the slot, so it is written before the bootstrap; any
+    # failure from here on clears it, because the atexit hook is about to
+    # terminate the pod it names.
+    save_state({"pod_id": pod["id"], "host_id": host, "gpu": GPU_TYPE,
+                "cost_per_hr": pod["costPerHr"], "deployed_at": time.time()})
+    try:
+        rp.wait_for_ssh_ready(host)
+        print(f"[gpu_pod] bootstrapping {pod['id']} ({host})", flush=True)
+        if remote(BOOTSTRAP, timeout_s=1800) != 0:
+            sys.exit("[gpu_pod] bootstrap failed — pod will be torn down")
+    except BaseException:
+        os.remove(STATE)
+        raise
     # Last statement in the happy path: everything above still tears the pod
     # down on failure, because the atexit hook is armed until this line.
     rp.atexit.unregister(rp.terminate)
@@ -298,6 +369,16 @@ def main():
         sys.exit(remote(f"cd {TOCK} && cargo build --release --features zk-gpu 2>&1 | tail -60"))
     elif cmd == "miner-jam":
         sys.exit(remote(miner_jam_script(pinned_rev()), timeout_s=3600))
+    elif cmd == "prep-zk":
+        # The tock build and the hoonc build + jam compile are independent:
+        # run them side by side, then show each one's tail and status.
+        sys.exit(remote(
+            f"(cd {TOCK} && cargo build --release --features zk-gpu) > {ROOT}/build-zk.log 2>&1 & b=$!\n"
+            f"( {miner_jam_script(pinned_rev())} ) > {ROOT}/miner-jam.log 2>&1 & j=$!\n"
+            "rb=0; wait $b || rb=$?; rj=0; wait $j || rj=$?\n"
+            f"tail -5 {ROOT}/build-zk.log; tail -4 {ROOT}/miner-jam.log\n"
+            'echo "build-zk rc=$rb, miner-jam rc=$rj"; [ $rb = 0 ] && [ $rj = 0 ]',
+            timeout_s=3600))
     elif cmd == "run":
         sys.exit(remote(" ".join(sys.argv[2:]), timeout_s=5400))
     elif cmd == "pods":
@@ -306,10 +387,19 @@ def main():
     elif cmd == "down":
         state = load_state()
         rp.terminate(state["pod_id"])
-        os.remove(STATE)
         time.sleep(5)
         left = rp.list_pods()
-        print(json.dumps(left, indent=2) if left else "[gpu_pod] no live pods — clean")
+        if any(p["id"] == state["pod_id"] for p in left):
+            sys.exit(f"[gpu_pod] pod {state['pod_id']} is STILL LISTED — billing; check RunPod")
+        os.remove(STATE)
+        if "deployed_at" in state:
+            hours = (time.time() - state["deployed_at"]) / 3600
+            print(f"[gpu_pod] {state['pod_id']} gone after {hours * 60:.1f} min at "
+                  f"${state['cost_per_hr']}/hr (≈ ${hours * state['cost_per_hr']:.3f})")
+        others = [p for p in left if p["name"] != POD_NAME]
+        print("[gpu_pod] no live pods — clean" if not left else
+              f"[gpu_pod] this slot is clean; other pods on the account (not touched): "
+              f"{json.dumps(others)}")
     else:
         sys.exit(__doc__)
 
