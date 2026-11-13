@@ -1,0 +1,150 @@
+{
+  "attempts": 1932979,
+  "backend": "CPU (scalar canonical template)",
+  "calibrated_attempts_per_sec": 3472.0041544066985,
+  "calibrated_prove_s": 26.235760458,
+  "client_window_s": 713.068221125,
+  "expected_attempts": 2097152.0,
+  "failures": 0,
+  "grind_s": 679.307,
+  "hardware": "Apple M1 Max / 10c / 32GB / macOS 26.7.1 / aarch64",
+  "k": 16,
+  "provers": 1,
+  "proving": "pipelined",
+  "run_id": 11,
+  "statement": "canonical-moe",
+  "sustained_attempts_per_sec": 2845.516092135073,
+  "tier_attempts": 131072.0,
+  "track": "ai",
+  "wall_s": 709.708,
+  "wins": [
+    {
+      "found_s": 22.967921042,
+      "index": 79721,
+      "prove_done_s": 51.637098625,
+      "prove_s": 28.669,
+      "prove_start_s": 22.967947459,
+      "prover": 0
+    },
+    {
+      "found_s": 48.651879542,
+      "index": 142813,
+      "prove_done_s": 79.767096792,
+      "prove_s": 28.129,
+      "prove_start_s": 51.637099209,
+      "prover": 0
+    },
+    {
+      "found_s": 66.400060709,
+      "index": 187473,
+      "prove_done_s": 107.980400667,
+      "prove_s": 28.213,
+      "prove_start_s": 79.7670975,
+      "prover": 0
+    },
+    {
+      "found_s": 93.197269084,
+      "index": 253460,
+      "prove_done_s": 136.470524084,
+      "prove_s": 28.49,
+      "prove_start_s": 107.98040125,
+      "prover": 0
+    },
+    {
+      "found_s": 104.491516667,
+      "index": 280725,
+      "prove_done_s": 165.0515535,
+      "prove_s": 28.58,
+      "prove_start_s": 136.470524834,
+      "prover": 0
+    },
+    {
+      "found_s": 115.979169334,
+      "index": 309864,
+      "prove_done_s": 193.259121209,
+      "prove_s": 28.207,
+      "prove_start_s": 165.051554084,
+      "prover": 0
+    },
+    {
+      "found_s": 148.52661575,
+      "index": 390760,
+      "prove_done_s": 221.578068334,
+      "prove_s": 28.318,
+      "prove_start_s": 193.259121875,
+      "prover": 0
+    },
+    {
+      "found_s": 183.983480959,
+      "index": 477964,
+      "prove_done_s": 249.862350792,
+      "prove_s": 28.284,
+      "prove_start_s": 221.578068875,
+      "prover": 0
+    },
+    {
+      "found_s": 237.161446709,
+      "index": 607409,
+      "prove_done_s": 278.083788292,
+      "prove_s": 28.221,
+      "prove_start_s": 249.8623515,
+      "prover": 0
+    },
+    {
+      "found_s": 314.158124792,
+      "index": 832379,
+      "prove_done_s": 342.66827125,
+      "prove_s": 28.51,
+      "prove_start_s": 314.158145792,
+      "prover": 0
+    },
+    {
+      "found_s": 362.430109959,
+      "index": 972742,
+      "prove_done_s": 390.556000459,
+      "prove_s": 28.125,
+      "prove_start_s": 362.430130959,
+      "prover": 0
+    },
+    {
+      "found_s": 474.78268025,
+      "index": 1334662,
+      "prove_done_s": 503.80992725,
+      "prove_s": 29.027,
+      "prove_start_s": 474.782701584,
+      "prover": 0
+    },
+    {
+      "found_s": 483.355018334,
+      "index": 1355734,
+      "prove_done_s": 532.051519417,
+      "prove_s": 28.241,
+      "prove_start_s": 503.809927834,
+      "prover": 0
+    },
+    {
+      "found_s": 541.190969125,
+      "index": 1508138,
+      "prove_done_s": 569.416942375,
+      "prove_s": 28.225,
+      "prove_start_s": 541.190990375,
+      "prover": 0
+    },
+    {
+      "found_s": 653.497020334,
+      "index": 1869993,
+      "prove_done_s": 681.734026917,
+      "prove_s": 28.236,
+      "prove_start_s": 653.4970415,
+      "prover": 0
+    },
+    {
+      "found_s": 679.306728667,
+      "index": 1932978,
+      "prove_done_s": 709.708250459,
+      "prove_s": 27.974,
+      "prove_start_s": 681.734034542,
+      "prover": 0
+    }
+  ]
+}

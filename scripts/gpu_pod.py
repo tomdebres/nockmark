@@ -15,6 +15,9 @@ redeploy (minutes, plus a fresh cargo registry download).
     ./gpu_pod.py build-zk            # cargo build --release --features zk-gpu
     ./gpu_pod.py miner-jam           # build assets/miner.jam with hoonc at the pin
     ./gpu_pod.py prep-zk             # build-zk and miner-jam at once (one wait, not two)
+    ./gpu_pod.py cuda-check          # 10 s: can this host's CUDA runtime see the GPU?
+    ./gpu_pod.py prep-all            # one build with gpu+zk-gpu, miner-jam beside it,
+                                     # and scripts/sweep_run.sh uploaded to /build
     ./gpu_pod.py run '<shell>'       # anything, with the toolchain on PATH
     ./gpu_pod.py pods                # what is live on the account, if anything
     ./gpu_pod.py down                # terminate this slot's pod + assert it is gone
@@ -378,6 +381,31 @@ def main():
             "rb=0; wait $b || rb=$?; rj=0; wait $j || rj=$?\n"
             f"tail -5 {ROOT}/build-zk.log; tail -4 {ROOT}/miner-jam.log\n"
             'echo "build-zk rc=$rb, miner-jam rc=$rj"; [ $rb = 0 ] && [ $rj = 0 ]',
+            timeout_s=3600))
+    elif cmd == "cuda-check":
+        # nvidia-smi working proves nothing: on community hosts with driver
+        # 580.173.02 or 620.70.06 (2026-11-13) cuInit itself fails with error
+        # 999 in this image. Run this before a 10-20 min build; on failure,
+        # `down` and `up` again.
+        sys.exit(remote(
+            "cd /tmp && printf '%s\\n' '#include <cstdio>' '#include <cuda_runtime.h>' "
+            "'int main(){int n=0; cudaError_t e=cudaGetDeviceCount(&n); "
+            "printf(\"CUDA_CHECK err=%d n=%d\\n\", (int)e, n); return e != cudaSuccess || n < 1;}' "
+            "> cuda_check.cu && nvcc -o cuda_check cuda_check.cu 2>/dev/null && ./cuda_check",
+            timeout_s=600))
+    elif cmd == "prep-all":
+        # Both CUDA backends in one binary (ai-bench --gpu and zk-bench --gpu),
+        # the jam beside the build, and the instrumented run script the sweep
+        # launches detached (`setsid nohup bash /build/sweep_run.sh <name> ...`).
+        here = os.path.dirname(os.path.abspath(__file__))
+        runner = open(os.path.join(here, "sweep_run.sh"), "rb").read()
+        sys.exit(remote(
+            "\n".join(_upload_lines(runner, f"{ROOT}/sweep_run.sh")) + "\n"
+            f"(cd {TOCK} && cargo build --release --features gpu,zk-gpu) > {ROOT}/build-all.log 2>&1 & b=$!\n"
+            f"( {miner_jam_script(pinned_rev())} ) > {ROOT}/miner-jam.log 2>&1 & j=$!\n"
+            "rb=0; wait $b || rb=$?; rj=0; wait $j || rj=$?\n"
+            f"tail -5 {ROOT}/build-all.log; tail -4 {ROOT}/miner-jam.log\n"
+            'echo "build-all rc=$rb, miner-jam rc=$rj"; [ $rb = 0 ] && [ $rj = 0 ]',
             timeout_s=3600))
     elif cmd == "run":
         sys.exit(remote(" ".join(sys.argv[2:]), timeout_s=5400))

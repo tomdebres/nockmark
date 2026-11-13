@@ -182,9 +182,9 @@
   tiles). Only rows under mainnet's current rules (Hardened) are ranked, and,
   as on ZK, rows from before the pipelined client only until newer ones
   exist.</p>
-  <p class="econ"><b>GPU rows are a floor.</b> They are legacy-rules runs of the
-  generic CUDA kernel on canonical MoE; upstream's peak kernel does about
-  1,700× more on dense-peak. A re-run is next.</p>
+  <p class="econ"><b>GPU rows:</b> dense-peak on an RTX 5090 runs upstream's
+  peak kernel (#159, compute capability 12.0 only); canonical-MoE rows run the
+  generic CUDA kernel, about 1,500× less work per second on the same card.</p>
 </section>
 
 <section class="submit">

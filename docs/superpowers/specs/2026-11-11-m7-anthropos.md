@@ -215,7 +215,40 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
        At luck 1 that is 0.69 → 0.87 of the uncontended rate, as the model
        predicts. The CPU grind lost 4.8 % to the prover beside it; nine grind
        threads instead of ten changed nothing.
-   - **AI half and the write-up:** not started.
+   - **Part 2b: the sweep (2026-11-13).** Every row was re-measured with the
+     pipelined client (tock `58fe623`), k = 16, self-calibrated, live. Full
+     tables and logs are in `bench-results/gpu/2026-11-13-pipelined-sweep/`.
+     RunPod spend $1.542 (balance $6.707 → $5.164), community only; all pods
+     terminated.
+
+     | card / host | statement | verified | at luck 1 | NOCK/day |
+     |---|---|---:|---:|---:|
+     | 5090 | dense-peak (#159 kernel) | 2.34×10¹⁴ MAC-eq/s | 0.86 | 7.22 |
+     | 5090 | canonical-moe | 1.51×10¹¹ | 0.92 | 0.0047 |
+     | 4090 | canonical-moe | 1.38×10¹¹ | 0.94 | 0.0043 |
+     | 3090 | canonical-moe | 6.22×10¹⁰ | 0.94 | 0.0019 |
+     | 3090 pod CPU (TR PRO, 17.9-CPU quota) | dense-peak | 3.13×10¹⁰ | 0.77 | 0.00097 |
+     | M1 Max | canonical-moe | 1.93×10⁸ | 0.78 | 6×10⁻⁶ |
+     | 5090 | ZK v5 | 17.32 MH/s | 0.91 | 20.1 |
+     | 4090 | ZK v5 | 7.66 MH/s (luck 0.55) | 0.92 | 8.87 |
+     | 3090 | ZK v5 | 6.42 MH/s | 0.91 | 7.44 |
+     | M1 Max | ZK v5 | 236.8 kH/s (luck 1.91) | 0.80 | 0.27 |
+
+     - **GPU rows now recover 0.86–0.94 of calibrated at luck 1**, up from
+       0.61–0.68 (ZK) and 0.57–0.65 (legacy canonical-MoE). The 4090 and
+       5090 ZK figures (13.4 and 15.7 MH/s at luck 1) match #36's
+       predictions within 4 %.
+     - **CPU-only hosts gain little or nothing.** On a 17.9-CPU pod,
+       dense-peak pipelined recovered 0.77 and serial 0.76 at luck 1: the
+       grind lost 22 % and certificates took 5× as long beside it. On the M1
+       the single canonical-MoE grind thread lost 18 % to the prover.
+     - **Open:** the 4090 ZK row needed 1.81× the expected hashes
+       (p ≈ 0.003). No failures, sustained = calibrated, gaps spread evenly;
+       it can only be understated. A win-rate probe past 2³² nonces on a 4090
+       (~$0.20) would settle a device-side miss.
+     - **RunPod:** hosts on driver 580.173.02 / 620.70.06 fail `cuInit` with
+       error 999; the re-roll now checks CUDA before the 10–20 min build.
+   - **Write-up:** not started; Tom sees these numbers first.
 
 ## Decisions
 
