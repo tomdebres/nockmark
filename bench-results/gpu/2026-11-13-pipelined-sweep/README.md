@@ -76,6 +76,10 @@ the grinder and the provers compete for the same cores.
 
 ## Open item: the 4090 ZK row's luck
 
+> **Settled 2026-11-13: luck.** Replayed on a 4090, zk 8's range holds exactly
+> the 16 winners it found at 2²⁹, and the device matched the CPU oracle
+> everywhere it was checked. See `../2026-11-13-4090-probe/`.
+
 - **The anomaly:** run zk 8 needed 1.81× the expected hashes for 16 wins at 2²⁹ (29.0 expected units, z = +3.25 under the exponential model, p ≈ 0.003).
 - **What was checked:**
   - no proof failed or was replaced;

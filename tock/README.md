@@ -120,6 +120,12 @@ builds the jam on the pod with hoonc at the pinned rev rather than uploading
 two cards, or two sessions, can run at once without touching each other's
 pods.
 
+`examples/zk_v5_probe.rs` checks a device against the CPU oracle on a given
+challenge: every winner in nonce ranges by CPU (`cpu-scan`) or by device
+(`device-scan`, zk-bench's own loop), single launches, and digests. It
+settled the 4090 anomaly (`bench-results/gpu/2026-11-13-4090-probe/`). The
+device subcommands need `--features zk-gpu`; `push` sends `examples/` too.
+
 The nockchain `kernels-open-miner` crate, which `zk-pow-miner` depends on,
 embeds a miner jam at build time and fails the build without one. Nothing here
 uses that embedded kernel (tock reads `--kernel` at run time), so

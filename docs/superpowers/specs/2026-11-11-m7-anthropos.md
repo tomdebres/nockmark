@@ -242,13 +242,38 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
        dense-peak pipelined recovered 0.77 and serial 0.76 at luck 1: the
        grind lost 22 % and certificates took 5× as long beside it. On the M1
        the single canonical-MoE grind thread lost 18 % to the prover.
-     - **Open:** the 4090 ZK row needed 1.81× the expected hashes
-       (p ≈ 0.003). No failures, sustained = calibrated, gaps spread evenly;
-       it can only be understated. A win-rate probe past 2³² nonces on a 4090
-       (~$0.20) would settle a device-side miss.
+     - **The 4090 ZK row needed 1.81× the expected hashes** (p ≈ 0.003). No
+       failures, sustained = calibrated, gaps spread evenly; it can only be
+       understated. Settled by the probe below: luck.
      - **RunPod:** hosts on driver 580.173.02 / 620.70.06 fail `cuInit` with
        error 999; the re-roll now checks CUDA before the 10–20 min build.
-   - **Write-up:** not started; Tom sees these numbers first.
+   - **Part 2c: the 4090 probe (2026-11-13). Luck, not a device miss.**
+     Tom chose "probe the 4090, then draft". `tock/examples/zk_v5_probe.rs`
+     replayed run zk 8's own challenge on an RTX 4090 with upstream's CUDA V5
+     search and checked it against the CPU oracle (`v5_pow_digest`).
+     Details in `bench-results/gpu/2026-11-13-4090-probe/`.
+     - **zk 8 missed nothing.** The device enumerated every winner at 2²⁰
+       over zk 8's whole range (nonces 0 … 15,567,367,629, 2^33.86). The
+       2²⁹ winners among them are exactly zk 8's 16.
+     - **The win rate past 2³² is normal:** 14,931 wins at 2²⁰ against
+       14,846 expected (z +0.70), even across 2³⁰-nonce blocks (χ² 10.6 on
+       14 dof). Tiers down to 2²⁷ are on expectation. The shortfall is only
+       in this challenge's deep tail (2²⁹: 16 vs 29.0), so any correct
+       device would have needed the same hashes.
+     - **Device = oracle.** In 32 sampled ranges of 2²² nonces at 2¹⁴
+       (straddling 2³², 2³³ and 2³⁴, and inside zk 8's longest gaps) the
+       device, the pod CPU and an M1 Max found the same 8,229 winners. zk 8's
+       16 exact launches each return its winner, and 383 digests match in
+       all five limbs.
+     - The probe ran on another 4090 (driver 570.211.01; zk 8's host had
+       580.95.05). The winner set belongs to the challenge, not the card. A
+       fault on zk 8's own card was not tested, but it cannot have cost a
+       winner.
+     - **RunPod:** $0.211 of the $0.50 cap (balance $5.151 → $4.941),
+       community. Three hosts on driver 580.178.04 failed `cuInit` and were
+       taken down within 1.3 min each; all pods terminated.
+   - **Write-up:** next, in its own PR, merged only after Tom approves the
+     text.
 
 ## Decisions
 
