@@ -303,7 +303,8 @@ def push():
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         # `stub`: the empty kernels-open-miner that tock/Cargo.toml patches in.
-        for member in ("Cargo.toml", "Cargo.lock", "src", "stub"):
+        # `examples`: probes such as zk_v5_probe.
+        for member in ("Cargo.toml", "Cargo.lock", "src", "stub", "examples"):
             path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tock", member)
             tar.add(os.path.abspath(path), arcname=member)
     payload = buf.getvalue()

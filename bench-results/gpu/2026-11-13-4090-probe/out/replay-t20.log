@@ -1,0 +1,42 @@
+challenge 2664258700595450701 commitment [644590723468334889 8753148761083598802 16138893886497834672 17030100422912503288 0] tier 2^20 target [17592186040319 17592186040320 17592186040320 17592186040320 17592186040320]
+device 0: NVIDIA GeForce RTX 4090
+  device-scan range 0 at 95339029: 86 wins, 0 false, 772 launches, 30 s
+  device-scan range 0 at 440679332: 402 wins, 0 false, 3574 launches, 60 s
+  device-scan range 0 at 860968008: 786 wins, 0 false, 6988 launches, 90 s
+  device-scan range 0 at 1280587229: 1193 wins, 0 false, 10398 launches, 120 s
+  device-scan range 0 at 1698840268: 1625 wins, 0 false, 13805 launches, 150 s
+  device-scan range 0 at 2117912962: 2037 wins, 0 false, 17211 launches, 180 s
+  device-scan range 0 at 2538666454: 2429 wins, 0 false, 20616 launches, 210 s
+  device-scan range 0 at 2957586569: 2829 wins, 0 false, 24020 launches, 240 s
+  device-scan range 0 at 3378557302: 3208 wins, 0 false, 27427 launches, 270 s
+  device-scan range 0 at 3797366149: 3614 wins, 0 false, 30831 launches, 300 s
+  device-scan range 0 at 4215739574: 4021 wins, 0 false, 34236 launches, 330 s
+  device-scan range 0 at 4634136807: 4447 wins, 0 false, 37641 launches, 360 s
+  device-scan range 0 at 5054217356: 4830 wins, 0 false, 41046 launches, 390 s
+  device-scan range 0 at 5472463896: 5267 wins, 0 false, 44451 launches, 420 s
+  device-scan range 0 at 5889925271: 5688 wins, 0 false, 47856 launches, 450 s
+  device-scan range 0 at 6309252502: 6080 wins, 0 false, 51263 launches, 480 s
+  device-scan range 0 at 6728353837: 6490 wins, 0 false, 54668 launches, 510 s
+  device-scan range 0 at 7147761310: 6901 wins, 0 false, 58073 launches, 540 s
+  device-scan range 0 at 7570197884: 7269 wins, 0 false, 61480 launches, 570 s
+  device-scan range 0 at 7989432999: 7675 wins, 0 false, 64886 launches, 600 s
+  device-scan range 0 at 8407377035: 8089 wins, 0 false, 68290 launches, 630 s
+  device-scan range 0 at 8827147424: 8476 wins, 0 false, 71694 launches, 660 s
+  device-scan range 0 at 9244235733: 8910 wins, 0 false, 75099 launches, 690 s
+  device-scan range 0 at 9663369837: 9315 wins, 0 false, 78502 launches, 720 s
+  device-scan range 0 at 10083493351: 9708 wins, 0 false, 81907 launches, 750 s
+  device-scan range 0 at 10505309166: 10083 wins, 0 false, 85311 launches, 780 s
+  device-scan range 0 at 10924299771: 10504 wins, 0 false, 88716 launches, 810 s
+  device-scan range 0 at 11342675329: 10908 wins, 0 false, 92121 launches, 840 s
+  device-scan range 0 at 11762896833: 11305 wins, 0 false, 95524 launches, 870 s
+  device-scan range 0 at 12181795702: 11721 wins, 0 false, 98929 launches, 900 s
+  device-scan range 0 at 12603105622: 12104 wins, 0 false, 102334 launches, 930 s
+  device-scan range 0 at 13021808977: 12504 wins, 0 false, 105738 launches, 960 s
+  device-scan range 0 at 13440998237: 12894 wins, 0 false, 109143 launches, 990 s
+  device-scan range 0 at 13861221363: 13287 wins, 0 false, 112548 launches, 1020 s
+  device-scan range 0 at 14281320546: 13669 wins, 0 false, 115954 launches, 1050 s
+  device-scan range 0 at 14699551381: 14079 wins, 0 false, 119359 launches, 1080 s
+  device-scan range 0 at 15118763858: 14475 wins, 0 false, 122763 launches, 1110 s
+  device-scan range 0 at 15536243473: 14899 wins, 0 false, 126168 launches, 1140 s
+device-scan: 14931 winners, 0 false positives, 126422 launches, 15567367630 nonces in 1142.4 s (13626434 nonces/s)
+PROBE_DONE rc=0 1794559682
