@@ -1,0 +1,30 @@
+1794531282.347955000 booted 1 prover kernel(s) in 1.6s (pipelined proving)
+1794531304.989150000 calibration: 175915 hashes/s on CPU, 10 thread(s), upstream v5_pow_digest, 20.7s per proof -> tier 2^23 (~48s of grinding vs ~21s of proving per win)
+1794531305.183413000 challenge 2009615286794830020 from https://nockmark.xyz (k=16, tier 2^23); the clock is running
+1794531305.260645000 grinding 16 win(s) on CPU, 10 thread(s), upstream v5_pow_digest, pipelined with 1 prover(s)…
+1794531847.571369000   win 0: nonce 21524012 found 121.4s, proved 121.4-151.0s (29.6s, prover 0)
+1794531847.575004000   win 1: nonce 22991840 found 129.6s, proved 151.0-180.6s (29.6s, prover 0)
+1794531847.577967000   win 2: nonce 28907404 found 166.2s, proved 180.6-210.0s (29.4s, prover 0)
+1794531847.580813000   win 3: nonce 30171115 found 174.9s, proved 210.0-239.8s (29.8s, prover 0)
+1794531847.583304000   win 4: nonce 30849602 found 178.7s, proved 239.8-269.1s (29.3s, prover 0)
+1794531847.586178000   win 5: nonce 31795862 found 184.5s, proved 269.1-298.9s (29.8s, prover 0)
+1794531847.588882000   win 6: nonce 32048038 found 186.4s, proved 298.9-328.5s (29.6s, prover 0)
+1794531847.591226000   win 7: nonce 32727543 found 191.1s, proved 328.5-358.0s (29.5s, prover 0)
+1794531847.593827000   win 8: nonce 37374973 found 219.8s, proved 358.0-387.4s (29.5s, prover 0)
+1794531847.596735000   win 9: nonce 43020459 found 253.3s, proved 387.4-417.2s (29.8s, prover 0)
+1794531847.600091000   win 10: nonce 43102946 found 254.1s, proved 417.2-439.4s (22.1s, prover 0)
+1794531847.602604000   win 11: nonce 47240072 found 279.8s, proved 439.4-460.0s (20.6s, prover 0)
+1794531847.604873000   win 12: nonce 65374810 found 391.5s, proved 460.0-480.6s (20.6s, prover 0)
+1794531847.607188000   win 13: nonce 67833763 found 408.0s, proved 480.6-501.2s (20.6s, prover 0)
+1794531847.609772000   win 14: nonce 68916595 found 414.7s, proved 501.2-521.8s (20.6s, prover 0)
+1794531847.612626000   win 15: nonce 70355144 found 422.4s, proved 521.8-542.4s (20.6s, prover 0)
+1794531847.615948000 tock zk-bench — ZK v5 (Anthropos): Tip5 hashes of proof object 0, %5 proofs
+1794531847.618681000   backend:      CPU, 10 thread(s), upstream v5_pow_digest
+1794531847.621030000   proving:      pipelined (1 prover(s))
+1794531847.623269000   tier:         2^23 expected hashes/win
+1794531847.625648000   wins:         16 (70276491 hashes, 0.524x expected)
+1794531847.628117000   grind:        422.4s to the last win, 166357 hashes/s sustained, 317718 credited hashes/s
+1794531847.630492000   proving:      421.0s of proofs (26.3s per win); 120.0s after the last win
+1794531847.632728000   grind+prove:  542.4s, 247451 credited hashes/s (the registry's window adds network time)
+1794531872.001310000 submitted: run 5
+1794531872.009003000   https://nockmark.xyz/runs/5?track=zk

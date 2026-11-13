@@ -1,0 +1,150 @@
+{
+  "attempts": 50048847,
+  "backend": "CPU, 64 workers (upstream CpuSearchBackend::search_dense)",
+  "calibrated_attempts_per_sec": 28037.11646449771,
+  "calibrated_prove_s": 30.810676215,
+  "client_window_s": 2246.22093273,
+  "expected_attempts": 33554432.0,
+  "failures": 0,
+  "grind_s": 2126.165,
+  "hardware": "AMD Ryzen Threadripper PRO 5995WX 64-Cores / 128c / 251GB / Ubuntu 24.04.1 LTS / x86_64",
+  "k": 16,
+  "provers": 1,
+  "proving": "pipelined",
+  "run_id": 15,
+  "statement": "dense-peak",
+  "sustained_attempts_per_sec": 23539.493407143847,
+  "tier_attempts": 2097152.0,
+  "track": "ai",
+  "wall_s": 2230.713,
+  "wins": [
+    {
+      "found_s": 10.624229787,
+      "index": 318005,
+      "prove_done_s": 182.332723164,
+      "prove_s": 171.708,
+      "prove_start_s": 10.624260415,
+      "prover": 0
+    },
+    {
+      "found_s": 56.176199767,
+      "index": 1463172,
+      "prove_done_s": 338.383293835,
+      "prove_s": 156.05,
+      "prove_start_s": 182.332727092,
+      "prover": 0
+    },
+    {
+      "found_s": 338.528518985,
+      "index": 8038838,
+      "prove_done_s": 489.524828709,
+      "prove_s": 150.996,
+      "prove_start_s": 338.528538642,
+      "prover": 0
+    },
+    {
+      "found_s": 681.755553166,
+      "index": 17772089,
+      "prove_done_s": 837.120637239,
+      "prove_s": 155.365,
+      "prove_start_s": 681.755582241,
+      "prover": 0
+    },
+    {
+      "found_s": 729.871842364,
+      "index": 18909241,
+      "prove_done_s": 984.530239383,
+      "prove_s": 147.409,
+      "prove_start_s": 837.120640626,
+      "prover": 0
+    },
+    {
+      "found_s": 741.930938247,
+      "index": 19109425,
+      "prove_done_s": 1137.408847672,
+      "prove_s": 152.878,
+      "prove_start_s": 984.530242279,
+      "prover": 0
+    },
+    {
+      "found_s": 905.924720158,
+      "index": 22999772,
+      "prove_done_s": 1287.216218182,
+      "prove_s": 149.807,
+      "prove_start_s": 1137.4088517,
+      "prover": 0
+    },
+    {
+      "found_s": 963.778173947,
+      "index": 24215935,
+      "prove_done_s": 1451.952086307,
+      "prove_s": 164.735,
+      "prove_start_s": 1287.216221668,
+      "prover": 0
+    },
+    {
+      "found_s": 1204.319892471,
+      "index": 29810182,
+      "prove_done_s": 1599.02084132,
+      "prove_s": 147.068,
+      "prove_start_s": 1451.952089113,
+      "prover": 0
+    },
+    {
+      "found_s": 1269.426184013,
+      "index": 31147178,
+      "prove_done_s": 1759.71574161,
+      "prove_s": 160.694,
+      "prove_start_s": 1599.020844907,
+      "prover": 0
+    },
+    {
+      "found_s": 1491.757673488,
+      "index": 36104354,
+      "prove_done_s": 1919.712621547,
+      "prove_s": 159.996,
+      "prove_start_s": 1759.715745848,
+      "prover": 0
+    },
+    {
+      "found_s": 1537.255890533,
+      "index": 36994823,
+      "prove_done_s": 2079.81221803,
+      "prove_s": 160.099,
+      "prove_start_s": 1919.712624062,
+      "prover": 0
+    },
+    {
+      "found_s": 1567.287874355,
+      "index": 37659102,
+      "prove_done_s": 2146.126469775,
+      "prove_s": 66.314,
+      "prove_start_s": 2079.812221557,
+      "prover": 0
+    },
+    {
+      "found_s": 1786.981002672,
+      "index": 42573393,
+      "prove_done_s": 2174.37229393,
+      "prove_s": 28.245,
+      "prove_start_s": 2146.126476016,
+      "prover": 0
+    },
+    {
+      "found_s": 1810.987606988,
+      "index": 43033853,
+      "prove_done_s": 2202.453366866,
+      "prove_s": 28.081,
+      "prove_start_s": 2174.372298198,
+      "prover": 0
+    },
+    {
+      "found_s": 2126.164239184,
+      "index": 50048846,
+      "prove_done_s": 2230.713008807,
+      "prove_s": 28.259,
+      "prove_start_s": 2202.453371044,
+      "prover": 0
+    }
+  ]
+}

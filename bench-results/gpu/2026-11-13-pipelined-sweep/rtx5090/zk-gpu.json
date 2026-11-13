@@ -1,0 +1,149 @@
+{
+  "backend": "CUDA device 0 (262144 attempts/launch, search only)",
+  "calibrated_hashes_per_sec": 17282921.730930414,
+  "calibrated_prove_s": 37.121653613,
+  "client_window_s": 992.118539107,
+  "expected_hashes": 17179869184.0,
+  "failures": 0,
+  "grind_s": 929.3189519,
+  "hardware": "NVIDIA GeForce RTX 5090 32GB · host AMD EPYC 7663 56-Core Processor / 112c / 251GB / Ubuntu 24.04.1 LTS / x86_64",
+  "hashes": 15526464515,
+  "k": 16,
+  "provers": 4,
+  "proving": "pipelined",
+  "run_id": 7,
+  "sustained_hashes_per_sec": 16707358.096223067,
+  "tier_log2": 30.0,
+  "track": "zk",
+  "wall_s": 967.268729342,
+  "wins": [
+    {
+      "found_s": 26.092524016,
+      "nonce": 447977907,
+      "prove_done_s": 63.163330184,
+      "prove_s": 37.068011221,
+      "prove_start_s": 26.092584126,
+      "prover": 2
+    },
+    {
+      "found_s": 74.635047074,
+      "nonce": 1276694005,
+      "prove_done_s": 111.87182844,
+      "prove_s": 37.233154025,
+      "prove_start_s": 74.635102333,
+      "prover": 2
+    },
+    {
+      "found_s": 132.363289197,
+      "nonce": 2257556211,
+      "prove_done_s": 169.886979692,
+      "prove_s": 37.519851014,
+      "prove_start_s": 132.363344607,
+      "prover": 2
+    },
+    {
+      "found_s": 206.164397209,
+      "nonce": 3520354527,
+      "prove_done_s": 243.87582991,
+      "prove_s": 37.707753369,
+      "prove_start_s": 206.164428499,
+      "prover": 2
+    },
+    {
+      "found_s": 282.263540546,
+      "nonce": 4823030279,
+      "prove_done_s": 320.605703131,
+      "prove_s": 38.340186915,
+      "prove_start_s": 282.263568806,
+      "prover": 2
+    },
+    {
+      "found_s": 286.35164604,
+      "nonce": 4893129284,
+      "prove_done_s": 324.536324328,
+      "prove_s": 38.178607328,
+      "prove_start_s": 286.3516919,
+      "prover": 0
+    },
+    {
+      "found_s": 289.144494784,
+      "nonce": 4941023528,
+      "prove_done_s": 327.447449337,
+      "prove_s": 38.298617484,
+      "prove_start_s": 289.144532374,
+      "prover": 3
+    },
+    {
+      "found_s": 301.026604542,
+      "nonce": 5143412957,
+      "prove_done_s": 339.129650191,
+      "prove_s": 38.097955535,
+      "prove_start_s": 301.026663782,
+      "prover": 1
+    },
+    {
+      "found_s": 362.518017918,
+      "nonce": 6188903642,
+      "prove_done_s": 400.093550916,
+      "prove_s": 37.573544028,
+      "prove_start_s": 362.518070658,
+      "prover": 0
+    },
+    {
+      "found_s": 421.077201321,
+      "nonce": 7192894391,
+      "prove_done_s": 459.493595027,
+      "prove_s": 38.411845929,
+      "prove_start_s": 421.077239981,
+      "prover": 3
+    },
+    {
+      "found_s": 455.798112001,
+      "nonce": 7783153781,
+      "prove_done_s": 493.555109969,
+      "prove_s": 37.753280847,
+      "prove_start_s": 455.798154541,
+      "prover": 0
+    },
+    {
+      "found_s": 566.129852413,
+      "nonce": 9659576575,
+      "prove_done_s": 603.751209189,
+      "prove_s": 37.619436876,
+      "prove_start_s": 566.129894223,
+      "prover": 0
+    },
+    {
+      "found_s": 770.317755768,
+      "nonce": 13045987821,
+      "prove_done_s": 807.455408876,
+      "prove_s": 37.135533609,
+      "prove_start_s": 770.317809808,
+      "prover": 0
+    },
+    {
+      "found_s": 777.752711447,
+      "nonce": 13161352004,
+      "prove_done_s": 815.203851574,
+      "prove_s": 37.449063667,
+      "prove_start_s": 777.752766757,
+      "prover": 3
+    },
+    {
+      "found_s": 833.307711927,
+      "nonce": 14024630655,
+      "prove_done_s": 871.365699426,
+      "prove_s": 38.054387178,
+      "prove_start_s": 833.307747087,
+      "prover": 1
+    },
+    {
+      "found_s": 929.3189519,
+      "nonce": 15526464514,
+      "prove_done_s": 967.268729342,
+      "prove_s": 37.946087682,
+      "prove_start_s": 929.319008849,
+      "prover": 1
+    }
+  ]
+}

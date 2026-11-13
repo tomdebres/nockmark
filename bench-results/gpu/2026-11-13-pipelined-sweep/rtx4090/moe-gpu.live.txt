@@ -1,0 +1,80 @@
+start 1794534523.344417349
+nproc 20
+cgroup_cpu_max none
+model name	: Intel(R) Core(TM) i5-14600KF
+MemTotal:       32689004 kB
+NVIDIA GeForce RTX 4090, 580.95.05, 450.00 W, 3105 MHz, 1, 16
+58fe623de09ec417cfc3530e6a4ca2a19d450e7b
+1f6c1f32fe28897d798ef3505b55acae59fc1223ed4b120201a169ea93387c0e  assets/miner.jam
+1ff705aa15bcfee8f9d684512bed7a4937304d49a95aae553166a861cb4bacae  target/release/tock
+clk_tck 100
+args ai-bench --statement canonical-moe --gpu -k 16 --submit https://nockmark.xyz
+pid 34413
+exit 0 1794534791.924521935
+====TLOG
+1794534534.527764151 calibration: 1998213 attempts/sec measured over 2s on CUDA device 0 (32768 attempts/launch, jackpot search only), 9.0s per certificate -> tier 2^25 (33554432 expected attempts/win, ~269s of grinding for k=16, certificates proved alongside)
+1794534534.866273218 grinding to 16 canonical-MoE win(s) on CUDA device 0 (32768 attempts/launch), pipelined with 1 prover(s)…
+1794534567.365119967   win 1 (of k=16) at ordinal 65255285 (32.5s)
+1794534576.487081055   cert for ordinal 65255285: 9.1s (146295 bytes)
+1794534595.452914400   win 2 (of k=16) at ordinal 121530751 (60.6s)
+1794534604.739983430   cert for ordinal 121530751: 9.3s (146216 bytes)
+1794534616.043568224   win 3 (of k=16) at ordinal 162826567 (81.2s)
+1794534617.733937994   win 4 (of k=16) at ordinal 166170539 (82.9s)
+1794534625.229683663   cert for ordinal 162826567: 9.2s (146409 bytes)
+1794534634.555821801   cert for ordinal 166170539: 9.3s (146310 bytes)
+1794534642.023068412   win 5 (of k=16) at ordinal 214778667 (107.2s)
+1794534648.311927798   win 6 (of k=16) at ordinal 227336047 (113.4s)
+1794534651.271201613   cert for ordinal 214778667: 9.2s (146357 bytes)
+1794534660.624538457   cert for ordinal 227336047: 9.4s (146339 bytes)
+1794534682.271278853   win 7 (of k=16) at ordinal 295343602 (147.4s)
+1794534691.494270723   cert for ordinal 295343602: 9.2s (146341 bytes)
+1794534702.536416373   win 8 (of k=16) at ordinal 336004319 (167.7s)
+1794534711.620940097   cert for ordinal 336004319: 9.1s (146319 bytes)
+1794534713.438185619   win 9 (of k=16) at ordinal 357793312 (178.6s)
+1794534714.313959165   win 10 (of k=16) at ordinal 359519724 (179.4s)
+1794534717.285539980   win 11 (of k=16) at ordinal 365461199 (182.4s)
+1794534717.309939981   win 12 (of k=16) at ordinal 365468984 (182.4s)
+1794534722.706276675   cert for ordinal 357793312: 9.3s (146374 bytes)
+1794534731.956568433   cert for ordinal 359519724: 9.2s (146304 bytes)
+1794534741.182872516   cert for ordinal 365461199: 9.2s (146448 bytes)
+1794534741.676878443   win 13 (of k=16) at ordinal 414283474 (206.8s)
+1794534741.797581774   win 14 (of k=16) at ordinal 414498508 (206.9s)
+1794534742.628053121   win 15 (of k=16) at ordinal 416150048 (207.8s)
+1794534750.426117713   cert for ordinal 365468984: 9.2s (146325 bytes)
+1794534759.758039973   cert for ordinal 414283474: 9.3s (146461 bytes)
+1794534769.157490080   cert for ordinal 414498508: 9.4s (146408 bytes)
+1794534771.747004782   win 16 (of k=16) at ordinal 474386935 (236.9s)
+1794534778.158364156   cert for ordinal 416150048: 9.0s (146239 bytes)
+1794534787.179964957   cert for ordinal 474386935: 9.0s (146393 bytes)
+1794534787.185762095 tock ai-bench — Logos AI-PoW, canonical MoE block
+1794534787.186500404   statement:    canonical-moe
+1794534787.187176817   backend:      CUDA device 0 (32768 attempts/launch, jackpot search only)
+1794534787.187836030   challenge:    22518f5334d066c8ed195deb9905495c95b8103bb7911f6a9a809ca961b83ff8
+1794534787.188503858   target:       0000000000000000000000000000000000000000000000000000800000000000 (x F = 2^16)
+1794534787.189163053   tier:         33554432 expected attempts/win
+1794534787.189849148   granted:      2^25 by the registry
+1794534787.190468114   nonce rule:   canonical-ordinal-v3
+1794534787.191114538   hardware:     Intel(R) Core(TM) i5-14600KF (20 cores)
+1794534787.191787036   grind:        16 win(s) in 236.88s, 474386936 attempts
+1794534787.192417565   grind rate:   2002625.6 attempts/sec (131244.1 MMAC-equiv/s at F=2^16)
+1794534787.193033075   proving:      pipelined (1 prover(s))
+1794534787.193635128   cert prove:   min 9000 ms / mean 9223 ms / max 9399 ms
+1794534787.194225921   grind+prove:  252.3s, of which 15.4s after the last win
+1794534787.194998622   win:          ordinal 65255285 — found 32.5s, cert 146295 bytes, proved 32.5-41.6s (9121 ms)
+1794534787.195738112   win:          ordinal 121530751 — found 60.6s, cert 146216 bytes, proved 60.6-69.9s (9286 ms)
+1794534787.196573754   win:          ordinal 162826567 — found 81.2s, cert 146409 bytes, proved 81.2-90.4s (9185 ms)
+1794534787.197333038   win:          ordinal 166170539 — found 82.9s, cert 146310 bytes, proved 90.4-99.7s (9325 ms)
+1794534787.198145945   win:          ordinal 214778667 — found 107.2s, cert 146357 bytes, proved 107.2-116.4s (9248 ms)
+1794534787.198915756   win:          ordinal 227336047 — found 113.4s, cert 146339 bytes, proved 116.4-125.8s (9353 ms)
+1794534787.199697743   win:          ordinal 295343602 — found 147.4s, cert 146341 bytes, proved 147.4-156.6s (9222 ms)
+1794534787.200510018   win:          ordinal 336004319 — found 167.7s, cert 146319 bytes, proved 167.7-176.8s (9084 ms)
+1794534787.201552118   win:          ordinal 357793312 — found 178.6s, cert 146374 bytes, proved 178.6-187.8s (9267 ms)
+1794534787.202534118   win:          ordinal 359519724 — found 179.4s, cert 146304 bytes, proved 187.8-197.1s (9250 ms)
+1794534787.203531421   win:          ordinal 365461199 — found 182.4s, cert 146448 bytes, proved 197.1-206.3s (9226 ms)
+1794534787.204503556   win:          ordinal 365468984 — found 182.4s, cert 146325 bytes, proved 206.3-215.6s (9243 ms)
+1794534787.205541674   win:          ordinal 414283474 — found 206.8s, cert 146461 bytes, proved 215.6-224.9s (9331 ms)
+1794534787.206613264   win:          ordinal 414498508 — found 206.9s, cert 146408 bytes, proved 224.9-234.3s (9399 ms)
+1794534787.207872491   win:          ordinal 416150048 — found 207.8s, cert 146239 bytes, proved 234.3-243.3s (9000 ms)
+1794534787.209192164   win:          ordinal 474386935 — found 236.9s, cert 146393 bytes, proved 243.3-252.3s (9021 ms)
+1794534790.750551462 submitted: ai run 14
+1794534790.753261219   https://nockmark.xyz/runs/14?track=ai

@@ -1,0 +1,82 @@
+start 1794532909.350174354
+nproc 128
+cgroup_cpu_max 1785000 100000
+model name	: AMD Ryzen Threadripper PRO 5995WX 64-Cores
+MemTotal:       263706464 kB
+NVIDIA GeForce RTX 3090, 580.65.06, 330.00 W, 2100 MHz, 2, 16
+58fe623de09ec417cfc3530e6a4ca2a19d450e7b
+1f6c1f32fe28897d798ef3505b55acae59fc1223ed4b120201a169ea93387c0e  assets/miner.jam
+392045cf31263c2b30478d41e7aea23bf93a5113b234d7b78a1541488c33b23b  target/release/tock
+clk_tck 100
+args ai-bench --statement dense-peak -k 16 --submit https://nockmark.xyz
+pid 36291
+exit 0 1794535192.118492660
+====TLOG
+1794532912.707709890 calibration: 28037 attempts/sec on CPU, 64 workers (upstream CpuSearchBackend::search_dense); proving one throwaway certificate…
+1794532944.526811739 calibration: 30.8s per certificate -> tier 2^21 (2097152 expected attempts/win), ~20 min for k=16 against a 3 h window
+1794532944.658014936 grinding to 16 dense-peak win(s) on the CPU, pipelined with 1 prover(s)…
+1794532955.282610532   win 1 (of k=16) at extranonce 0 tile 318005 (10.6s)
+1794533000.834669069   win 2 (of k=16) at extranonce 2 tile 414596 (56.2s)
+1794533127.066132835   cert for attempt 318005: 171.7s (147159 bytes)
+1794533283.041645596   cert for attempt 1463172: 156.1s (147146 bytes)
+1794533283.187081502   win 3 (of k=16) at extranonce 15 tile 174518 (338.5s)
+1794533434.183200527   cert for attempt 8038838: 151.0s (147236 bytes)
+1794533626.413950732   win 4 (of k=16) at extranonce 33 tile 470585 (681.8s)
+1794533674.530272031   win 5 (of k=16) at extranonce 36 tile 34873 (729.9s)
+1794533686.589239553   win 6 (of k=16) at extranonce 36 tile 235057 (741.9s)
+1794533781.780206191   cert for attempt 17772089: 155.4s (147191 bytes)
+1794533850.582883083   win 7 (of k=16) at extranonce 43 tile 455388 (905.9s)
+1794533908.436342041   win 8 (of k=16) at extranonce 46 tile 98687 (963.8s)
+1794533929.264362158   cert for attempt 18909241: 147.4s (147088 bytes)
+1794534082.066947208   cert for attempt 19109425: 152.9s (147119 bytes)
+1794534148.978207382   win 9 (of k=16) at extranonce 56 tile 450054 (1204.3s)
+1794534214.084559438   win 10 (of k=16) at extranonce 59 tile 214186 (1269.4s)
+1794534231.874503117   cert for attempt 22999772: 149.8s (147145 bytes)
+1794534396.666710580   cert for attempt 24215935: 164.7s (147167 bytes)
+1794534436.416072216   win 11 (of k=16) at extranonce 68 tile 452770 (1491.8s)
+1794534481.914394124   win 12 (of k=16) at extranonce 70 tile 294663 (1537.3s)
+1794534511.945950299   win 13 (of k=16) at extranonce 71 tile 434654 (1567.3s)
+1794534543.679157033   cert for attempt 29810182: 147.1s (147149 bytes)
+1794534704.374297956   cert for attempt 31147178: 160.7s (147157 bytes)
+1794534731.639257170   win 14 (of k=16) at extranonce 81 tile 106065 (1787.0s)
+1794534755.646190104   win 15 (of k=16) at extranonce 82 tile 42237 (1811.0s)
+1794534864.370905280   cert for attempt 36104354: 160.0s (147272 bytes)
+1794535024.470534694   cert for attempt 36994823: 160.1s (147238 bytes)
+1794535070.822382171   win 16 (of k=16) at extranonce 95 tile 241486 (2126.2s)
+1794535090.785059824   cert for attempt 37659102: 66.3s (147065 bytes)
+1794535119.030562694   cert for attempt 42573393: 28.2s (147207 bytes)
+1794535147.111682279   cert for attempt 43033853: 28.1s (147060 bytes)
+1794535175.371381607   cert for attempt 50048846: 28.3s (147129 bytes)
+1794535175.592773143 tock ai-bench — Logos AI-PoW, dense-peak (mainnet production shape)
+1794535175.595254915   statement:    dense-peak
+1794535175.597287793   shape:        m=4096 k=8192 n=32768 r=512 tile=16 (524288 tiles per extranonce)
+1794535175.599084024   backend:      CPU, 64 workers (upstream CpuSearchBackend::search_dense)
+1794535175.600374173   challenge:    5a41429526b51eceabc4655cc7fc33923c74b8416df234786586d153f126f657
+1794535175.601963265   target:       0000000000000000000000000000000000000000000000000000400000000000 (x F = 2^21)
+1794535175.603647266   tier:         2097152 expected attempts/win
+1794535175.605199348   granted:      2^21 by the registry
+1794535175.606738666   nonce rule:   peak-extranonce-tile-v1
+1794535175.608302490   hardware:     AMD Ryzen Threadripper PRO 5995WX 64-Cores (128 cores)
+1794535175.609754764   grind:        16 win(s) in 2126.16s, 50048847 attempts
+1794535175.611590921   grind rate:   23539.5 attempts/sec (4.937e10 MAC-equiv/s at F=2^21)
+1794535175.613171477   proving:      pipelined (1 prover(s))
+1794535175.615104366   cert prove:   min 28081 ms / mean 126732 ms / max 171708 ms
+1794535175.617509444   grind+prove:  2230.7s, of which 104.5s after the last win
+1794535175.619477730   win:          attempt 318005 — found 10.6s, artifact 147159 bytes, proved 10.6-182.3s (171708 ms)
+1794535175.621055300   win:          attempt 1463172 — found 56.2s, artifact 147146 bytes, proved 182.3-338.4s (156050 ms)
+1794535175.622560584   win:          attempt 8038838 — found 338.5s, artifact 147236 bytes, proved 338.5-489.5s (150996 ms)
+1794535175.624143364   win:          attempt 17772089 — found 681.8s, artifact 147191 bytes, proved 681.8-837.1s (155365 ms)
+1794535175.625769425   win:          attempt 18909241 — found 729.9s, artifact 147088 bytes, proved 837.1-984.5s (147409 ms)
+1794535175.627188437   win:          attempt 19109425 — found 741.9s, artifact 147119 bytes, proved 984.5-1137.4s (152878 ms)
+1794535175.628685315   win:          attempt 22999772 — found 905.9s, artifact 147145 bytes, proved 1137.4-1287.2s (149807 ms)
+1794535175.630226917   win:          attempt 24215935 — found 963.8s, artifact 147167 bytes, proved 1287.2-1452.0s (164735 ms)
+1794535175.631718736   win:          attempt 29810182 — found 1204.3s, artifact 147149 bytes, proved 1452.0-1599.0s (147068 ms)
+1794535175.633087954   win:          attempt 31147178 — found 1269.4s, artifact 147157 bytes, proved 1599.0-1759.7s (160694 ms)
+1794535175.634736508   win:          attempt 36104354 — found 1491.8s, artifact 147272 bytes, proved 1759.7-1919.7s (159996 ms)
+1794535175.636182420   win:          attempt 36994823 — found 1537.3s, artifact 147238 bytes, proved 1919.7-2079.8s (160099 ms)
+1794535175.637710707   win:          attempt 37659102 — found 1567.3s, artifact 147065 bytes, proved 2079.8-2146.1s (66314 ms)
+1794535175.639333823   win:          attempt 42573393 — found 1787.0s, artifact 147207 bytes, proved 2146.1-2174.4s (28245 ms)
+1794535175.640817536   win:          attempt 43033853 — found 1811.0s, artifact 147060 bytes, proved 2174.4-2202.5s (28081 ms)
+1794535175.642229785   win:          attempt 50048846 — found 2126.2s, artifact 147129 bytes, proved 2202.5-2230.7s (28259 ms)
+1794535190.875536333 submitted: ai run 15
+1794535190.876754126   https://nockmark.xyz/runs/15?track=ai
