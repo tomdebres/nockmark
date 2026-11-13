@@ -1,14 +1,16 @@
 //! Golden path over real HTTP using the client code `tock zk-bench --submit`
-//! runs: fetch a ZK v5 challenge → grind k=2 winners → prove each through the
-//! miner kernel → submit → ranked by the server window. Needs a compiled
-//! `tock/assets/miner.jam`. Run:
+//! runs: fetch a ZK v5 challenge → grind k=3 winners, proving each through the
+//! miner kernel on two concurrent provers while the grind goes on → submit →
+//! ranked by the server window. Both server verifiers check every pipelined
+//! proof. Needs a compiled `tock/assets/miner.jam`. Run:
 //!   RUST_MIN_STACK=8388608 cargo test --release --test e2e -- --ignored --nocapture
 use std::future::IntoFuture;
 
 use base64::Engine;
 use tock::zkv5;
 
-const K: u64 = 2; // keeps this test ~1 min; prod default is 8
+const K: u64 = 3; // ~1 min with 2 provers; production k is 16
+const PROVERS: usize = 2;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
@@ -32,7 +34,12 @@ async fn golden_path_and_anti_cheat() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(axum::serve(listener, app).into_future());
-    let serf = tock::miner::boot_kernel(miner_jam, nockapp::utils::NOCK_STACK_SIZE_TINY).await;
+    let mut serfs = Vec::new();
+    for _ in 0..PROVERS {
+        serfs.push(
+            tock::miner::boot_kernel(miner_jam.clone(), nockapp::utils::NOCK_STACK_SIZE_TINY).await,
+        );
+    }
 
     // 1. challenge — via the miner-facing client, which checks it
     let t0 = std::time::Instant::now();
@@ -42,15 +49,32 @@ async fn golden_path_and_anti_cheat() {
     assert_eq!(ch.k, K);
     assert_eq!(ch.attempts, zkv5::ZK_ATTEMPTS_MIN);
 
-    // 2. grind and prove, exactly as zk-bench does
-    let g = zkv5::grind_cpu(ch.commitment, ch.target, K as usize, 4);
-    let mut proofs = Vec::new();
-    for w in &g.winners {
-        let out = zkv5::prove_win(&serf, &ch.commitment, w, &ch.target)
-            .await
-            .unwrap();
-        proofs.push(base64::engine::general_purpose::STANDARD.encode(&out.proof_jam));
-    }
+    // 2. grind and prove at once, exactly as zk-bench does
+    let opts = tock::pipeline::PipelineOptions::new(
+        K as usize,
+        PROVERS,
+        tock::pipeline::Proving::Pipelined,
+    );
+    let rt = tokio::runtime::Handle::current();
+    let (commitment, target) = (ch.commitment, ch.target);
+    let g = tokio::task::block_in_place(|| {
+        zkv5::run_pipelined(&serfs, &rt, commitment, target, opts, |sink| {
+            zkv5::grind_cpu_stage(sink, commitment, target, 4)
+        })
+    })
+    .unwrap();
+    assert_eq!(g.wins.len(), K as usize);
+    let nonces: Vec<zkv5::Belts5> = g.wins.iter().map(|w| w.win).collect();
+    assert!(zkv5::nonces_strictly_ascending(&nonces), "submitted in the registry's order");
+    assert!(
+        g.wins.iter().any(|w| w.started_at < g.grind_elapsed),
+        "a proof ran while the grind went on"
+    );
+    let proofs: Vec<String> = g
+        .wins
+        .iter()
+        .map(|w| base64::engine::general_purpose::STANDARD.encode(&w.proof.proof_jam))
+        .collect();
     let true_elapsed_ms = (t0.elapsed().as_secs_f64() * 1000.0).ceil() as u64;
 
     // 3. a lying grind time (1 ms) is ACCEPTED — it is display-only and
@@ -61,6 +85,7 @@ async fn golden_path_and_anti_cheat() {
         prover_version: tock::miner::NOCKCHAIN_PIN.into(),
         grind_elapsed_ms: 1,
         proofs: proofs.clone(),
+        proving: Some(tock::pipeline::Proving::Pipelined.as_str()),
     };
     let run_id = tock::client::submit_zk_run(&base, &sub).await.unwrap();
 
@@ -95,6 +120,7 @@ async fn golden_path_and_anti_cheat() {
     assert_eq!(rows[0]["id"].as_u64().unwrap(), run_id);
     assert_eq!(rows[0]["rank"].as_u64(), Some(1));
     assert_eq!(rows[0]["hardware"], "e2e-test");
+    assert_eq!(rows[0]["proving"], "pipelined");
     let ranked = rows[0]["verified_zk_hashes_per_sec_lb"].as_f64().unwrap();
     let honest = K as f64 * zkv5::ZK_ATTEMPTS_MIN as f64 / (true_elapsed_ms as f64 / 1000.0);
     assert!(
@@ -109,9 +135,10 @@ async fn golden_path_and_anti_cheat() {
     // (after the proving), so it covers the run less one round trip.
     assert!(rows[0]["server_window_ms"].as_u64().unwrap() + 1_000 >= true_elapsed_ms);
     eprintln!(
-        "e2e: {} wins, {} hashes ground in {:?}, ranked {ranked} H/s, honest bound {honest:.0}",
-        g.winners.len(),
+        "e2e: {} wins, {} hashes, grind {:?}, wall {:?}, ranked {ranked} H/s, honest bound {honest:.0}",
+        g.wins.len(),
         g.hashes,
-        g.elapsed
+        g.grind_elapsed,
+        g.wall
     );
 }

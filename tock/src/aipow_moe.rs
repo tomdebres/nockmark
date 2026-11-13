@@ -71,6 +71,8 @@ use ai_pow_miner::run::reference_grind_threshold;
 use ai_pow_zk::composite_public::CompositePublicInputs;
 use serde::{Deserialize, Serialize};
 
+use crate::pipeline::{self, PipelineOptions, PipelineReport, Proving, Sink, WinTiming};
+
 // ---------------------------------------------------------------------------
 // The canonical shape, mirrored from upstream's private constants
 // ---------------------------------------------------------------------------
@@ -291,6 +293,8 @@ pub struct AiMoeWin {
     /// Postcard bytes of [`AiMoeCertBlob`] — base64 this into `cert_b64`.
     pub submission_bytes: Vec<u8>,
     pub prove_ms: u64,
+    /// When it was found and proved, for a pipelined run.
+    pub timing: Option<WinTiming>,
 }
 
 /// Grind phase output.
@@ -306,10 +310,19 @@ pub struct MoeGrindResult {
 
 /// Full canonical-MoE ai-bench summary.
 pub struct AiMoeBenchSummary {
+    /// The proved wins, ascending by ordinal.
     pub wins: Vec<AiMoeWin>,
+    /// Grind start to the last win found (display only).
     pub grind_elapsed_ms: u64,
     pub total_attempts: u64,
+    /// `total_attempts / grind_elapsed`: the rate the grinder sustained.
     pub attempts_per_sec: f64,
+    /// Grind start to the last certificate done.
+    pub wall_ms: u64,
+    pub proving: Proving,
+    pub provers: usize,
+    /// Wins whose certificate failed (replaced, never submitted).
+    pub failures: Vec<(u32, String)>,
 }
 
 /// Fixed dev challenge for fully-local canonical-MoE runs. Distinct from
@@ -323,7 +336,9 @@ pub fn dev_challenge() -> [u8; 32] {
 // Grind
 // ---------------------------------------------------------------------------
 
-/// Grind ordinals 0, 1, 2, … strictly ascending until `k` jackpot wins.
+/// The grinding half of a run: walk ordinals 0, 1, 2, … and offer each
+/// jackpot win to `sink`, until the run has its wins. Returns the attempts
+/// evaluated.
 ///
 /// Uses [`PreparedReferenceMoeTemplate`] — upstream's own search template,
 /// which hoists the schedule and the (challenge-independent) matrices and
@@ -334,11 +349,9 @@ pub fn dev_challenge() -> [u8; 32] {
 ///
 /// Every winner is re-checked against the scalar oracle
 /// [`evaluate_reference_moe_jackpot`] before it is allowed to reach the prover,
-/// mirroring `grind_canonical_block_with_backend` — the same guard that keeps a
-/// (future, Phase B2) GPU backend from reporting a jackpot the CPU disagrees
-/// with.
-pub fn grind_moe(ch: &AiMoeChallenge) -> MoeGrindResult {
-    assert!(ch.k >= 1, "k must be at least 1");
+/// mirroring `grind_canonical_block_with_backend`. One thread: the template
+/// loop is sequential, so on a CPU-only host the provers have every other core.
+pub fn grind_moe_stage<P: Send>(sink: &Sink<'_, u32, P>, ch: &AiMoeChallenge) -> u64 {
     let threshold = moe_threshold(&ch.target).expect("canonical grind threshold");
     let template = PreparedReferenceMoeTemplate::new(
         &AI_MOE_PARAMS,
@@ -350,11 +363,13 @@ pub fn grind_moe(ch: &AiMoeChallenge) -> MoeGrindResult {
     .expect("PreparedReferenceMoeTemplate::new");
     let mut scratch = template.scratch();
 
-    let t0 = Instant::now();
-    let mut win_ordinals: Vec<u32> = Vec::with_capacity(ch.k as usize);
     let mut ordinal: u32 = 0;
     let mut attempts: u64 = 0;
-    while (win_ordinals.len() as u64) < ch.k {
+    let mut found: u64 = 0;
+    loop {
+        if !sink.need_more() && !sink.wait_for_more() {
+            break;
+        }
         let out = template.evaluate(ordinal, &mut scratch);
         attempts += 1;
         if hash_le_target(&out.jackpot_hash, &threshold) {
@@ -373,25 +388,41 @@ pub fn grind_moe(ch: &AiMoeChallenge) -> MoeGrindResult {
                 oracle, out.jackpot_hash,
                 "template jackpot disagrees with the canonical scalar oracle at ordinal {ordinal}"
             );
-            win_ordinals.push(ordinal);
+            found += 1;
             eprintln!(
-                "  win {}/{} at ordinal {ordinal} ({:.1}s)",
-                win_ordinals.len(),
+                "  win {found} (of k={}) at ordinal {ordinal} ({:.1}s)",
                 ch.k,
-                t0.elapsed().as_secs_f64()
+                sink.elapsed().as_secs_f64()
             );
+            sink.offer(ordinal);
         }
         ordinal = ordinal
             .checked_add(1)
             .expect("canonical ordinal space (u32) exhausted: the target is too hard for this shape");
     }
-    let elapsed_s = t0.elapsed().as_secs_f64();
+    attempts
+}
+
+/// Grind ordinals 0, 1, 2, … until `k` jackpot wins, proving nothing:
+/// [`grind_moe_stage`] under a pipeline whose prover accepts every win. For
+/// tests and the GPU cross-check; `ai-bench` proves as it grinds ([`run`]).
+pub fn grind_moe(ch: &AiMoeChallenge) -> MoeGrindResult {
+    assert!(ch.k >= 1, "k must be at least 1");
+    let r = pipeline::run(
+        PipelineOptions::new(ch.k as usize, 1, Proving::Pipelined),
+        |sink: &Sink<'_, u32, ()>| grind_moe_stage(sink, ch),
+        |_, _| Ok(()),
+    )
+    .expect("a grind with an infallible prover always finishes");
+    let mut win_ordinals: Vec<u32> = r.proved.iter().map(|p| p.win).collect();
+    win_ordinals.sort_unstable();
+    let elapsed_s = r.grind_elapsed.as_secs_f64();
     MoeGrindResult {
         win_ordinals,
         // Round UP like the ZK/dense benches: never claim faster than measured.
         elapsed_ms: (elapsed_s * 1000.0).ceil().max(1.0) as u64,
-        total_attempts: attempts,
-        attempts_per_sec: attempts as f64 / elapsed_s.max(1e-9),
+        total_attempts: r.grind,
+        attempts_per_sec: r.grind as f64 / elapsed_s.max(1e-9),
     }
 }
 
@@ -463,69 +494,112 @@ pub fn calibrate_moe_prove_secs() -> f64 {
 // Prove
 // ---------------------------------------------------------------------------
 
-/// Prove a canonical MoE block per winning ordinal (~25-30 s each on CPU).
+/// Prove the canonical MoE block for one winning ordinal (~25-30 s on a CPU).
 ///
 /// Uses upstream's [`prove_reference_moe_block_at`] verbatim — the same call
 /// the gateway-free production miner makes on a jackpot hit — so the certified
-/// statement is byte-identical to a real submission's. Note it exposes no
-/// prover-cache reuse (unlike the dense path's
-/// `…_with_prover_cache`), so every win pays the full setup; that is a fixed
-/// per-win cost outside the measured window, not a throughput term.
-pub fn prove_moe_wins(ch: &AiMoeChallenge, win_ordinals: &[u32]) -> Vec<AiMoeWin> {
-    let mut wins = Vec::with_capacity(win_ordinals.len());
-    for &ordinal in win_ordinals {
-        let t0 = Instant::now();
-        let block = prove_reference_moe_block_at(
-            &AI_MOE_PARAMS,
-            AI_MOE_HW,
-            AI_MOE_E,
-            AI_MOE_TOP_K,
-            ch.challenge,
-            ordinal,
-        )
-        .expect("prove canonical MoE block");
-        let prove_ms = t0.elapsed().as_millis() as u64;
-        let AiProofNode::Bytes(cert_bytes) = &block.certificate.certificate else {
-            panic!("production compact certificate must use the canonical byte node");
-        };
-        eprintln!(
-            "  cert for ordinal {ordinal}: {:.1}s ({} bytes)",
-            prove_ms as f64 / 1000.0,
-            cert_bytes.len()
-        );
-        let blob = AiMoeCertBlob {
-            ordinal,
-            pis: block.certificate.public_inputs.clone(),
-            cert_bytes: cert_bytes.clone(),
-        };
-        let submission_bytes = postcard::to_allocvec(&blob).expect("encode MoE submission blob");
-        wins.push(AiMoeWin {
-            ordinal,
-            cert_bytes: cert_bytes.clone(),
-            submission_bytes,
-            prove_ms,
-        });
-    }
-    wins
+/// statement is byte-identical to a real submission's. It exposes no
+/// prover-cache reuse (unlike the dense path's `…_with_prover_cache`), so
+/// every win pays the full setup.
+pub fn prove_moe_win(ch: &AiMoeChallenge, ordinal: u32) -> Result<AiMoeWin, String> {
+    let t0 = Instant::now();
+    let block = prove_reference_moe_block_at(
+        &AI_MOE_PARAMS,
+        AI_MOE_HW,
+        AI_MOE_E,
+        AI_MOE_TOP_K,
+        ch.challenge,
+        ordinal,
+    )
+    .map_err(|e| format!("prove canonical MoE block at ordinal {ordinal}: {e:?}"))?;
+    let prove_ms = t0.elapsed().as_millis() as u64;
+    let AiProofNode::Bytes(cert_bytes) = &block.certificate.certificate else {
+        return Err("production compact certificate must use the canonical byte node".into());
+    };
+    eprintln!(
+        "  cert for ordinal {ordinal}: {:.1}s ({} bytes)",
+        prove_ms as f64 / 1000.0,
+        cert_bytes.len()
+    );
+    let blob = AiMoeCertBlob {
+        ordinal,
+        pis: block.certificate.public_inputs.clone(),
+        cert_bytes: cert_bytes.clone(),
+    };
+    let submission_bytes =
+        postcard::to_allocvec(&blob).map_err(|e| format!("encode MoE submission blob: {e}"))?;
+    Ok(AiMoeWin {
+        ordinal,
+        cert_bytes: cert_bytes.clone(),
+        submission_bytes,
+        prove_ms,
+        timing: None,
+    })
 }
 
-/// The full local canonical-MoE workload: grind to k wins, then certify each.
-pub fn run(ch: &AiMoeChallenge) -> AiMoeBenchSummary {
-    eprintln!("grinding to {} canonical-MoE win(s)…", ch.k);
-    let grind = grind_moe(ch);
-    eprintln!(
-        "grind window closed: {} attempts in {:.1}s",
-        grind.total_attempts,
-        grind.elapsed_ms as f64 / 1000.0
-    );
-    eprintln!("proving {} certificate(s)…", grind.win_ordinals.len());
-    let wins = prove_moe_wins(ch, &grind.win_ordinals);
+/// Prove a canonical MoE block per winning ordinal, one after another.
+pub fn prove_moe_wins(ch: &AiMoeChallenge, win_ordinals: &[u32]) -> Vec<AiMoeWin> {
+    win_ordinals
+        .iter()
+        .map(|&o| prove_moe_win(ch, o).unwrap_or_else(|e| panic!("{e}")))
+        .collect()
+}
+
+/// A finished canonical-MoE pipeline as the bench summary: wins ascending by
+/// ordinal (the order the registry takes), each with its timeline.
+pub fn summarize_moe(r: PipelineReport<u32, AiMoeWin, u64>) -> AiMoeBenchSummary {
+    let mut wins: Vec<AiMoeWin> = r
+        .proved
+        .into_iter()
+        .map(|p| {
+            let timing = Some(WinTiming {
+                found_at: p.found_at,
+                started_at: p.started_at,
+                done_at: p.done_at,
+                worker: p.worker,
+            });
+            AiMoeWin { timing, ..p.proof }
+        })
+        .collect();
+    wins.sort_by_key(|w| w.ordinal);
+    let elapsed_s = r.grind_elapsed.as_secs_f64();
     AiMoeBenchSummary {
         wins,
-        grind_elapsed_ms: grind.elapsed_ms,
-        total_attempts: grind.total_attempts,
-        attempts_per_sec: grind.attempts_per_sec,
+        // Round UP like the ZK/dense benches: never claim faster than measured.
+        grind_elapsed_ms: (elapsed_s * 1000.0).ceil().max(1.0) as u64,
+        total_attempts: r.grind,
+        attempts_per_sec: r.grind as f64 / elapsed_s.max(1e-9),
+        wall_ms: r.wall.as_millis() as u64,
+        proving: r.options.proving,
+        provers: r.options.provers,
+        failures: r.failures,
     }
+}
+
+/// The local canonical-MoE workload on the CPU: grind to k wins, certifying
+/// each as it is found (or after the grind, for [`Proving::Serial`]).
+pub fn run_with(ch: &AiMoeChallenge, opts: PipelineOptions) -> Result<AiMoeBenchSummary, String> {
+    eprintln!(
+        "grinding to {} canonical-MoE win(s), {} with {} prover(s)…",
+        ch.k,
+        opts.proving.as_str(),
+        opts.provers
+    );
+    let r = pipeline::run(
+        opts,
+        |sink: &Sink<'_, u32, AiMoeWin>| grind_moe_stage(sink, ch),
+        |_, &ordinal| prove_moe_win(ch, ordinal),
+    )?;
+    Ok(summarize_moe(r))
+}
+
+/// [`run_with`] at the defaults: pipelined, [`crate::aipow::AI_DEFAULT_PROVERS`].
+pub fn run(ch: &AiMoeChallenge) -> AiMoeBenchSummary {
+    run_with(
+        ch,
+        PipelineOptions::new(ch.k as usize, crate::aipow::AI_DEFAULT_PROVERS, Proving::Pipelined),
+    )
+    .unwrap_or_else(|e| panic!("canonical-MoE run failed: {e}"))
 }
 
 // ---------------------------------------------------------------------------

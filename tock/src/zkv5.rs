@@ -41,8 +41,8 @@
 //! difficulty counts, which is what makes the earnings estimate a straight
 //! division.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ibig::UBig;
@@ -56,6 +56,7 @@ use zkvm_jetpack::form::ProofData;
 
 use crate::aipow::AI_TIER_PROVE_RATIO;
 use crate::miner::{self, ProveOutput};
+use crate::pipeline::{self, PipelineOptions, Proved, Proving, Sink};
 
 /// Puzzle length every v5 win must use: mainnet's `pow-len`.
 pub const ZK_V5_POW_LEN: u64 = 64;
@@ -312,6 +313,10 @@ pub struct GrindResult {
     pub elapsed: Duration,
 }
 
+/// The grinder's end of a ZK run's pipeline: wins are nonces, proofs are
+/// the miner kernel's output.
+pub type ZkSink<'a> = Sink<'a, Belts5, ProveOutput>;
+
 /// CPU grind threads to use when the caller does not say: every core.
 pub fn default_threads() -> usize {
     std::thread::available_parallelism()
@@ -319,34 +324,38 @@ pub fn default_threads() -> usize {
         .unwrap_or(1)
 }
 
-/// Grind on `threads` CPU threads until `k` nonces meet `target`.
+/// The grinding half of a run on `threads` CPU threads: offer every nonce that
+/// meets `target` to `sink`, until the run has its wins. Returns the digests
+/// evaluated.
 ///
 /// Thread `t` walks attempts `t, t + threads, t + 2·threads, …` through
-/// [`nonce_at`], so together they cover `0, 1, 2, …` once each. When several
-/// threads win at once more than `k` winners can be found; the smallest `k` are
-/// kept (any `k` distinct winners earn the same credit).
-pub fn grind_cpu(commitment: Belts5, target: Belts5, k: usize, threads: usize) -> GrindResult {
-    assert!(k >= 1 && threads >= 1);
-    let done = Arc::new(AtomicBool::new(false));
-    let hashes = Arc::new(AtomicU64::new(0));
-    let winners = Arc::new(Mutex::new(Vec::<Belts5>::new()));
-    let t0 = Instant::now();
+/// [`nonce_at`], so together they cover `0, 1, 2, …` once each and every
+/// offered win is distinct. When several threads win at once, the sink keeps
+/// the first `k` and drops the rest (any `k` distinct winners earn the same
+/// credit).
+pub fn grind_cpu_stage<P: Send>(
+    sink: &Sink<'_, Belts5, P>,
+    commitment: Belts5,
+    target: Belts5,
+    threads: usize,
+) -> u64 {
+    assert!(threads >= 1);
+    let hashes = AtomicU64::new(0);
     std::thread::scope(|s| {
         for tid in 0..threads as u64 {
-            let (done, hashes, winners) = (done.clone(), hashes.clone(), winners.clone());
+            let hashes = &hashes;
             s.spawn(move || {
                 let mut i = tid;
                 let mut local = 0u64;
-                while !done.load(Ordering::Relaxed) {
+                loop {
+                    if !sink.need_more() && !sink.wait_for_more() {
+                        break;
+                    }
                     let nonce = nonce_at(i);
                     let digest = v5_pow_digest(commitment, nonce, ZK_V5_POW_LEN);
                     local += 1;
                     if digest_le(&digest, &target) {
-                        let mut w = winners.lock().expect("winners lock");
-                        w.push(nonce);
-                        if w.len() >= k {
-                            done.store(true, Ordering::Relaxed);
-                        }
+                        sink.offer(nonce);
                     }
                     i += threads as u64;
                 }
@@ -354,26 +363,44 @@ pub fn grind_cpu(commitment: Belts5, target: Belts5, k: usize, threads: usize) -
             });
         }
     });
-    let elapsed = t0.elapsed();
-    let mut winners = Arc::try_unwrap(winners)
-        .expect("grind threads joined")
-        .into_inner()
-        .expect("winners lock");
-    winners.sort_by(|a, b| {
-        if nonce_lt(a, b) {
-            std::cmp::Ordering::Less
-        } else if nonce_lt(b, a) {
-            std::cmp::Ordering::Greater
-        } else {
-            std::cmp::Ordering::Equal
-        }
-    });
-    winners.truncate(k);
+    hashes.load(Ordering::Relaxed)
+}
+
+/// Grind on `threads` CPU threads until `k` nonces meet `target`, proving
+/// nothing: [`grind_cpu_stage`] under a pipeline whose prover accepts every
+/// win. For fixtures and tests; `zk-bench` proves as it grinds
+/// ([`run_pipelined`]).
+pub fn grind_cpu(commitment: Belts5, target: Belts5, k: usize, threads: usize) -> GrindResult {
+    assert!(k >= 1);
+    let r = pipeline::run(
+        PipelineOptions::new(k, 1, Proving::Pipelined),
+        |sink: &Sink<'_, Belts5, ()>| grind_cpu_stage(sink, commitment, target, threads),
+        |_, _| Ok(()),
+    )
+    .expect("a grind with an infallible prover always finishes");
+    let mut winners: Vec<Belts5> = r.proved.iter().map(|p| p.win).collect();
+    sort_ascending(&mut winners);
     GrindResult {
         winners,
-        hashes: hashes.load(Ordering::Relaxed),
-        elapsed,
+        hashes: r.grind,
+        elapsed: r.grind_elapsed,
     }
+}
+
+/// The base-p order of [`nonce_lt`] as an `Ordering`.
+pub fn nonce_cmp(a: &Belts5, b: &Belts5) -> std::cmp::Ordering {
+    if nonce_lt(a, b) {
+        std::cmp::Ordering::Less
+    } else if nonce_lt(b, a) {
+        std::cmp::Ordering::Greater
+    } else {
+        std::cmp::Ordering::Equal
+    }
+}
+
+/// Sort nonces into the base-p order the registry requires.
+pub fn sort_ascending(nonces: &mut [Belts5]) {
+    nonces.sort_by(nonce_cmp);
 }
 
 /// Measure this machine's CPU hash rate on `threads` threads for `budget`.
@@ -439,6 +466,74 @@ pub async fn calibrate_prove_secs(serf: &SerfThread<SaveableCheckpoint>) -> f64 
         .await
         .expect("the maximum target admits every nonce");
     out.duration.as_secs_f64()
+}
+
+/// Concurrent provers for a ZK run when the caller does not say.
+///
+/// Each prover is one Serf proving one winner on ONE core (~21–40 s), and at
+/// `R = 2` a win arrives every ~2 proofs, so one prover keeps up on average;
+/// more only shorten the queue a burst of wins leaves behind. With a GPU
+/// grinding the cores are otherwise idle: 4, which PR #36's probe ran beside
+/// the device at no cost to its rate (8 concurrent proofs, each within 4 % of
+/// a lone one). With a CPU grinder every prover takes a core from the grind:
+/// 1.
+pub fn default_provers(gpu: bool) -> usize {
+    if gpu {
+        default_threads().saturating_sub(1).clamp(1, 4)
+    } else {
+        1
+    }
+}
+
+/// A finished ZK run: `k` proved winners, ascending.
+pub struct ZkRun {
+    /// The proved wins, strictly ascending by nonce: the order the registry
+    /// takes them in.
+    pub wins: Vec<Proved<Belts5, ProveOutput>>,
+    /// Digests evaluated (client-side count, display only).
+    pub hashes: u64,
+    /// Grind start to the last of the wins being found.
+    pub grind_elapsed: Duration,
+    /// Grind start to the last proof done.
+    pub wall: Duration,
+    /// Winners whose proof failed (replaced by later ones, never submitted).
+    pub failures: Vec<(Belts5, String)>,
+    pub options: PipelineOptions,
+}
+
+/// Grind and prove one ZK run: `grind` offers winners (see
+/// [`grind_cpu_stage`], or the CUDA stage), and `opts.provers` Serfs prove
+/// them through the miner kernel as they arrive.
+///
+/// `serfs[i]` serves prover `i`, so there must be at least `opts.provers` of
+/// them (one for a serial run). `rt` drives their pokes from the prover
+/// threads; call this from a blocking context (`block_in_place`).
+pub fn run_pipelined(
+    serfs: &[SerfThread<SaveableCheckpoint>],
+    rt: &tokio::runtime::Handle,
+    commitment: Belts5,
+    target: Belts5,
+    opts: PipelineOptions,
+    grind: impl FnOnce(&ZkSink<'_>) -> u64,
+) -> Result<ZkRun, String> {
+    let provers = match opts.proving {
+        Proving::Serial => 1,
+        Proving::Pipelined => opts.provers.max(1),
+    };
+    assert!(serfs.len() >= provers, "one Serf per prover");
+    let r = pipeline::run(opts, grind, |worker, nonce: &Belts5| {
+        rt.block_on(prove_win(&serfs[worker], &commitment, nonce, &target))
+    })?;
+    let mut wins = r.proved;
+    wins.sort_by(|a, b| nonce_cmp(&a.win, &b.win));
+    Ok(ZkRun {
+        wins,
+        hashes: r.grind,
+        grind_elapsed: r.grind_elapsed,
+        wall: r.wall,
+        failures: r.failures,
+        options: r.options,
+    })
 }
 
 // ---------------------------------------------------------------------------

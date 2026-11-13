@@ -183,6 +183,38 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
      exercised: no card's tier rounded up to it.
    - **RunPod spend:** $0.90 (balance $7.75 → $6.85), community cloud,
      4090 at $0.34/h and 5090 at $0.69/h, about 52 min each.
+   - **Part 2a: pipelined clients (this PR).** Tom chose 2026-11-12: fix the
+     clients first, then re-measure every row in one sweep.
+     - Both clients now prove while grinding (`tock::pipeline`): the grinder
+       hands each win to a prover pool the moment it finds it and keeps
+       going, and pauses only once k wins are in hand. `zk-bench` runs a pool
+       of miner kernels (default 4 beside a GPU, 1 beside a CPU grind);
+       `ai-bench` canonical-moe and dense-peak, CPU and GPU, one certificate
+       at a time by default (upstream's AI provers share one process-wide
+       rayon pool). A failed proof gives its slot back and the grind finds a
+       replacement; the failed win is never submitted. `--serial` keeps the
+       old client for comparison.
+     - Submission is unchanged: one batch of k wins, as before. The registry
+       still credits k × expected-attempts(T_b) over its own mint-to-commit
+       window and trusts no client timing.
+     - **Server rules re-checked under pipelining.** The tier rule (R = 2)
+       still makes the proof time cancel: the window is k·R·p + p, so recovery
+       is kR/(kR + 1) ≈ 97 % at k = 16 on every host. The 1 h expiry and
+       dense-peak's 3 h window are only looser now (runs are about a third
+       shorter). None of the three was wrong, so none changed.
+     - **Comparability.** Every run committed before 2026-11-13 00:00 UTC
+       (server clock) came from the serial client. Once a board has a
+       current-rules row committed after that, it ranks only those; the
+       older rows stay listed, labelled `serial`, `rank: null`. Runs also
+       carry the client's own `"proving"` label, which ranks nothing. See
+       Decisions.
+     - **Measured on the M1 Max CPU** (ZK v5, tier 2²³, k = 8, one machine,
+       one hour; `bench-results/cpu/2026-11-12-m1-pipelining/`): the time
+       after the last win fell from 169.3 s (8 proofs) to 31.9 s (one proof
+       made beside the grind), and the server window from 492.7 s to 392.5 s.
+       At luck 1 that is 0.69 → 0.87 of the uncontended rate, as the model
+       predicts. The CPU grind lost 4.8 % to the prover beside it; nine grind
+       threads instead of ten changed nothing.
    - **AI half and the write-up:** not started.
 
 ## Decisions
@@ -208,3 +240,19 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
 - **ZK k = 16**, the AI track's k, for ±25% Poisson noise (k = 8 gave ±35%;
   the first M1 Max row at k = 8 landed at 38% of its calibrated rate on 2.55×
   bad luck). Tier ceiling 2³¹ so 16 wins fit the 1 h expiry on a 5090.
+- **Serial rows after pipelining (step 5, part 2a, 2026-11-13).** Kept, not
+  deleted, and labelled `serial`. A serial row understates its machine by
+  about 1.4× against a pipelined one, so a mixed ranking would order cards by
+  client version. The cut is server-attested: rows committed before
+  2026-11-13 00:00 UTC (`PIPELINED_CLIENT_SINCE_MS`; the last live row before
+  it was at 2026-11-12 22:18) stay ranked only until their board has a newer
+  current-rules row, then follow the ranked rows with `rank: null`. Every
+  ranked row is re-measured in the step 5 sweep, so the switch costs no
+  coverage. The client's `proving` label is recorded and shown but ranks
+  nothing. The first draft ranked on that label; the adversarial review
+  (29 agents, 2026-11-13) showed one false "pipelined" row could then unrank
+  every honest row on a board, so it was replaced before merge.
+- **Submission stays one batch of k** under pipelining. Per-win submission
+  would let the server verify while the client grinds and save the ~25 s
+  upload-and-verify tail (≈1.4 %), but it needs partial-run state on the
+  server and a new attack surface. Not worth it.

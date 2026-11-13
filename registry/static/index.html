@@ -135,8 +135,12 @@
   a winning nonce gets a full proof. Each run proves k winners of this
   server's challenge; every proof is verified twice, and the rate is k × the
   tier's expected hashes over the server's own clock. <b>Tier</b>: hashes per
-  win, set at twice the machine's proving time. A GPU only searches; the CPU
-  proves. Details on <a href="/api">/api</a>.</p>
+  win, set at twice the machine's proving time. The client proves each winner
+  while it keeps grinding (a GPU only searches; the CPU proves), so the window
+  is the grind plus one proof. Rows marked <b>serial</b> proved after the
+  grind, which costs about a third of the rate; those from before the
+  pipelined client are unranked once newer rows exist. Details on
+  <a href="/api">/api</a>.</p>
   <div id="pre" hidden>
     <div class="eyebrow sub">Before Anthropos — complete proofs per second, unranked</div>
     <div class="scroll">
@@ -175,7 +179,9 @@
   verified the same way. Three statements share one board in MAC-equivalents,
   the unit consensus compares them in: dense, canonical MoE, and
   <b>dense-peak</b>, mainnet's production shape (4096 × 8192 × 32768, 16 × 16
-  tiles). Only rows under mainnet's current rules (Hardened) are ranked.</p>
+  tiles). Only rows under mainnet's current rules (Hardened) are ranked, and,
+  as on ZK, rows from before the pipelined client only until newer ones
+  exist.</p>
   <p class="econ"><b>GPU rows are a floor.</b> They are legacy-rules runs of the
   generic CUDA kernel on canonical MoE; upstream's peak kernel does about
   1,700× more on dense-peak. A re-run is next.</p>
@@ -235,10 +241,12 @@ const usd = v => v == null ? '—' : '$' + (v >= 1 ? v.toFixed(2) : v.toPrecisio
 const tb = document.querySelector('#board tbody');
 
 // The prover cell: the client's pin label, then the rules the row was
-// measured under (server-side). Set as text: prover_version is whatever the
-// submitter sent.
+// measured under (server-side), then "serial" for a row whose proofs came
+// after the grind (client-reported). Set as text: prover_version is whatever
+// the submitter sent.
 const RULES = { anthropos: 'Anthropos', 'pre-anthropos': 'pre-Anthropos', legacy: 'legacy rules', hardened: 'Hardened' };
-const prover = r => r.rules ? `${r.prover_version} · ${RULES[r.rules] || r.rules}` : r.prover_version;
+const prover = r => (r.rules ? `${r.prover_version} · ${RULES[r.rules] || r.rules}` : r.prover_version) +
+  (r.proving === 'serial' ? ' · serial' : '');
 
 // The ZK board: v5 rows (rules "anthropos") are ranked; the pre-Anthropos
 // proofs/sec rows follow, unranked, in their own table.

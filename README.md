@@ -113,8 +113,12 @@ sized so each win grinds for twice that measured prove time. Otherwise fast
 hardware finishes grinding in milliseconds and its ranked rate is nothing but
 the fixed certificate-proving cost inside the measured window. Sizing against
 your own prove time is what makes the comparison fair across machines: every
-host's ranked rate then recovers the same ~2/3 of its true grind throughput,
-instead of a fraction that depends on whichever CPU did the proving. Pass
+host's ranked rate then recovers the same fraction of its true grind
+throughput, instead of one that depends on whichever CPU did the proving.
+Both clients prove each win while the grind goes on, so the window is the grind
+plus one certificate and that fraction is about 97 % at k = 16 (2/3 for a run
+made the old way, grind first and prove after; rows from before the
+pipelined client are marked `serial` and unranked once newer rows exist). Pass
 `--attempts <n>` to pick the tier yourself (expected grind attempts per win) or
 `--target <hex>` to pin the difficulty outright; either skips the calibration,
 including the prove.

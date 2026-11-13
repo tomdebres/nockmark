@@ -84,7 +84,9 @@ pub struct ZkV5LeaderboardEntry {
     pub server_window_ms: u64,
     #[serde(flatten)]
     pub rates: crate::zkv5::ZkV5Rates,
-    /// 1-based rank among current-rules rows. Every v5 row is current-rules.
+    /// 1-based rank among current-rules rows (every v5 row is current-rules).
+    /// `None` for a row from before the pipelined client once the board has a
+    /// newer one ([`crate::proving`]).
     pub rank: Option<u64>,
     /// NOCK/day at the observed ZK difficulty, from the ranked
     /// `verified_zk_hashes_per_sec_lb`. Absent while economics is unconfigured.
@@ -138,45 +140,68 @@ fn by_desc(a: f64, b: f64) -> std::cmp::Ordering {
 
 /// The ZK board: v5 rows ranked by verified Tip5 hashes/s, then the
 /// pre-Anthropos proofs/sec rows, unranked, fastest first.
+///
+/// Once any v5 row was committed after the pipelined client's release, only
+/// such rows are ranked; older v5 rows follow them unranked
+/// ([`crate::proving`]). Server-attested: the commit time, never the client's
+/// `proving` label.
 fn zk_board(
     v5: Vec<ZkV5LeaderboardEntry>,
     legacy: Vec<LeaderboardEntry>,
 ) -> Vec<ZkBoardRow> {
-    let mut v5 = v5;
-    v5.sort_by(|a, b| {
+    use crate::proving::{before_pipelining, is_ranked};
+    let has_newer = v5.iter().any(|e| !before_pipelining(e.run.submitted_at_ms));
+    let (mut ranked, mut serial): (Vec<_>, Vec<_>) = v5
+        .into_iter()
+        .partition(|e| is_ranked(before_pipelining(e.run.submitted_at_ms), has_newer));
+    let by_rate = |a: &ZkV5LeaderboardEntry, b: &ZkV5LeaderboardEntry| {
         by_desc(
             a.rates.verified_zk_hashes_per_sec_lb,
             b.rates.verified_zk_hashes_per_sec_lb,
         )
-    });
-    for (i, e) in v5.iter_mut().enumerate() {
+    };
+    ranked.sort_by(by_rate);
+    serial.sort_by(by_rate);
+    for (i, e) in ranked.iter_mut().enumerate() {
         e.rank = Some(i as u64 + 1);
     }
     let mut legacy = legacy;
     legacy.sort_by(|a, b| by_desc(a.proofs_per_sec, b.proofs_per_sec));
-    v5.into_iter()
+    ranked
+        .into_iter()
+        .chain(serial)
         .map(ZkBoardRow::V5)
         .chain(legacy.into_iter().map(ZkBoardRow::PreAnthropos))
         .collect()
 }
 
 /// The AI board: rows verified under the current rules (`hardened`) ranked
-/// by verified MAC-equivalents/s, then every earlier row, unranked.
+/// by verified MAC-equivalents/s, then every other row, unranked.
+///
+/// Once any current-rules row was committed after the pipelined client's
+/// release, only such rows are ranked; older current-rules rows follow them,
+/// unranked, before the earlier-rules rows ([`crate::proving`]).
 fn ai_board(entries: Vec<AiLeaderboardEntry>) -> Vec<AiLeaderboardEntry> {
-    let (mut current, mut earlier): (Vec<_>, Vec<_>) = entries
+    use crate::proving::{before_pipelining, is_ranked};
+    let (current, mut earlier): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .partition(|e| e.run.rules == crate::aipow::CURRENT_AI_RULES);
-    current.sort_by(|a, b| {
+    let has_newer = current.iter().any(|e| !before_pipelining(e.run.submitted_at_ms));
+    let (mut ranked, mut serial): (Vec<_>, Vec<_>) = current
+        .into_iter()
+        .partition(|e| is_ranked(before_pipelining(e.run.submitted_at_ms), has_newer));
+    let by_rate = |a: &AiLeaderboardEntry, b: &AiLeaderboardEntry| {
         by_desc(a.rates.verified_mac_per_sec_lb, b.rates.verified_mac_per_sec_lb)
-    });
-    for (i, e) in current.iter_mut().enumerate() {
+    };
+    ranked.sort_by(by_rate);
+    serial.sort_by(by_rate);
+    earlier.sort_by(by_rate);
+    for (i, e) in ranked.iter_mut().enumerate() {
         e.rank = Some(i as u64 + 1);
     }
-    earlier.sort_by(|a, b| {
-        by_desc(a.rates.verified_mac_per_sec_lb, b.rates.verified_mac_per_sec_lb)
-    });
-    current.extend(earlier);
-    current
+    ranked.extend(serial);
+    ranked.extend(earlier);
+    ranked
 }
 
 #[derive(Clone)]
@@ -614,6 +639,11 @@ struct ZkRunSubmission {
     grind_elapsed_ms: u64,
     /// k base64 proof jams, one per win, in strictly ascending nonce order.
     proofs: Vec<String>,
+    /// How the client scheduled its proofs: "pipelined" or "serial" (the
+    /// default, and what every client before the field did). Self-reported,
+    /// so a label only: it decides no rate and no rank ([`crate::proving`]).
+    #[serde(default)]
+    proving: Option<String>,
 }
 
 /// A process-random u64 for the verifier's Merkle-check ordering
@@ -646,6 +676,10 @@ async fn submit_zk_run(st: AppState, body: serde_json::Value) -> (StatusCode, Js
     if sub.grind_elapsed_ms == 0 {
         return bad("grind_elapsed_ms must be greater than zero".into());
     }
+    let proving = match crate::proving::Proving::from_submission(sub.proving.as_deref()) {
+        Ok(p) => p,
+        Err(e) => return bad(e),
+    };
     if sub.hardware.len() > 128 {
         return bad("hardware string too long (max 128 bytes)".into());
     }
@@ -758,6 +792,7 @@ async fn submit_zk_run(st: AppState, body: serde_json::Value) -> (StatusCode, Js
         sub.grind_elapsed_ms,
         nonces,
         crate::aipow::unix_ms(),
+        proving,
     ) {
         Ok(Ok(run)) => (StatusCode::OK, Json(json!({ "run_id": run.id }))),
         Ok(Err(reason)) => bad(reason),
@@ -789,6 +824,9 @@ struct AiRunSubmission {
     /// actually proved.
     #[serde(default)]
     statement: Option<String>,
+    /// How the client scheduled its certificates, as on the ZK track.
+    #[serde(default)]
+    proving: Option<String>,
 }
 
 /// `POST /run?track=ai` — same shape as the ZK path: validate cheaply,
@@ -827,6 +865,10 @@ async fn submit_ai_run(
     if sub.grind_elapsed_ms == 0 {
         return bad("grind_elapsed_ms must be greater than zero".into());
     }
+    let proving = match crate::proving::Proving::from_submission(sub.proving.as_deref()) {
+        Ok(p) => p,
+        Err(e) => return bad(e),
+    };
     if sub.hardware.len() > 128 {
         return bad("hardware string too long (max 128 bytes)".into());
     }
@@ -1039,6 +1081,7 @@ async fn submit_ai_run(
         sub.grind_elapsed_ms,
         extranonces,
         crate::aipow::unix_ms(),
+        proving,
     ) {
         Ok(Ok(run)) => (StatusCode::OK, Json(json!({ "run_id": run.id }))),
         Ok(Err(reason)) => bad(reason),
@@ -1069,7 +1112,9 @@ pub struct AiLeaderboardEntry {
     #[serde(flatten)]
     pub rates: crate::aipow::AiRates,
     /// 1-based rank among rows verified under the current AI rules
-    /// (`hardened`); `None` for earlier rows, which stay listed after them.
+    /// (`hardened`); `None` for earlier rows, which stay listed after them,
+    /// and for rows from before the pipelined client once the board has a
+    /// newer current-rules row ([`crate::proving`]).
     pub rank: Option<u64>,
     /// Estimated NOCK/day at the observed AI difficulty, from the RANKED
     /// `verified_mac_per_sec_lb` — never the client-reported grind rate.

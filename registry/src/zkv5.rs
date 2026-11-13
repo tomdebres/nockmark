@@ -62,6 +62,8 @@ use nockapp::noun::slab::NounSlab;
 use nockapp::NounAllocator;
 use noun_serde::NounDecode;
 use serde::{Deserialize, Serialize};
+
+use crate::proving::Proving;
 use tock::zkv5::{
     belts_serde, belts_vec_serde, expected_attempts_per_win, is_based, pow_digest_of_object0,
     Belts5, ZK_V5_POW_LEN,
@@ -118,6 +120,11 @@ pub struct ZkV5RunRecord {
     /// Server-observed unix ms.
     pub issued_at_ms: u64,
     pub submitted_at_ms: u64,
+    /// How the client scheduled its proofs (self-reported; absent, hence
+    /// serial, on rows from before the field). A label: ranking ignores it
+    /// ([`crate::proving`]).
+    #[serde(default)]
+    pub proving: Proving,
 }
 
 /// Pending/used challenges plus verified runs, one JSON event per line
@@ -246,6 +253,7 @@ impl ZkV5Store {
         grind_elapsed_ms: u64,
         win_nonces: Vec<Belts5>,
         now_ms: u64,
+        proving: Proving,
     ) -> std::io::Result<Result<ZkV5RunRecord, String>> {
         let pending = match self.challenge_status(nonce, now_ms) {
             Ok(p) => p,
@@ -264,6 +272,7 @@ impl ZkV5Store {
             win_nonces,
             issued_at_ms: pending.issued_at_ms,
             submitted_at_ms: now_ms,
+            proving,
         };
         let mut v = serde_json::to_value(&run).expect("run record serializes");
         v["ev"] = serde_json::json!("run");
@@ -472,6 +481,7 @@ mod tests {
                 900,
                 vec![[1, 0, 0, 0, 0], [9, 0, 0, 0, 0]],
                 4_000,
+                Proving::Pipelined,
             )
             .unwrap()
             .unwrap();
@@ -479,7 +489,7 @@ mod tests {
         assert_eq!(run.rules, "anthropos");
         assert_eq!(s.challenge_status(5, 5_000), Err("nonce-used".into()));
         assert_eq!(
-            s.commit_run(5, "hw", "pin", 900, vec![[1, 0, 0, 0, 0]], 5_000)
+            s.commit_run(5, "hw", "pin", 900, vec![[1, 0, 0, 0, 0]], 5_000, Proving::Serial)
                 .unwrap(),
             Err("nonce-used".into()),
             "a replayed submission is refused"

@@ -24,6 +24,7 @@ use tock::aipow_gpu;
 use tock::zkv5_gpu;
 use tock::{aipow, aipow_moe, aipow_peak, client, hardware, miner, nonce, zkv5};
 use tock::miner::DEFAULT_POW_LEN;
+use tock::pipeline::{PipelineOptions, Proving};
 
 #[derive(Parser)]
 #[command(version, about = "tock — Nockmark bench harness (real Nockchain STARK prover)")]
@@ -88,10 +89,24 @@ enum Command {
         /// Wins to find and prove. With --submit the registry's k applies.
         #[arg(short, long, default_value_t = 1)]
         k: u64,
-        /// CPU grind threads (default: every core). Proving is one kernel,
-        /// one proof at a time, whatever this says.
+        /// CPU grind threads (default: every core). Provers are separate
+        /// threads (see --provers).
         #[arg(short, long)]
         threads: Option<usize>,
+        /// Concurrent provers, each its own miner kernel proving one winner
+        /// on one core while the grind goes on (default: 4 beside a GPU, 1
+        /// beside a CPU grind, which shares its cores with them).
+        #[arg(long, value_name = "N")]
+        provers: Option<usize>,
+        /// The pre-pipelining client, for comparison: grind all k wins, then
+        /// prove them one at a time. Submitted with the label
+        /// `"proving": "serial"`; the rate shows what idle proving costs.
+        #[arg(long)]
+        serial: bool,
+        /// Write a JSON report of the run (calibration, per-win timeline,
+        /// grind and window figures) to this path.
+        #[arg(long, value_name = "PATH")]
+        report: Option<PathBuf>,
         /// Grind on CUDA device 0 instead of the CPU. Needs a build with
         /// `--features zk-gpu` (nvcc; arch from ZK_POW_CUDA_ARCH). Only the
         /// search moves to the device: every winner is re-checked on the CPU
@@ -172,6 +187,21 @@ enum Command {
         /// memory is the ceiling.
         #[arg(long, value_name = "N")]
         gpu_batch: Option<u64>,
+        /// Concurrent certificate provers (canonical-moe, dense-peak). The
+        /// grind goes on while they prove. Default 1: upstream's provers share
+        /// one process-wide rayon pool, so a second concurrent certificate
+        /// adds no workers.
+        #[arg(long, value_name = "N")]
+        provers: Option<usize>,
+        /// The pre-pipelining client, for comparison: grind all k wins, then
+        /// certify them one at a time. Submitted with the label
+        /// `"proving": "serial"`; the rate shows what idle proving costs.
+        #[arg(long)]
+        serial: bool,
+        /// Write a JSON report of the run (calibration, per-win timeline,
+        /// grind and window figures) to this path.
+        #[arg(long, value_name = "PATH")]
+        report: Option<PathBuf>,
     },
     /// Produce one STARK proof whose input incorporates an arbitrary nonce.
     Prove {
@@ -237,29 +267,50 @@ async fn main() {
             submit,
             gpu,
             gpu_batch,
+            provers,
+            serial,
+            report,
         } => {
             let statement = client::AiStatement::parse(&statement)
                 .unwrap_or_else(|e| panic!("bad --statement: {e}"));
             // Which backend grinds — settled before the calibration, because
             // the calibration must measure the backend that will do the work.
             let backend = resolve_backend(statement, gpu, gpu_batch);
+            let proving = if serial { Proving::Serial } else { Proving::Pipelined };
+            let provers = match proving {
+                Proving::Serial => 1,
+                Proving::Pipelined => provers.unwrap_or(aipow::AI_DEFAULT_PROVERS).max(1),
+            };
+            let mut sched = AiSchedule {
+                provers,
+                proving,
+                report,
+                calibration: None,
+            };
             if statement == client::AiStatement::DensePeak {
                 // Dense-peak calibrates on the same matrices and backend it
                 // then grinds with, so it resolves its own tier.
-                return ai_bench_peak(challenge, target, attempts, k, out_dir, submit, backend)
+                return ai_bench_peak(challenge, target, attempts, k, out_dir, submit, backend, sched)
                     .await;
             }
             // Resolve the difficulty tier FIRST, before anything that starts a
             // clock: the calibration grind must not land inside the reported
             // grind window, nor (with --submit) inside the server window, which
             // opens the moment the challenge is minted.
-            let tier = resolve_tier(statement, backend, attempts, target.is_some(), k);
+            let (tier, calibration) = resolve_tier(statement, backend, attempts, target.is_some(), k);
+            sched.calibration = calibration;
             match statement {
                 client::AiStatement::Dense => {
+                    if serial || sched.report.is_some() || sched.provers != aipow::AI_DEFAULT_PROVERS {
+                        eprintln!(
+                            "note: --provers/--serial/--report apply to canonical-moe and \
+                             dense-peak; the dense (M5) statement keeps its serial loop"
+                        );
+                    }
                     ai_bench(challenge, target, tier, k, out_dir, submit).await
                 }
                 client::AiStatement::CanonicalMoe => {
-                    ai_bench_moe(challenge, target, tier, k, out_dir, submit, backend).await
+                    ai_bench_moe(challenge, target, tier, k, out_dir, submit, backend, sched).await
                 }
                 client::AiStatement::DensePeak => unreachable!("dispatched above"),
             }
@@ -269,6 +320,9 @@ async fn main() {
             attempts,
             k,
             threads,
+            provers,
+            serial,
+            report,
             gpu,
             gpu_batch,
             submit,
@@ -276,7 +330,24 @@ async fn main() {
             out_dir,
         } => {
             let backend = resolve_zk_backend(gpu, gpu_batch, threads);
-            zk_bench(kernel, attempts, k, backend, submit, prover_version, out_dir).await
+            let proving = if serial { Proving::Serial } else { Proving::Pipelined };
+            let provers = match proving {
+                Proving::Serial => 1,
+                Proving::Pipelined => provers.unwrap_or_else(|| zkv5::default_provers(backend.is_gpu())).max(1),
+            };
+            zk_bench(ZkBenchArgs {
+                kernel,
+                attempts,
+                k,
+                backend,
+                provers,
+                proving,
+                submit,
+                prover_version,
+                out_dir,
+                report,
+            })
+            .await
         }
         Command::Prove {
             nonce,
@@ -630,7 +701,7 @@ fn resolve_tier(
     attempts: Option<u64>,
     explicit_target: bool,
     k: u64,
-) -> Option<u64> {
+) -> (Option<u64>, Option<(f64, f64)>) {
     if let Some(requested) = attempts {
         let granted = statement.grant_attempts(requested);
         if granted != requested {
@@ -640,10 +711,10 @@ fn resolve_tier(
                 granted.ilog2()
             );
         }
-        return Some(granted);
+        return (Some(granted), None);
     }
     if explicit_target {
-        return None;
+        return (None, None);
     }
     let budget = std::time::Duration::from_secs_f64(aipow::AI_CALIBRATION_SECS);
     // The calibration MUST run on the backend that will grind: a CPU-measured
@@ -673,14 +744,14 @@ fn resolve_tier(
     eprintln!(
         "calibration: {rate:.0} attempts/sec measured over {:.0}s on {}, \
          {prove_secs:.1}s per certificate -> tier 2^{} ({tier} expected \
-         attempts/win, ~{:.0}s of grinding vs ~{:.0}s of proving for k={k})",
+         attempts/win, ~{:.0}s of grinding for k={k}, certificates proved \
+         alongside)",
         aipow::AI_CALIBRATION_SECS,
         backend.label(),
         tier.ilog2(),
         tier as f64 * k as f64 / rate.max(1e-9),
-        prove_secs * k as f64,
     );
-    Some(tier)
+    (Some(tier), Some((rate, prove_secs)))
 }
 
 /// Note when the registry's k differs from the one the run was quoted for.
@@ -856,6 +927,7 @@ async fn ai_bench(
                 .collect(),
             // Omitted on the wire: an M5-identical dense submission.
             statement: None,
+            proving: None,
         };
         match client::submit_ai_run(base, &sub).await {
             Ok(id) => {
@@ -884,6 +956,99 @@ async fn ai_bench(
 /// certificate prover, the window accounting and the submission blob are the
 /// same code either way, so a GPU row and a CPU row on the board differ only in
 /// the rate they achieved.
+/// How an AI run schedules its certificates, and where its report goes.
+struct AiSchedule {
+    provers: usize,
+    proving: Proving,
+    report: Option<PathBuf>,
+    /// (attempts/s, seconds per certificate) when the run self-calibrated.
+    calibration: Option<(f64, f64)>,
+}
+
+/// The pipeline figures every AI summary prints, from the fields the two
+/// statements' summaries share.
+#[allow(clippy::too_many_arguments)]
+fn print_ai_pipeline(
+    proving: Proving,
+    provers: usize,
+    grind_elapsed_ms: u64,
+    wall_ms: u64,
+    prove_ms: &[u64],
+    failures: usize,
+) {
+    let min = prove_ms.iter().min().copied().unwrap_or(0);
+    let max = prove_ms.iter().max().copied().unwrap_or(0);
+    let mean = prove_ms.iter().sum::<u64>() as f64 / prove_ms.len().max(1) as f64;
+    println!("  proving:      {} ({provers} prover(s))", proving.as_str());
+    println!("  cert prove:   min {min} ms / mean {mean:.0} ms / max {max} ms");
+    println!(
+        "  grind+prove:  {:.1}s, of which {:.1}s after the last win",
+        wall_ms as f64 / 1000.0,
+        wall_ms.saturating_sub(grind_elapsed_ms) as f64 / 1000.0
+    );
+    if failures > 0 {
+        println!("  failed certs: {failures} (replaced by later wins, never submitted)");
+    }
+}
+
+/// Write an AI run's `--report` JSON.
+#[allow(clippy::too_many_arguments)]
+fn write_ai_report(
+    path: &std::path::Path,
+    statement: &str,
+    backend: String,
+    hardware: String,
+    sched: &AiSchedule,
+    calibration: Option<(f64, f64)>,
+    tier_attempts: f64,
+    k: u64,
+    total_attempts: u64,
+    grind_elapsed_ms: u64,
+    wall_ms: u64,
+    client_window_s: f64,
+    failures: usize,
+    run_id: Option<u64>,
+    wins: Vec<serde_json::Value>,
+) {
+    let grind_s = grind_elapsed_ms as f64 / 1000.0;
+    let v = serde_json::json!({
+        "track": "ai",
+        "statement": statement,
+        "backend": backend,
+        "hardware": hardware,
+        "proving": sched.proving.as_str(),
+        "provers": sched.provers,
+        "calibrated_attempts_per_sec": calibration.map(|c| c.0),
+        "calibrated_prove_s": calibration.map(|c| c.1),
+        "tier_attempts": tier_attempts,
+        "k": k,
+        "attempts": total_attempts,
+        "expected_attempts": tier_attempts * k as f64,
+        "grind_s": grind_s,
+        "wall_s": wall_ms as f64 / 1000.0,
+        "client_window_s": client_window_s,
+        "sustained_attempts_per_sec": total_attempts as f64 / grind_s.max(1e-9),
+        "failures": failures,
+        "run_id": run_id,
+        "wins": wins,
+    });
+    std::fs::write(path, serde_json::to_vec_pretty(&v).expect("report json"))
+        .unwrap_or_else(|e| eprintln!("could not write --report {}: {e}", path.display()));
+}
+
+fn timing_json(index: u64, prove_ms: u64, t: Option<tock::pipeline::WinTiming>) -> serde_json::Value {
+    let t = t.unwrap_or_default();
+    serde_json::json!({
+        "index": index,
+        "found_s": t.found_at.as_secs_f64(),
+        "prove_start_s": t.started_at.as_secs_f64(),
+        "prove_done_s": t.done_at.as_secs_f64(),
+        "prove_s": prove_ms as f64 / 1000.0,
+        "prover": t.worker,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn ai_bench_moe(
     challenge: Option<String>,
     target: Option<String>,
@@ -892,6 +1057,7 @@ async fn ai_bench_moe(
     out_dir: Option<PathBuf>,
     submit: Option<String>,
     backend: Backend,
+    sched: AiSchedule,
 ) {
     assert!(k >= 1, "k must be at least 1");
     let registry_ch = match &submit {
@@ -942,11 +1108,20 @@ async fn ai_bench_moe(
     aipow_moe::expected_attempts_per_moe_win(&ch.target)
         .unwrap_or_else(|e| panic!("target is outside the canonical shape's domain: {e}"));
 
+    let window_t0 = Instant::now();
+    let mut run_id = None;
+    let opts = PipelineOptions::new(k as usize, sched.provers, sched.proving);
     let summary = match backend {
         #[cfg(feature = "gpu")]
-        Backend::Gpu { batch_attempts } => aipow_gpu::run(&ch, batch_attempts),
-        Backend::Cpu => aipow_moe::run(&ch),
-    };
+        Backend::Gpu { batch_attempts } => {
+            tokio::task::block_in_place(|| aipow_gpu::run_with(&ch, batch_attempts, opts))
+        }
+        Backend::Cpu => tokio::task::block_in_place(|| aipow_moe::run_with(&ch, opts)),
+    }
+    .unwrap_or_else(|e| {
+        eprintln!("ai-bench: the run failed: {e}");
+        std::process::exit(1)
+    });
 
     println!("tock ai-bench — Logos AI-PoW, canonical MoE block");
     println!("  statement:    {}", aipow_moe::STATEMENT_CANONICAL_MOE);
@@ -984,15 +1159,23 @@ async fn ai_bench_moe(
         summary.attempts_per_sec * aipow_moe::MAC_EQUIV_PER_MOE_ATTEMPT / 1e6
     );
     let prove_ms: Vec<u64> = summary.wins.iter().map(|w| w.prove_ms).collect();
-    let min = prove_ms.iter().min().copied().unwrap_or(0);
-    let max = prove_ms.iter().max().copied().unwrap_or(0);
-    let mean = prove_ms.iter().sum::<u64>() as f64 / prove_ms.len().max(1) as f64;
-    println!("  cert prove:   min {min} ms / mean {mean:.0} ms / max {max} ms (outside window)");
+    print_ai_pipeline(
+        summary.proving,
+        summary.provers,
+        summary.grind_elapsed_ms,
+        summary.wall_ms,
+        &prove_ms,
+        summary.failures.len(),
+    );
     for w in &summary.wins {
+        let t = w.timing.unwrap_or_default();
         println!(
-            "  win:          ordinal {} — cert {} bytes, proved in {} ms",
+            "  win:          ordinal {} — found {:.1}s, cert {} bytes, proved {:.1}-{:.1}s ({} ms)",
             w.ordinal,
+            t.found_at.as_secs_f64(),
             w.cert_bytes.len(),
+            t.started_at.as_secs_f64(),
+            t.done_at.as_secs_f64(),
             w.prove_ms
         );
     }
@@ -1027,17 +1210,42 @@ async fn ai_bench_moe(
                 })
                 .collect(),
             statement: Some(aipow_moe::STATEMENT_CANONICAL_MOE),
+            proving: Some(sched.proving.as_str()),
         };
         match client::submit_ai_run(base, &sub).await {
             Ok(id) => {
                 println!("submitted: ai run {id}");
                 println!("  {}/runs/{id}?track=ai", base.trim_end_matches('/'));
+                run_id = Some(id);
             }
             Err(e) => {
                 eprintln!("submission failed: {e}");
                 std::process::exit(1);
             }
         }
+    }
+    if let Some(path) = &sched.report {
+        write_ai_report(
+            path,
+            aipow_moe::STATEMENT_CANONICAL_MOE,
+            backend.label(),
+            backend.hardware_descriptor(&hw),
+            &sched,
+            sched.calibration,
+            client::AiStatement::CanonicalMoe.expected_attempts_per_win(&ch.target),
+            k,
+            summary.total_attempts,
+            summary.grind_elapsed_ms,
+            summary.wall_ms,
+            window_t0.elapsed().as_secs_f64(),
+            summary.failures.len(),
+            run_id,
+            summary
+                .wins
+                .iter()
+                .map(|w| timing_json(w.ordinal as u64, w.prove_ms, w.timing))
+                .collect(),
+        );
     }
 }
 
@@ -1064,6 +1272,7 @@ fn peak_backend_label(backend: Backend) -> String {
 /// grind backend, so it happens here rather than in [`resolve_tier`]; the
 /// tier range is dense-peak's own (`[2^12, 2^36]`); and its challenges live
 /// 3 h, because one certificate costs ~60-76 s on an M1 Max.
+#[allow(clippy::too_many_arguments)]
 async fn ai_bench_peak(
     challenge: Option<String>,
     target: Option<String>,
@@ -1072,6 +1281,7 @@ async fn ai_bench_peak(
     out_dir: Option<PathBuf>,
     submit: Option<String>,
     backend: Backend,
+    mut sched: AiSchedule,
 ) {
     assert!(k >= 1, "k must be at least 1");
     let statement = client::AiStatement::DensePeak;
@@ -1113,7 +1323,14 @@ async fn ai_bench_peak(
             eprintln!("calibration: {rate:.0} attempts/sec on {}; proving one throwaway certificate…", peak_backend_label(backend));
             let prove_secs = aipow_peak::calibrate_peak_prove_secs(&matrices, &cpu);
             let tier = aipow::tier_for_prove_ratio_with(rate, prove_secs, aipow_peak::grant_peak_attempts);
-            let est = tier as f64 * k as f64 / rate.max(1e-9) + prove_secs * k as f64;
+            sched.calibration = Some((rate, prove_secs));
+            // Pipelined, the certificates overlap the grind and only the
+            // last one adds to the run; serial, every one does.
+            let proofs_after_grind = match sched.proving {
+                Proving::Pipelined => 1.0,
+                Proving::Serial => k as f64,
+            };
+            let est = tier as f64 * k as f64 / rate.max(1e-9) + prove_secs * proofs_after_grind;
             eprintln!(
                 "calibration: {prove_secs:.1}s per certificate -> tier 2^{} ({tier} expected \
                  attempts/win), ~{:.0} min for k={k} against a {} h window",
@@ -1161,11 +1378,20 @@ async fn ai_bench_peak(
         .unwrap_or_else(|e| panic!("target is outside the dense-peak domain: {e}"));
     let hw = hardware::detect();
     let ch = aipow_peak::AiPeakChallenge { challenge, target, k };
+    let window_t0 = Instant::now();
+    let mut run_id = None;
+    let opts = PipelineOptions::new(k as usize, sched.provers, sched.proving);
     let summary = match &backend {
         #[cfg(feature = "gpu")]
-        Backend::Gpu { .. } => aipow_peak::gpu::run(&ch, &matrices, gpu.as_ref().expect("gpu backend")),
-        Backend::Cpu => aipow_peak::run_cpu(&ch, &matrices, &cpu),
-    };
+        Backend::Gpu { .. } => tokio::task::block_in_place(|| {
+            aipow_peak::gpu::run_with(&ch, &matrices, gpu.as_ref().expect("gpu backend"), opts)
+        }),
+        Backend::Cpu => tokio::task::block_in_place(|| aipow_peak::run_cpu_with(&ch, &matrices, &cpu, opts)),
+    }
+    .unwrap_or_else(|e| {
+        eprintln!("ai-bench: the run failed: {e}");
+        std::process::exit(1)
+    });
 
     let p = &aipow_peak::AI_PEAK_PARAMS;
     println!("tock ai-bench — Logos AI-PoW, dense-peak (mainnet production shape)");
@@ -1196,15 +1422,23 @@ async fn ai_bench_peak(
         summary.attempts_per_sec * aipow_peak::MAC_EQUIV_PER_PEAK_ATTEMPT
     );
     let prove_ms: Vec<u64> = summary.wins.iter().map(|w| w.prove_ms).collect();
-    let min = prove_ms.iter().min().copied().unwrap_or(0);
-    let max = prove_ms.iter().max().copied().unwrap_or(0);
-    let mean = prove_ms.iter().sum::<u64>() as f64 / prove_ms.len().max(1) as f64;
-    println!("  cert prove:   min {min} ms / mean {mean:.0} ms / max {max} ms (outside the grind window)");
+    print_ai_pipeline(
+        summary.proving,
+        summary.provers,
+        summary.grind_elapsed_ms,
+        summary.wall_ms,
+        &prove_ms,
+        summary.failures.len(),
+    );
     for w in &summary.wins {
+        let t = w.timing.unwrap_or_default();
         println!(
-            "  win:          attempt {} — artifact {} bytes, proved in {} ms",
+            "  win:          attempt {} — found {:.1}s, artifact {} bytes, proved {:.1}-{:.1}s ({} ms)",
             w.index,
+            t.found_at.as_secs_f64(),
             w.artifact_jam.len(),
+            t.started_at.as_secs_f64(),
+            t.done_at.as_secs_f64(),
             w.prove_ms
         );
     }
@@ -1233,17 +1467,42 @@ async fn ai_bench_peak(
                 })
                 .collect(),
             statement: Some(aipow_peak::STATEMENT_DENSE_PEAK),
+            proving: Some(sched.proving.as_str()),
         };
         match client::submit_ai_run(base, &sub).await {
             Ok(id) => {
                 println!("submitted: ai run {id}");
                 println!("  {}/runs/{id}?track=ai", base.trim_end_matches('/'));
+                run_id = Some(id);
             }
             Err(e) => {
                 eprintln!("submission failed: {e}");
                 std::process::exit(1);
             }
         }
+    }
+    if let Some(path) = &sched.report {
+        write_ai_report(
+            path,
+            aipow_peak::STATEMENT_DENSE_PEAK,
+            peak_backend_label(backend),
+            backend.hardware_descriptor(&hw),
+            &sched,
+            sched.calibration,
+            statement.expected_attempts_per_win(&ch.target),
+            k,
+            summary.total_attempts,
+            summary.grind_elapsed_ms,
+            summary.wall_ms,
+            window_t0.elapsed().as_secs_f64(),
+            summary.failures.len(),
+            run_id,
+            summary
+                .wins
+                .iter()
+                .map(|w| timing_json(w.index, w.prove_ms, w.timing))
+                .collect(),
+        );
     }
 }
 
@@ -1292,11 +1551,21 @@ impl ZkBackend {
         }
     }
 
-    fn grind(self, commitment: zkv5::Belts5, target: zkv5::Belts5, k: usize) -> zkv5::GrindResult {
+    fn is_gpu(self) -> bool {
         match self {
-            Self::Cpu { threads } => zkv5::grind_cpu(commitment, target, k, threads),
+            Self::Cpu { .. } => false,
             #[cfg(feature = "zk-gpu")]
-            Self::Gpu { batch } => zkv5_gpu::grind(commitment, target, k, batch),
+            Self::Gpu { .. } => true,
+        }
+    }
+
+    /// The grinding half of the pipeline: offer winners to `sink` until the
+    /// run has its proved wins. Returns the digests evaluated.
+    fn grind_stage(self, sink: &zkv5::ZkSink<'_>, commitment: zkv5::Belts5, target: zkv5::Belts5) -> u64 {
+        match self {
+            Self::Cpu { threads } => zkv5::grind_cpu_stage(sink, commitment, target, threads),
+            #[cfg(feature = "zk-gpu")]
+            Self::Gpu { batch } => zkv5_gpu::grind_stage(sink, commitment, target, batch),
         }
     }
 }
@@ -1329,18 +1598,35 @@ fn resolve_zk_backend(gpu: bool, gpu_batch: Option<u64>, threads: Option<usize>)
     }
 }
 
-/// `tock zk-bench`: calibrate (before any challenge exists), mint, grind,
-/// prove each winner, submit.
-async fn zk_bench(
+struct ZkBenchArgs {
     kernel: PathBuf,
     attempts: Option<u64>,
     k: u64,
     backend: ZkBackend,
+    provers: usize,
+    proving: Proving,
     submit: Option<String>,
     prover_version: String,
     out_dir: Option<PathBuf>,
-) {
+    report: Option<PathBuf>,
+}
+
+/// `tock zk-bench`: calibrate (before any challenge exists), mint, then grind
+/// and prove at once ([`zkv5::run_pipelined`]), submit.
+async fn zk_bench(a: ZkBenchArgs) {
     use base64::Engine;
+    let ZkBenchArgs {
+        kernel,
+        attempts,
+        k,
+        backend,
+        provers,
+        proving,
+        submit,
+        prover_version,
+        out_dir,
+        report,
+    } = a;
     assert!(k >= 1, "k must be at least 1");
     let hw = hardware::detect();
     let kernel_bytes = std::fs::read(&kernel)
@@ -1348,11 +1634,21 @@ async fn zk_bench(
     if let Some(dir) = &out_dir {
         std::fs::create_dir_all(dir).expect("could not create --out-dir");
     }
-    // Boot before anything that starts a clock.
-    let serf = miner::boot_kernel(kernel_bytes, NOCK_STACK_SIZE_TINY).await;
+    // Boot every prover's kernel before anything that starts a clock.
+    let boot_t0 = Instant::now();
+    let mut serfs = Vec::with_capacity(provers);
+    for _ in 0..provers {
+        serfs.push(miner::boot_kernel(kernel_bytes.clone(), NOCK_STACK_SIZE_TINY).await);
+    }
+    eprintln!(
+        "booted {provers} prover kernel(s) in {:.1}s ({} proving)",
+        boot_t0.elapsed().as_secs_f64(),
+        proving.as_str()
+    );
 
     // The tier, BEFORE the challenge exists: it is a parameter of the request,
     // and a calibration after the mint would be charged to the server window.
+    let mut calibration: Option<(f64, f64)> = None;
     let tier = match attempts {
         Some(requested) => {
             let granted = zkv5::grant_attempts(requested);
@@ -1363,8 +1659,9 @@ async fn zk_bench(
         }
         None => {
             let rate = backend.calibrate();
-            let prove_secs = zkv5::calibrate_prove_secs(&serf).await;
+            let prove_secs = zkv5::calibrate_prove_secs(&serfs[0]).await;
             let tier = zkv5::tier_for_prove_ratio(rate, prove_secs);
+            calibration = Some((rate, prove_secs));
             eprintln!(
                 "calibration: {rate:.0} hashes/s on {}, {prove_secs:.1}s per proof -> tier 2^{} \
                  (~{:.0}s of grinding vs ~{:.0}s of proving per win)",
@@ -1402,46 +1699,80 @@ async fn zk_bench(
             (None, zkv5::commitment_for_nonce(0), t, k)
         }
     };
+    let window_t0 = Instant::now();
 
-    eprintln!("grinding {k} win(s) on {}…", backend.label());
-    let g = backend.grind(commitment, target, k as usize);
-    let grind_secs = g.elapsed.as_secs_f64();
     eprintln!(
-        "  {} winner(s) in {:.1}s ({} hashes, {:.0} hashes/s)",
-        g.winners.len(),
-        grind_secs,
-        g.hashes,
-        g.hashes as f64 / grind_secs.max(1e-9)
+        "grinding {k} win(s) on {}, {} with {provers} prover(s)…",
+        backend.label(),
+        proving.as_str()
     );
+    let opts = PipelineOptions::new(k as usize, provers, proving);
+    let rt = tokio::runtime::Handle::current();
+    let run = tokio::task::block_in_place(|| {
+        zkv5::run_pipelined(&serfs, &rt, commitment, target, opts, |sink| {
+            backend.grind_stage(sink, commitment, target)
+        })
+    })
+    .unwrap_or_else(|e| {
+        eprintln!("zk-bench: the run failed: {e}");
+        std::process::exit(1)
+    });
+    let grind_secs = run.grind_elapsed.as_secs_f64();
+    let wall_secs = run.wall.as_secs_f64();
 
-    let mut proofs = Vec::with_capacity(g.winners.len());
-    let mut prove_ms = Vec::with_capacity(g.winners.len());
-    for (i, w) in g.winners.iter().enumerate() {
-        let out = zkv5::prove_win(&serf, &commitment, w, &target)
-            .await
-            .unwrap_or_else(|e| panic!("winner {i} ({w:?}) did not prove: {e}"));
-        eprintln!("  proof {i}: {:.2?} ({} bytes)", out.duration, out.proof_jam.len());
+    let mut proofs = Vec::with_capacity(run.wins.len());
+    for (i, w) in run.wins.iter().enumerate() {
+        eprintln!(
+            "  win {i}: nonce {} found {:.1}s, proved {:.1}-{:.1}s ({:.1}s, prover {})",
+            w.win[0],
+            w.found_at.as_secs_f64(),
+            w.started_at.as_secs_f64(),
+            w.done_at.as_secs_f64(),
+            w.proof.duration.as_secs_f64(),
+            w.worker
+        );
         if let Some(dir) = &out_dir {
-            std::fs::write(dir.join(format!("proof-{i}.jam")), &out.proof_jam)
+            std::fs::write(dir.join(format!("proof-{i}.jam")), &w.proof.proof_jam)
                 .expect("could not write proof jam");
         }
-        prove_ms.push(out.duration.as_millis() as u64);
-        proofs.push(base64::engine::general_purpose::STANDARD.encode(&out.proof_jam));
+        proofs.push(base64::engine::general_purpose::STANDARD.encode(&w.proof.proof_jam));
+    }
+    for (nonce, reason) in &run.failures {
+        eprintln!("  failed proof (replaced): nonce {} — {reason}", nonce[0]);
     }
 
-    let credited = k as f64 * zkv5::expected_attempts_per_win(&target);
-    let prove_total = prove_ms.iter().sum::<u64>() as f64 / 1000.0;
+    let per_win = zkv5::expected_attempts_per_win(&target);
+    let credited = k as f64 * per_win;
+    let prove_total: f64 = run.wins.iter().map(|w| w.proof.duration.as_secs_f64()).sum();
     println!("tock zk-bench — ZK v5 (Anthropos): Tip5 hashes of proof object 0, %5 proofs");
     println!("  backend:      {}", backend.label());
-    println!("  tier:         2^{} expected hashes/win", zkv5::expected_attempts_per_win(&target).log2().round());
-    println!("  wins:         {k}");
-    println!("  grind:        {grind_secs:.1}s, {:.0} credited hashes/s", credited / grind_secs.max(1e-9));
-    println!("  proving:      {prove_total:.1}s ({:.1}s per win)", prove_total / k as f64);
     println!(
-        "  grind+prove:  {:.0} credited hashes/s (the registry's window adds network time)",
-        credited / (grind_secs + prove_total).max(1e-9)
+        "  proving:      {} ({} prover(s))",
+        proving.as_str(),
+        run.options.provers
+    );
+    println!("  tier:         2^{} expected hashes/win", per_win.log2().round());
+    println!(
+        "  wins:         {k} ({} hashes, {:.3}x expected)",
+        run.hashes,
+        run.hashes as f64 / credited.max(1.0)
+    );
+    println!(
+        "  grind:        {grind_secs:.1}s to the last win, {:.0} hashes/s sustained, {:.0} credited hashes/s",
+        run.hashes as f64 / grind_secs.max(1e-9),
+        credited / grind_secs.max(1e-9)
+    );
+    println!(
+        "  proving:      {prove_total:.1}s of proofs ({:.1}s per win); {:.1}s after the last win",
+        prove_total / k as f64,
+        wall_secs - grind_secs
+    );
+    println!(
+        "  grind+prove:  {wall_secs:.1}s, {:.0} credited hashes/s (the registry's window adds network time)",
+        credited / wall_secs.max(1e-9)
     );
 
+    let mut run_id = None;
     if let (Some(base), Some(ch)) = (&submit, registry_ch) {
         let sub = client::ZkSubmission {
             nonce: ch.nonce,
@@ -1450,17 +1781,59 @@ async fn zk_bench(
             // Round up: never claim a faster grind than measured.
             grind_elapsed_ms: (grind_secs * 1000.0).ceil().max(1.0) as u64,
             proofs,
+            proving: Some(proving.as_str()),
         };
         match client::submit_zk_run(base, &sub).await {
             Ok(id) => {
                 println!("submitted: run {id}");
                 println!("  {}/runs/{id}?track=zk", base.trim_end_matches('/'));
+                run_id = Some(id);
             }
             Err(e) => {
                 eprintln!("submission REJECTED or failed: {e}");
                 std::process::exit(1);
             }
         }
+    }
+    let client_window_secs = window_t0.elapsed().as_secs_f64();
+
+    if let Some(path) = &report {
+        let wins: Vec<serde_json::Value> = run
+            .wins
+            .iter()
+            .map(|w| {
+                serde_json::json!({
+                    "nonce": w.win[0],
+                    "found_s": w.found_at.as_secs_f64(),
+                    "prove_start_s": w.started_at.as_secs_f64(),
+                    "prove_done_s": w.done_at.as_secs_f64(),
+                    "prove_s": w.proof.duration.as_secs_f64(),
+                    "prover": w.worker,
+                })
+            })
+            .collect();
+        let v = serde_json::json!({
+            "track": "zk",
+            "backend": backend.label(),
+            "hardware": backend.hardware_descriptor(&hw),
+            "proving": proving.as_str(),
+            "provers": run.options.provers,
+            "calibrated_hashes_per_sec": calibration.map(|c| c.0),
+            "calibrated_prove_s": calibration.map(|c| c.1),
+            "tier_log2": per_win.log2().round(),
+            "k": k,
+            "hashes": run.hashes,
+            "expected_hashes": credited,
+            "grind_s": grind_secs,
+            "wall_s": wall_secs,
+            "client_window_s": client_window_secs,
+            "sustained_hashes_per_sec": run.hashes as f64 / grind_secs.max(1e-9),
+            "failures": run.failures.len(),
+            "run_id": run_id,
+            "wins": wins,
+        });
+        std::fs::write(path, serde_json::to_vec_pretty(&v).expect("report json"))
+            .unwrap_or_else(|e| eprintln!("could not write --report {}: {e}", path.display()));
     }
 }
 

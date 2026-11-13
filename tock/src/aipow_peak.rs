@@ -38,7 +38,7 @@
 //!   jammed — the registry decodes and verifies it with the consensus jet's own
 //!   entry point.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use ai_pow::difficulty::{
@@ -61,6 +61,8 @@ use ai_pow_miner::search::{CpuSearchBackend, SearchBackend, SearchBatch};
 use ai_pow_zk::proof_rules::ProofRules;
 use nockapp::noun::slab::NounSlab;
 use nockvm::noun::NounAllocator;
+
+use crate::pipeline::{self, PipelineOptions, PipelineReport, Proving, Sink, WinTiming};
 
 // ---------------------------------------------------------------------------
 // Statement constants
@@ -298,13 +300,24 @@ pub struct AiPeakWin {
     /// The jammed `%ai-pow` artifact — the submission blob.
     pub artifact_jam: Vec<u8>,
     pub prove_ms: u64,
+    /// When it was found and proved, for a pipelined run.
+    pub timing: Option<WinTiming>,
 }
 
 pub struct AiPeakBenchSummary {
+    /// The proved wins, ascending by attempt index.
     pub wins: Vec<AiPeakWin>,
+    /// Grind start to the last win found (display only).
     pub grind_elapsed_ms: u64,
     pub total_attempts: u64,
+    /// `total_attempts / grind_elapsed`: the rate the grinder sustained.
     pub attempts_per_sec: f64,
+    /// Grind start to the last certificate done.
+    pub wall_ms: u64,
+    pub proving: Proving,
+    pub provers: usize,
+    /// Wins whose certificate failed (replaced, never submitted).
+    pub failures: Vec<(u64, String)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -316,24 +329,33 @@ pub struct AiPeakBenchSummary {
 /// dispatch restarts just past it; a smaller batch wastes less on re-checks.
 pub const CPU_BATCH_TICKETS: u64 = 1 << 16;
 
-/// Grind until `k` wins on upstream's CPU backend. Each win is re-evaluated by
-/// the scalar path (`checked_winner`, which also re-checks the target) before
-/// it may reach the prover.
-pub fn grind_peak_cpu(
+/// The grinding half of a CPU run: walk extranonces and tiles on upstream's
+/// CPU backend and offer each win to `sink`, until the run has its wins.
+/// Returns the attempts through the last win found (its index + 1).
+///
+/// Each win is re-evaluated by the scalar path (`checked_winner`, which also
+/// re-checks the target) before it may reach the prover.
+pub fn grind_peak_cpu_stage<P: Send>(
+    sink: &Sink<'_, PeakWin, P>,
     template: &PreparedReferenceDenseTemplate,
     ch: &AiPeakChallenge,
     backend: &CpuSearchBackend,
-) -> PeakGrindResult {
-    assert!(ch.k >= 1, "k must be at least 1");
+) -> u64 {
     let threshold = peak_threshold(&ch.target).expect("dense-peak threshold");
-    let t0 = Instant::now();
-    let mut wins: Vec<PeakWin> = Vec::with_capacity(ch.k as usize);
+    let mut attempts = 0u64;
+    let mut found = 0u64;
     'grind: for extranonce in 0..=u32::MAX {
+        if !sink.need_more() && !sink.wait_for_more() {
+            break;
+        }
         let prepared = Arc::new(template.prepare(extranonce).expect("prepare dense-peak transcript"));
         let total = prepared.row_offsets().len() as u64 * prepared.col_offsets().len() as u64;
         assert_eq!(total, PEAK_TICKETS_PER_EXTRANONCE, "tickets per extranonce");
         let mut start = 0u64;
         while start < total {
+            if !sink.need_more() && !sink.wait_for_more() {
+                break 'grind;
+            }
             let len = CPU_BATCH_TICKETS.min(total - start);
             let batch = SearchBatch::new(start, len, threshold).expect("search batch");
             let winner = backend
@@ -351,32 +373,44 @@ pub fn grind_peak_cpu(
                 "search jackpot disagrees with the scalar recheck"
             );
             let index = attempt_index(extranonce, w.ordinal);
-            wins.push(PeakWin { index, attempt });
+            found += 1;
             eprintln!(
-                "  win {}/{} at extranonce {extranonce} tile {} ({:.1}s)",
-                wins.len(),
+                "  win {found} (of k={}) at extranonce {extranonce} tile {} ({:.1}s)",
                 ch.k,
                 w.ordinal,
-                t0.elapsed().as_secs_f64()
+                sink.elapsed().as_secs_f64()
             );
-            if wins.len() as u64 == ch.k {
-                break 'grind;
-            }
+            attempts = index + 1;
+            sink.offer(PeakWin { index, attempt });
             start = w.ordinal + 1;
         }
     }
-    finish_grind(wins, t0)
+    attempts
 }
 
-fn finish_grind(wins: Vec<PeakWin>, t0: Instant) -> PeakGrindResult {
-    let elapsed_s = t0.elapsed().as_secs_f64();
-    let total_attempts = wins.last().map_or(0, |w| w.index + 1);
+/// Grind to `k` wins on upstream's CPU backend, proving nothing (for the
+/// fixture generator; `ai-bench` proves as it grinds).
+pub fn grind_peak_cpu(
+    template: &PreparedReferenceDenseTemplate,
+    ch: &AiPeakChallenge,
+    backend: &CpuSearchBackend,
+) -> PeakGrindResult {
+    assert!(ch.k >= 1, "k must be at least 1");
+    let r = pipeline::run(
+        PipelineOptions::new(ch.k as usize, 1, Proving::Pipelined),
+        |sink: &Sink<'_, PeakWin, ()>| grind_peak_cpu_stage(sink, template, ch, backend),
+        |_, _| Ok(()),
+    )
+    .expect("a grind with an infallible prover always finishes");
+    let mut wins: Vec<PeakWin> = r.proved.into_iter().map(|p| p.win).collect();
+    wins.sort_by_key(|w| w.index);
+    let elapsed_s = r.grind_elapsed.as_secs_f64();
     PeakGrindResult {
         wins,
         // Round UP like the other benches: never claim faster than measured.
         elapsed_ms: (elapsed_s * 1000.0).ceil().max(1.0) as u64,
-        total_attempts,
-        attempts_per_sec: total_attempts as f64 / elapsed_s.max(1e-9),
+        total_attempts: r.grind,
+        attempts_per_sec: r.grind as f64 / elapsed_s.max(1e-9),
     }
 }
 
@@ -448,63 +482,84 @@ pub fn artifact_jam(
     Ok(slab.jam().to_vec())
 }
 
-/// Prove every win: the first through `prove_with_rules` (cold, and the source
-/// of the aux-inclusion proof and the reusable prover setup), the rest through
-/// the cached prover. Hardened rules throughout — mainnet's since 154,500.
-pub fn prove_peak_wins(
-    template: &PreparedReferenceDenseTemplate,
-    matrices: &PeakMatrices,
-    wins: Vec<PeakWin>,
-) -> Vec<AiPeakWin> {
-    let mut out = Vec::with_capacity(wins.len());
-    let mut cache: Option<AiPowCompactRecursiveProverCache> = None;
-    let mut aux: Option<PearlAuxInclusionProof> = None;
-    for PeakWin { index, attempt } in wins {
+/// Proves dense-peak wins for one challenge: the first cold through
+/// `prove_with_rules` (the source of the aux-inclusion proof and the reusable
+/// prover setup), the rest through the cached prover. Hardened rules
+/// throughout — mainnet's since 154,500.
+///
+/// Shared by the prover threads: a win that arrives before the first proof
+/// has produced the setup is proved cold too, and whichever cold proof
+/// finishes first supplies the setup for the rest.
+pub struct PeakProver<'a> {
+    template: &'a PreparedReferenceDenseTemplate,
+    matrices: &'a PeakMatrices,
+    setup: OnceLock<(AiPowCompactRecursiveProverCache, PearlAuxInclusionProof)>,
+}
+
+impl<'a> PeakProver<'a> {
+    pub fn new(template: &'a PreparedReferenceDenseTemplate, matrices: &'a PeakMatrices) -> Self {
+        Self {
+            template,
+            matrices,
+            setup: OnceLock::new(),
+        }
+    }
+
+    pub fn prove(&self, win: &PeakWin) -> Result<AiPeakWin, String> {
+        let index = win.index;
         let t0 = Instant::now();
-        let (attempt, run) = match (&cache, &aux) {
-            (Some(cache), Some(_)) => {
+        let artifact_jam = match self.setup.get() {
+            Some((cache, aux)) => {
                 let run = prove_pearl_merge_compact_recursive_certificate_checked_with_prover_cache_with_rules(
-                    &attempt,
+                    &win.attempt,
                     &AI_PEAK_PARAMS,
-                    &matrices.a,
-                    &matrices.b,
+                    &self.matrices.a,
+                    &self.matrices.b,
                     cache,
                     ProofRules::Hardened,
                 )
-                .expect("prove dense-peak win (cached setup)");
-                (attempt, run)
+                .map_err(|e| format!("prove dense-peak win {index} (cached setup): {e:?}"))?;
+                artifact_jam(&win.attempt, aux, self.matrices, &run)?
             }
-            _ => {
-                let block = template
-                    .prove_with_rules(attempt, ProofRules::Hardened)
-                    .expect("prove dense-peak win");
-                aux = Some(block.aux_inclusion.clone());
-                (block.attempt, block.run)
+            None => {
+                let block = self
+                    .template
+                    .prove_with_rules(win.attempt.clone(), ProofRules::Hardened)
+                    .map_err(|e| format!("prove dense-peak win {index}: {e:?}"))?;
+                let jam = artifact_jam(&block.attempt, &block.aux_inclusion, self.matrices, &block.run)?;
+                if let Some(cache) = block.run.into_prover_cache() {
+                    // Another cold proof may have got there first; either
+                    // setup serves, so the loser is simply dropped.
+                    let _ = self.setup.set((cache, block.aux_inclusion));
+                }
+                jam
             }
         };
         let prove_ms = t0.elapsed().as_millis() as u64;
-        let artifact_jam = artifact_jam(
-            &attempt,
-            aux.as_ref().expect("aux inclusion from the first proof"),
-            matrices,
-            &run,
-        )
-        .expect("dense-peak artifact");
         eprintln!(
             "  cert for attempt {index}: {:.1}s ({} bytes)",
             prove_ms as f64 / 1000.0,
             artifact_jam.len()
         );
-        if cache.is_none() {
-            cache = run.into_prover_cache();
-        }
-        out.push(AiPeakWin {
+        Ok(AiPeakWin {
             index,
             artifact_jam,
             prove_ms,
-        });
+            timing: None,
+        })
     }
-    out
+}
+
+/// Prove every win, one after another (the fixture generator's path).
+pub fn prove_peak_wins(
+    template: &PreparedReferenceDenseTemplate,
+    matrices: &PeakMatrices,
+    wins: Vec<PeakWin>,
+) -> Vec<AiPeakWin> {
+    let prover = PeakProver::new(template, matrices);
+    wins.iter()
+        .map(|w| prover.prove(w).unwrap_or_else(|e| panic!("{e}")))
+        .collect()
 }
 
 /// What ONE dense-peak certificate costs this machine, cold: find a winner at
@@ -532,38 +587,71 @@ pub fn calibrate_peak_prove_secs(matrices: &PeakMatrices, backend: &CpuSearchBac
     t0.elapsed().as_secs_f64().max(1e-9)
 }
 
-/// The full local workload on the CPU: grind to k wins, then certify each.
-pub fn run_cpu(ch: &AiPeakChallenge, matrices: &PeakMatrices, backend: &CpuSearchBackend) -> AiPeakBenchSummary {
-    let template = matrices.template(ch.challenge);
-    eprintln!("grinding to {} dense-peak win(s) on the CPU…", ch.k);
-    let grind = grind_peak_cpu(&template, ch, backend);
-    summarize(&template, matrices, grind)
-}
-
-fn summarize(
-    template: &PreparedReferenceDenseTemplate,
-    matrices: &PeakMatrices,
-    grind: PeakGrindResult,
-) -> AiPeakBenchSummary {
-    eprintln!(
-        "grind window closed: {} attempts in {:.1}s",
-        grind.total_attempts,
-        grind.elapsed_ms as f64 / 1000.0
-    );
-    eprintln!("proving {} certificate(s)…", grind.wins.len());
-    let PeakGrindResult {
-        wins,
-        elapsed_ms,
-        total_attempts,
-        attempts_per_sec,
-    } = grind;
-    let wins = prove_peak_wins(template, matrices, wins);
+/// A finished dense-peak pipeline as the bench summary: wins ascending by
+/// attempt index (the order the registry takes), each with its timeline.
+fn summarize(r: PipelineReport<PeakWin, AiPeakWin, u64>) -> AiPeakBenchSummary {
+    let mut wins: Vec<AiPeakWin> = r
+        .proved
+        .into_iter()
+        .map(|p| {
+            let timing = Some(WinTiming {
+                found_at: p.found_at,
+                started_at: p.started_at,
+                done_at: p.done_at,
+                worker: p.worker,
+            });
+            AiPeakWin { timing, ..p.proof }
+        })
+        .collect();
+    wins.sort_by_key(|w| w.index);
+    let elapsed_s = r.grind_elapsed.as_secs_f64();
     AiPeakBenchSummary {
         wins,
-        grind_elapsed_ms: elapsed_ms,
-        total_attempts,
-        attempts_per_sec,
+        // Round UP like the other benches: never claim faster than measured.
+        grind_elapsed_ms: (elapsed_s * 1000.0).ceil().max(1.0) as u64,
+        total_attempts: r.grind,
+        attempts_per_sec: r.grind as f64 / elapsed_s.max(1e-9),
+        wall_ms: r.wall.as_millis() as u64,
+        proving: r.options.proving,
+        provers: r.options.provers,
+        failures: r.failures.into_iter().map(|(w, e)| (w.index, e)).collect(),
     }
+}
+
+/// The local workload on the CPU: grind to k wins, certifying each as it is
+/// found (or after the grind, for [`Proving::Serial`]). The grinder and the
+/// provers share the CPU here.
+pub fn run_cpu_with(
+    ch: &AiPeakChallenge,
+    matrices: &PeakMatrices,
+    backend: &CpuSearchBackend,
+    opts: PipelineOptions,
+) -> Result<AiPeakBenchSummary, String> {
+    let template = matrices.template(ch.challenge);
+    let prover = PeakProver::new(&template, matrices);
+    eprintln!(
+        "grinding to {} dense-peak win(s) on the CPU, {} with {} prover(s)…",
+        ch.k,
+        opts.proving.as_str(),
+        opts.provers
+    );
+    let r = pipeline::run(
+        opts,
+        |sink: &Sink<'_, PeakWin, AiPeakWin>| grind_peak_cpu_stage(sink, &template, ch, backend),
+        |_, win| prover.prove(win),
+    )?;
+    Ok(summarize(r))
+}
+
+/// [`run_cpu_with`] at the defaults: pipelined, one prover.
+pub fn run_cpu(ch: &AiPeakChallenge, matrices: &PeakMatrices, backend: &CpuSearchBackend) -> AiPeakBenchSummary {
+    run_cpu_with(
+        ch,
+        matrices,
+        backend,
+        PipelineOptions::new(ch.k as usize, crate::aipow::AI_DEFAULT_PROVERS, Proving::Pipelined),
+    )
+    .unwrap_or_else(|e| panic!("dense-peak run failed: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -601,16 +689,22 @@ pub mod gpu {
         backend
     }
 
-    pub fn grind(
+    /// The grinding half of a GPU run: offer each win to `sink` until the
+    /// run has its wins; the device keeps searching while the CPU proves.
+    /// Returns the attempts through the last win found (its index + 1).
+    pub fn grind_stage<P: Send>(
+        sink: &Sink<'_, PeakWin, P>,
         template: &PreparedReferenceDenseTemplate,
         ch: &AiPeakChallenge,
         backend: &MultiGpuPeakSearchBackend,
-    ) -> PeakGrindResult {
-        assert!(ch.k >= 1, "k must be at least 1");
+    ) -> u64 {
         let threshold = peak_threshold(&ch.target).expect("dense-peak threshold");
-        let t0 = Instant::now();
-        let mut wins: Vec<PeakWin> = Vec::with_capacity(ch.k as usize);
+        let mut attempts = 0u64;
+        let mut found = 0u64;
         'grind: for extranonce in 0..=u32::MAX {
+            if !sink.need_more() && !sink.wait_for_more() {
+                break;
+            }
             let prepared = Arc::new(
                 template
                     .prepare_search(extranonce)
@@ -620,6 +714,9 @@ pub mod gpu {
             assert_eq!(total, PEAK_TICKETS_PER_EXTRANONCE, "tickets per extranonce");
             let mut start = 0u64;
             while start < total {
+                if !sink.need_more() && !sink.wait_for_more() {
+                    break 'grind;
+                }
                 let batch =
                     SearchBatch::new(start, total - start, threshold).expect("search batch");
                 let outcome = backend
@@ -638,21 +735,19 @@ pub mod gpu {
                     "device jackpot disagrees with the scalar recheck"
                 );
                 let index = attempt_index(extranonce, w.ordinal);
-                wins.push(PeakWin { index, attempt });
+                found += 1;
                 eprintln!(
-                    "  win {}/{} at extranonce {extranonce} tile {} ({:.1}s)",
-                    wins.len(),
+                    "  win {found} (of k={}) at extranonce {extranonce} tile {} ({:.1}s)",
                     ch.k,
                     w.ordinal,
-                    t0.elapsed().as_secs_f64()
+                    sink.elapsed().as_secs_f64()
                 );
-                if wins.len() as u64 == ch.k {
-                    break 'grind;
-                }
+                attempts = index + 1;
+                sink.offer(PeakWin { index, attempt });
                 start = w.ordinal + 1;
             }
         }
-        finish_grind(wins, t0)
+        attempts
     }
 
     /// Device rate over whole extranonces (transcript preparation included —
@@ -683,15 +778,28 @@ pub mod gpu {
         tickets as f64 / t.elapsed().as_secs_f64().max(1e-9)
     }
 
-    pub fn run(
+    /// The workload with the #159 kernel grinding and the CPU certifying each
+    /// win as it is found (or after the grind, for [`Proving::Serial`]).
+    pub fn run_with(
         ch: &AiPeakChallenge,
         matrices: &PeakMatrices,
         backend: &MultiGpuPeakSearchBackend,
-    ) -> AiPeakBenchSummary {
+        opts: PipelineOptions,
+    ) -> Result<AiPeakBenchSummary, String> {
         let template = matrices.template(ch.challenge);
-        eprintln!("grinding to {} dense-peak win(s) on CUDA…", ch.k);
-        let grind = grind(&template, ch, backend);
-        summarize(&template, matrices, grind)
+        let prover = PeakProver::new(&template, matrices);
+        eprintln!(
+            "grinding to {} dense-peak win(s) on CUDA, {} with {} prover(s)…",
+            ch.k,
+            opts.proving.as_str(),
+            opts.provers
+        );
+        let r = pipeline::run(
+            opts,
+            |sink: &Sink<'_, PeakWin, AiPeakWin>| grind_stage(sink, &template, ch, backend),
+            |_, win| prover.prove(win),
+        )?;
+        Ok(summarize(r))
     }
 }
 

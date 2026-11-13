@@ -270,6 +270,14 @@ pub const AI_CALIBRATION_SECS: f64 = 2.0;
 /// either way, and [`AI_ATTEMPTS_MAX`] keeps every tier well inside it.
 pub const AI_TIER_PROVE_RATIO: f64 = 2.0;
 
+/// Concurrent certificate provers for an AI run when the caller does not say.
+///
+/// Upstream's AI provers run inside one process-wide rayon pool sized to the
+/// machine (`ai_pow_zk::runtime`), so a second concurrent certificate shares
+/// the same workers rather than adding any. At `R = 2` a win arrives every ~2
+/// certificates, so one prover keeps up on average. `--provers` overrides it.
+pub const AI_DEFAULT_PROVERS: usize = 1;
+
 /// Expected grind attempts per jackpot win at **little-endian** target `T`
 /// under the DENSE (raw) comparison: `2^256 / (T+1)` — the jackpot hash is
 /// uniform over 2^256 and a win is `hash ≤ T`, compared LE (see

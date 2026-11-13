@@ -1,0 +1,85 @@
+{
+  "backend": "CPU, 9 thread(s), upstream v5_pow_digest",
+  "calibrated_hashes_per_sec": null,
+  "calibrated_prove_s": null,
+  "client_window_s": 349.729892417,
+  "expected_hashes": 67108864.0,
+  "failures": 0,
+  "grind_s": 301.315554458,
+  "hardware": "Apple M1 Max / 10c / 32GB / macOS 26.7.1 / aarch64",
+  "hashes": 48758688,
+  "k": 8,
+  "provers": 1,
+  "proving": "pipelined",
+  "run_id": 3,
+  "sustained_hashes_per_sec": 161819.35276360388,
+  "tier_log2": 23.0,
+  "track": "zk",
+  "wall_s": 343.020947875,
+  "wins": [
+    {
+      "found_s": 59.117778833,
+      "nonce": 9942343,
+      "prove_done_s": 87.004223791,
+      "prove_s": 27.884926833,
+      "prove_start_s": 59.117821333,
+      "prover": 0
+    },
+    {
+      "found_s": 89.223472833,
+      "nonce": 14852097,
+      "prove_done_s": 117.848217,
+      "prove_s": 28.621060792,
+      "prove_start_s": 89.225792791,
+      "prover": 0
+    },
+    {
+      "found_s": 181.498295625,
+      "nonce": 30179695,
+      "prove_done_s": 210.331266875,
+      "prove_s": 28.829986792,
+      "prove_start_s": 181.500017,
+      "prover": 0
+    },
+    {
+      "found_s": 193.454024958,
+      "nonce": 31721952,
+      "prove_done_s": 238.413077458,
+      "prove_s": 28.080542125,
+      "prove_start_s": 210.331267458,
+      "prover": 0
+    },
+    {
+      "found_s": 204.570821708,
+      "nonce": 33719576,
+      "prove_done_s": 266.461064958,
+      "prove_s": 28.046691833,
+      "prove_start_s": 238.413078041,
+      "prover": 0
+    },
+    {
+      "found_s": 231.901154,
+      "nonce": 38095723,
+      "prove_done_s": 294.62855625,
+      "prove_s": 28.1662125,
+      "prove_start_s": 266.461065458,
+      "prover": 0
+    },
+    {
+      "found_s": 301.315554458,
+      "nonce": 48457154,
+      "prove_done_s": 343.020947875,
+      "prove_s": 21.004872875,
+      "prove_start_s": 322.014859666,
+      "prover": 0
+    },
+    {
+      "found_s": 301.02546775,
+      "nonce": 48830121,
+      "prove_done_s": 322.0148505,
+      "prove_s": 20.988064791,
+      "prove_start_s": 301.025510125,
+      "prover": 0
+    }
+  ]
+}

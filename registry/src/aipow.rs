@@ -65,6 +65,8 @@ use ai_pow_zk::recursion::{
 use ai_pow_zk::proof_rules::ProofRules;
 use ai_pow_zk::CircuitConfig;
 use serde::{Deserialize, Serialize};
+
+use crate::proving::Proving;
 use tock::aipow::{nonce_extranonce, AiCertBlob, AI_PARAMS};
 
 // ---------------------------------------------------------------------------
@@ -433,6 +435,11 @@ pub struct AiRunRecord {
     /// Server-observed unix ms.
     pub issued_at_ms: u64,
     pub submitted_at_ms: u64,
+    /// How the client scheduled its certificates (self-reported; absent,
+    /// hence serial, on rows from before the field). A label: ranking ignores it
+    /// ([`crate::proving`]).
+    #[serde(default)]
+    pub proving: Proving,
 }
 
 /// A minted, not-yet-consumed AI challenge.
@@ -626,6 +633,7 @@ impl AiStore {
         grind_elapsed_ms: u64,
         win_extranonces: Vec<u64>,
         now_ms: u64,
+        proving: Proving,
     ) -> std::io::Result<Result<AiRunRecord, String>> {
         let issued_at_ms = match self.challenge_status(nonce, now_ms) {
             Ok(p) => p.issued_at_ms,
@@ -644,6 +652,7 @@ impl AiStore {
             win_extranonces,
             issued_at_ms,
             submitted_at_ms: now_ms,
+            proving,
         };
         let mut v = serde_json::to_value(&run).expect("run record serializes");
         v["ev"] = serde_json::json!("run");
@@ -1145,6 +1154,7 @@ mod tests {
                 500,
                 vec![0, 3],
                 61_000,
+                Proving::Serial,
             )
             .unwrap()
             .unwrap();
@@ -1168,6 +1178,7 @@ mod tests {
                     500,
                     vec![0],
                     62_000,
+                    Proving::Serial,
                 )
                 .unwrap(),
             Err("nonce-used".into())
@@ -1262,7 +1273,7 @@ mod tests {
         store.record_challenge(1, 0, None).unwrap();
         store.record_challenge(2, 0, None).unwrap();
         store
-            .commit_run(1, Statement::Dense, "hw", "pin", &default_target(), 10, vec![0], 100)
+            .commit_run(1, Statement::Dense, "hw", "pin", &default_target(), 10, vec![0], 100, Proving::Serial)
             .unwrap()
             .unwrap();
         store
@@ -1275,6 +1286,7 @@ mod tests {
                 10,
                 vec![7],
                 100,
+                Proving::Pipelined,
             )
             .unwrap()
             .unwrap();
