@@ -272,8 +272,15 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
      - **RunPod:** $0.223 of the $0.50 cap (balance $5.151 → $4.928),
        community. Three hosts on driver 580.178.04 failed `cuInit` and were
        taken down within 1.3 min each; all pods terminated.
-   - **Write-up:** next, in its own PR, merged only after Tom approves the
-     text.
+   - **Write-up (2026-11-13):**
+     `docs/writeups/2026-11-13-which-puzzle-should-this-card-mine.md`, merged
+     only once Tom approved its text. Every machine measured on both puzzles
+     earns more on ZK: the 5090 2.7× more than on dense-peak (2.9× at luck 1),
+     the 3090 and 4090 thousands of times more than on canonical-moe. Nothing
+     pays at the 07:53 UTC snapshot ($0.0122/NOCK). Figures come from
+     `bench-results/econ/2026-11-13-snapshot/` (`writeup_tables.py`). The
+     July and August write-ups carry a dated note pointing to it. Next:
+     revisit the announcement.
 
 ## Decisions
 

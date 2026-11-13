@@ -8,6 +8,11 @@
 > measure STARK proving speed, but they no longer translate into mining
 > throughput or earnings. See
 > [the M7 plan](../superpowers/specs/2026-11-11-m7-anthropos.md).
+>
+> **Note, 2026-11-13.** The earnings conclusions below are superseded by
+> [Which puzzle should this card mine?](2026-11-13-which-puzzle-should-this-card-mine.md),
+> which uses verified GPU rates in the unit difficulty counts. At today's
+> price no card measured there covers its electricity, the 4090 included.
 
 Nockchain is a zkPoW chain: miners earn NOCK by producing STARK proofs of
 Nock execution, and the fastest prover wins. Which makes it strange that the
