@@ -10,6 +10,9 @@ pub mod client;
 pub mod hardware;
 pub mod miner;
 pub mod nonce;
+/// M7 step 5, part 2: prove each win while the grinder keeps going — the run
+/// loop `zk-bench` and `ai-bench` share.
+pub mod pipeline;
 /// M7 step 3: the ZK v5 (Anthropos) hash-rate track — protocol, CPU grind,
 /// `%5` proving.
 pub mod zkv5;

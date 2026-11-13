@@ -1,0 +1,21 @@
+booted 1 prover kernel(s) in 1.6s (serial proving)
+challenge 5646538718668549515 from http://127.0.0.1:8099 (k=8, tier 2^23); the clock is running
+grinding 8 win(s) on CPU, 10 thread(s), upstream v5_pow_digest, serial with 1 prover(s)…
+  win 0: nonce 1647267 found 9.9s, proved 315.9-337.0s (21.1s, prover 0)
+  win 1: nonce 12210441 found 72.1s, proved 337.0-358.2s (21.2s, prover 0)
+  win 2: nonce 19023566 found 112.8s, proved 358.2-379.3s (21.2s, prover 0)
+  win 3: nonce 31617454 found 188.2s, proved 379.3-400.6s (21.3s, prover 0)
+  win 4: nonce 31738754 found 188.9s, proved 400.6-421.7s (21.1s, prover 0)
+  win 5: nonce 32371617 found 192.4s, proved 421.7-442.9s (21.2s, prover 0)
+  win 6: nonce 44836737 found 266.6s, proved 442.9-464.0s (21.1s, prover 0)
+  win 7: nonce 53135884 found 315.9s, proved 464.0-485.2s (21.2s, prover 0)
+tock zk-bench — ZK v5 (Anthropos): Tip5 hashes of proof object 0, %5 proofs
+  backend:      CPU, 10 thread(s), upstream v5_pow_digest
+  proving:      serial (1 prover(s))
+  tier:         2^23 expected hashes/win
+  wins:         8 (53283272 hashes, 0.794x expected)
+  grind:        315.9s to the last win, 168657 hashes/s sustained, 212419 credited hashes/s
+  proving:      169.3s of proofs (21.2s per win); 169.3s after the last win
+  grind+prove:  485.2s, 138307 credited hashes/s (the registry's window adds network time)
+submitted: run 1
+  http://127.0.0.1:8099/runs/1?track=zk

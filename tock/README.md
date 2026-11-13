@@ -73,11 +73,11 @@ whose hash meets the target, and is bound to it. `zk-bench` does that:
 2. with `--submit`, mint a challenge at that tier (block commitment, target,
    k); otherwise grind a local dev commitment;
 3. grind nonces with upstream's own `v5_pow_digest` on every core (or, with
-   `--gpu`, upstream's CUDA search) until k meet the target;
-4. prove each winner through the miner kernel with
-   `[%5 commitment nonce target 64]` — the kernel re-checks the digest and
-   refuses a loser;
-5. with `--submit`, send the proofs; the registry verifies and ranks them.
+   `--gpu`, upstream's CUDA search) until k meet the target, and **prove each
+   winner as soon as it is found while the grind goes on**: a pool of miner
+   kernels proves it with `[%5 commitment nonce target 64]` (the kernel
+   re-checks the digest and refuses a loser);
+4. with `--submit`, send the proofs; the registry verifies and ranks them.
 
 ```sh
 cargo build --release
@@ -86,9 +86,21 @@ cargo build --release
 ./target/release/tock zk-bench --kernel assets/miner.jam --submit https://nockmark.xyz
 ```
 
-`--threads N` caps the CPU grind (default: every core). Proving is one kernel,
-one proof at a time, whatever it says: the tier is sized against that, so the
-registry's window recovers the same 2/3 of the true hash rate on every host.
+`--threads N` caps the CPU grind (default: every core). `--provers N` sets the
+pool: each prover is its own miner kernel proving one winner on one core
+(default 4 beside a GPU, 1 beside a CPU grind, which it shares cores with).
+
+Proving while grinding is what upstream's miner does, and it is what makes
+the board's figure close to the machine's real rate. The tier gives each win
+R = 2 proofs' worth of grinding, so the registry's window is k·R·p of grinding
+plus the last win's proof: it recovers kR/(kR + 1) ≈ 97 % of the true hash
+rate at k = 16, and the proof time p still cancels, so that holds on every
+host. `--serial` reproduces the old client (grind all k, then prove them one
+at a time, which recovers R/(R + 1) = 2/3) for comparison; the board labels
+such a row `serial` and ranks it with the rest. A proof that fails gives its
+slot back: the grind finds a replacement, and the failed winner is never
+submitted. `--report run.json` writes the run's timeline (each win's found,
+proof start and proof end).
 
 GPU (NVIDIA, CUDA 12.8+): build with the `zk-gpu` feature and your card's
 arch, then add `--gpu`. Only the search moves to the device; every winner is
@@ -122,6 +134,12 @@ peak kernel via `MultiGpuPeakSearchBackend::search_peak` — compute capability
 12.0 only, i.e. an RTX 5090; a 3090 gets CUDA status 801), and
 `prove_with_rules(Hardened)`, with the first win's prover setup reused for the
 rest. Each win is submitted as the jammed `%ai-pow` artifact.
+
+Both AI statements (`canonical-moe` and `dense-peak`, CPU or GPU) prove each
+win while the grind goes on, as `zk-bench` does. `--provers N` (default 1)
+sets how many certificates may be in flight; upstream's provers share one
+process-wide rayon pool, so a second concurrent certificate adds no workers.
+`--serial` and `--report` work as on `zk-bench`.
 
 ```sh
 cargo build --release

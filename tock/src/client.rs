@@ -117,6 +117,11 @@ pub struct ZkSubmission {
     pub grind_elapsed_ms: u64,
     /// base64 proof jams, one per win, in strictly ascending nonce order.
     pub proofs: Vec<String>,
+    /// How the proofs were scheduled ([`crate::pipeline::Proving`]):
+    /// `"pipelined"` or `"serial"`. Absent reads as serial, which every run
+    /// before the field existed was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proving: Option<&'static str>,
 }
 
 /// Mint a ZK v5 challenge at a tier (`attempts` expected hashes per win;
@@ -356,6 +361,11 @@ pub struct AiSubmission {
     /// which is also what makes stored M5 rows replay correctly).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statement: Option<&'static str>,
+    /// How the certificates were scheduled ([`crate::pipeline::Proving`]).
+    /// Omitted (read as serial) for the dense statement, which keeps the M5
+    /// wire format and the M5 client loop.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proving: Option<&'static str>,
 }
 
 /// The AI challenge URL for a statement and an optional difficulty tier.
@@ -571,22 +581,26 @@ mod tests {
             grind_elapsed_ms: 42,
             wins: vec![win],
             statement: None,
+            proving: None,
         };
         let v: serde_json::Value = serde_json::to_value(&dense).unwrap();
         assert!(
             v.get("statement").is_none(),
             "a dense submission must carry no statement field"
         );
+        assert!(v.get("proving").is_none(), "nor a proving field");
         assert_eq!(v["wins"][0]["extranonce"], 7);
 
         let moe = AiSubmission {
             statement: Some(AiStatement::CanonicalMoe.as_str()),
+            proving: Some(crate::pipeline::Proving::Pipelined.as_str()),
             ..dense
         };
         assert_eq!(
             serde_json::to_value(&moe).unwrap()["statement"],
             "canonical-moe"
         );
+        assert_eq!(serde_json::to_value(&moe).unwrap()["proving"], "pipelined");
     }
 
     /// A registry challenge parses with or without the statement field: absent

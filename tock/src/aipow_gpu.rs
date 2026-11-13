@@ -37,11 +37,11 @@
 //!     first launch pays CUDA context creation and the one-off upload of the
 //!     template's fixed inputs. Timing that would under-report the GPU by a
 //!     wide margin and hand it a tier far below what it can grind.
-//!   * **The grind window excludes proving.** It opens after the template, the
-//!     backend AND the CUDA session exist (the CPU path hoists `template.
-//!     scratch()` out of its loop for the same reason) and closes when the
-//!     k-th win is found. Certificates are proved afterwards, on the CPU,
-//!     through the shared [`prove_moe_wins`].
+//!   * **The device keeps grinding while the CPU proves** (M7 step 5, part 2,
+//!     [`crate::pipeline`]): each win goes to the shared
+//!     [`crate::aipow_moe::prove_moe_win`] as it is found, and the device
+//!     pauses only once the run has its `k` wins in hand. The reported grind
+//!     window runs from the start of the grind to the last win found.
 //!   * **Attempts are counted through the winner, not through the batch.** The
 //!     device evaluates every ordinal in a launch, including ones past the
 //!     winner; upstream's [`OrderedBatchScheduler`] — which this loop drives
@@ -78,9 +78,11 @@ use ai_pow_miner::reference::{evaluate_reference_moe_jackpot, PreparedReferenceM
 use ai_pow_miner::gpu::GpuSearchBackend;
 use ai_pow_miner::search::{OrderedBatchScheduler, SearchBackend, SearchBatch};
 
+use crate::pipeline::{self, PipelineOptions, Proving, Sink};
+
 use crate::aipow_moe::{
-    dev_challenge, moe_threshold, prove_moe_wins, AiMoeBenchSummary, AiMoeChallenge,
-    MoeGrindResult, AI_MOE_E, AI_MOE_HW, AI_MOE_PARAMS, AI_MOE_TOP_K,
+    dev_challenge, moe_threshold, prove_moe_win, summarize_moe, AiMoeBenchSummary, AiMoeChallenge,
+    AiMoeWin, MoeGrindResult, AI_MOE_E, AI_MOE_HW, AI_MOE_PARAMS, AI_MOE_TOP_K,
 };
 
 // ---------------------------------------------------------------------------
@@ -215,14 +217,15 @@ fn warm_backend(
 // Grind
 // ---------------------------------------------------------------------------
 
-/// Grind ordinals 0, 1, 2, … on the GPU until `k` jackpot wins, in batches of
-/// `batch_attempts`.
+/// The grinding half of a run on the GPU: walk ordinals 0, 1, 2, … in
+/// batches of `batch_attempts` and offer each jackpot win to `sink`, until the
+/// run has its wins. Returns the attempts tried (through the last winner).
 ///
 /// The loop is upstream's [`OrderedBatchScheduler`] driven directly rather than
 /// re-expressed: it emits the next `SearchBatch`, and `record_miss` /
 /// `record_winner` advance it — to the batch end on a miss, to **winner + 1**
 /// on a hit, so the ordinals past a winner inside its batch are re-searched
-/// rather than skipped. That is what keeps the k-th win here the same win the
+/// rather than skipped. That is what keeps the wins here the same wins the
 /// CPU loop would have found: both walk the ordinal space in strictly
 /// ascending order and neither can hop over a winning ordinal.
 ///
@@ -230,17 +233,21 @@ fn warm_backend(
 /// standalone scalar oracle, byte-identical to the CPU path's guard — before it
 /// is allowed to reach the prover. A GPU that reports a jackpot the CPU
 /// disagrees with aborts the run; it does not submit.
-pub fn grind_moe_gpu(ch: &AiMoeChallenge, batch_attempts: u64) -> MoeGrindResult {
-    assert!(ch.k >= 1, "k must be at least 1");
+pub fn grind_moe_gpu_stage<P: Send>(
+    sink: &Sink<'_, u32, P>,
+    ch: &AiMoeChallenge,
+    batch_attempts: u64,
+) -> u64 {
     let threshold = moe_threshold(&ch.target).expect("canonical grind threshold");
     let (backend, template) = warm_backend(ch.challenge, batch_attempts);
     let mut scheduler =
         OrderedBatchScheduler::new(0, CANONICAL_ORDINAL_SPACE, None, batch_attempts)
             .expect("nonzero batch over the canonical ordinal space");
-
-    let t0 = Instant::now();
-    let mut win_ordinals: Vec<u32> = Vec::with_capacity(ch.k as usize);
-    while (win_ordinals.len() as u64) < ch.k {
+    let mut found = 0u64;
+    loop {
+        if !sink.need_more() && !sink.wait_for_more() {
+            break;
+        }
         let batch = scheduler.next_batch(threshold).unwrap_or_else(|end| {
             panic!(
                 "canonical ordinal space (u32) exhausted after {} attempts ({end:?}): \
@@ -273,28 +280,42 @@ pub fn grind_moe_gpu(ch: &AiMoeChallenge, batch_attempts: u64) -> MoeGrindResult
                     oracle, winner.jackpot_hash,
                     "GPU jackpot disagrees with the canonical scalar oracle at ordinal {ordinal}"
                 );
-                win_ordinals.push(ordinal);
+                found += 1;
                 eprintln!(
-                    "  win {}/{} at ordinal {ordinal} ({:.1}s)",
-                    win_ordinals.len(),
+                    "  win {found} (of k={}) at ordinal {ordinal} ({:.1}s)",
                     ch.k,
-                    t0.elapsed().as_secs_f64()
+                    sink.elapsed().as_secs_f64()
                 );
+                sink.offer(ordinal);
             }
             None => scheduler
                 .record_miss(batch)
                 .expect("a missed batch is the one the scheduler emitted"),
         }
     }
-    let elapsed_s = t0.elapsed().as_secs_f64();
-    // Through the k-th winner, not through its batch — see the module docs.
-    let attempts = scheduler.attempts_tried();
+    // Through the last winner, not through its batch — see the module docs.
+    scheduler.attempts_tried()
+}
+
+/// Grind on the GPU until `k` jackpot wins, proving nothing: the stage under
+/// a pipeline whose prover accepts every win (for the CPU cross-check).
+pub fn grind_moe_gpu(ch: &AiMoeChallenge, batch_attempts: u64) -> MoeGrindResult {
+    assert!(ch.k >= 1, "k must be at least 1");
+    let r = pipeline::run(
+        PipelineOptions::new(ch.k as usize, 1, Proving::Pipelined),
+        |sink: &Sink<'_, u32, ()>| grind_moe_gpu_stage(sink, ch, batch_attempts),
+        |_, _| Ok(()),
+    )
+    .expect("a grind with an infallible prover always finishes");
+    let mut win_ordinals: Vec<u32> = r.proved.iter().map(|p| p.win).collect();
+    win_ordinals.sort_unstable();
+    let elapsed_s = r.grind_elapsed.as_secs_f64();
     MoeGrindResult {
         win_ordinals,
         // Round UP like the CPU path: never claim faster than measured.
         elapsed_ms: (elapsed_s * 1000.0).ceil().max(1.0) as u64,
-        total_attempts: attempts,
-        attempts_per_sec: attempts as f64 / elapsed_s.max(1e-9),
+        total_attempts: r.grind,
+        attempts_per_sec: r.grind as f64 / elapsed_s.max(1e-9),
     }
 }
 
@@ -337,36 +358,31 @@ pub fn calibrate_moe_attempts_per_sec(budget: Duration, batch_attempts: u64) -> 
     attempts as f64 / t0.elapsed().as_secs_f64().max(1e-9)
 }
 
-/// The full canonical-MoE workload with the GPU grinding: grind to k wins on
-/// the device, then certify each on the CPU.
+/// The canonical-MoE workload with the GPU grinding and the CPU certifying
+/// each win as it is found (or after the grind, for [`Proving::Serial`]).
 ///
-/// The peer of [`crate::aipow_moe::run`], and deliberately sharing its second
-/// half verbatim — [`prove_moe_wins`] is called unchanged, so a GPU submission
-/// and a CPU submission carry byte-identical certificates for the same
-/// `(challenge, ordinal)`. The GPU never touches proving.
-pub fn run(ch: &AiMoeChallenge, batch_attempts: u64) -> AiMoeBenchSummary {
+/// The peer of [`crate::aipow_moe::run_with`], sharing its prover
+/// ([`prove_moe_win`]) verbatim, so a GPU submission and a CPU submission
+/// carry byte-identical certificates for the same `(challenge, ordinal)`. The
+/// GPU never touches proving.
+pub fn run_with(
+    ch: &AiMoeChallenge,
+    batch_attempts: u64,
+    opts: PipelineOptions,
+) -> Result<AiMoeBenchSummary, String> {
     eprintln!(
         "grinding to {} canonical-MoE win(s) on CUDA device {GPU_DEVICE_ORDINAL} \
-         ({batch_attempts} attempts/launch)…",
-        ch.k
+         ({batch_attempts} attempts/launch), {} with {} prover(s)…",
+        ch.k,
+        opts.proving.as_str(),
+        opts.provers
     );
-    let grind = grind_moe_gpu(ch, batch_attempts);
-    eprintln!(
-        "grind window closed: {} attempts in {:.1}s",
-        grind.total_attempts,
-        grind.elapsed_ms as f64 / 1000.0
-    );
-    eprintln!(
-        "proving {} certificate(s) on the CPU…",
-        grind.win_ordinals.len()
-    );
-    let wins = prove_moe_wins(ch, &grind.win_ordinals);
-    AiMoeBenchSummary {
-        wins,
-        grind_elapsed_ms: grind.elapsed_ms,
-        total_attempts: grind.total_attempts,
-        attempts_per_sec: grind.attempts_per_sec,
-    }
+    let r = pipeline::run(
+        opts,
+        |sink: &Sink<'_, u32, AiMoeWin>| grind_moe_gpu_stage(sink, ch, batch_attempts),
+        |_, &ordinal| prove_moe_win(ch, ordinal),
+    )?;
+    Ok(summarize_moe(r))
 }
 
 #[cfg(test)]

@@ -13,6 +13,9 @@ pub mod http;
 /// Append-only JSONL for the run stores, safe against torn writes.
 pub mod jsonl;
 pub mod kernel;
+/// M7 step 5, part 2: how a run's proofs were scheduled, and the ranking
+/// rule that follows from it.
+pub mod proving;
 pub mod ratelimit;
 pub mod verifier;
 /// M7 step 3: the ZK v5 hash-rate track's store, per-win checks and rates.

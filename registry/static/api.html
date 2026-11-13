@@ -85,7 +85,21 @@
   <ul class="fields">
     <li><code>rank</code> — 1-based among current-rules rows; <code>null</code> on every unranked row</li>
     <li><code>rules</code> — server-attested era: <code>anthropos</code> (ZK proof %5, ranked) or <code>pre-anthropos</code> (complete %3 proofs/sec, unranked)</li>
+    <li><code>proving</code> (v5 rows) — <code>pipelined</code> or <code>serial</code>, as the client reported it: a label, never a ranking input; see below</li>
   </ul>
+  <p><b>Pipelined and serial rows.</b> The tier gives each win about twice a
+  proof's worth of grinding. A <code>pipelined</code> client proves each
+  winner while it keeps grinding, so the window is the grind plus one proof
+  and the ranked rate is about 97 % of the true one at k = 16. A
+  <code>serial</code> client grinds all k wins first and proves them after,
+  which caps it at about two thirds. Both are honest lower bounds, but they do
+  not rank fairly together. Every run this server committed before
+  2026-11-13 00:00 UTC came from the serial client, the only one there was;
+  once a board has a current-rules row committed after that, those older rows
+  follow the ranked ones with <code>rank: null</code>. That cut uses the
+  server's own clock. The <code>proving</code> label is the client's word, so
+  it moves no rank: a run made later with <code>--serial</code> is ranked with
+  the rest, at the rate its idle grinder cost it.</p>
   <p>A v5 row (<code>rules: anthropos</code>):</p>
   <ul class="fields">
     <li><code>verified_zk_hashes_per_sec_lb</code> — k · <code>expected_attempts_per_win</code> / server-observed window (mint → submit, proving included); the ranked lower bound</li>
@@ -177,9 +191,10 @@
   p<sup>5</sup> / (T<sub>b</sub> + 1) gives the tier back exactly. As on the
   AI track, a tier cannot inflate a rate: an easy one earns less credit
   against the same proving time, and a hard one has to be ground out.
-  <code>tock zk-bench</code> sizes it at twice the machine's own proving time,
-  which makes the ranked rate about two thirds of the true one on every
-  host.</p>
+  <code>tock zk-bench</code> sizes it at twice the machine's own proving time
+  and proves each winner while it keeps grinding, which makes the ranked rate
+  about 97 % of the true one at k = 16 on every host (two thirds for a serial
+  run).</p>
   <p>Without <code>?track=</code>, <code>POST /challenge</code> and
   <code>POST /run</code> answer <code>410 Gone</code>: they were the complete
   %3 proofs/sec submission, retired with Anthropos.</p>
@@ -194,6 +209,7 @@
     <li><code>nonce</code>, <code>proofs[k]</code> — the challenge and the winners' base64 proof jams</li>
     <li><code>hardware</code>, <code>prover_version</code> — self-described labels (rates are not self-described)</li>
     <li><code>grind_elapsed_ms</code> — client-measured grind time; displayed, never ranked</li>
+    <li><code>proving</code> — optional label, <code>"pipelined"</code> or <code>"serial"</code> (the default); any other value is refused</li>
   </ul>
   <p>Nothing digest-shaped is taken from the client. Per proof, cheapest
   first:</p>
@@ -267,7 +283,8 @@
       Pearl header's aux commitment, as on <code>canonical-moe</code>. Tiers run
       to 2<sup>36</sup>, the response carries <code>window_ms</code>, and the
       challenge lives <b>3 h</b>: one certificate takes 60–76 s and 12–15 GB on
-      an M1 Max, so 16 wins at twice the proving time do not fit an hour. A
+      an M1 Max, so 16 wins at twice the proving time, proved after the grind,
+      do not fit an hour (pipelined, they need about 33 certificates' worth). A
       dense-peak challenge takes only dense-peak wins, and the other way
       round. Its GPU path (<code>--gpu</code>) is upstream's peak kernel,
       which runs only on compute capability 12.0 (RTX 5090 class).</li>
@@ -293,9 +310,9 @@
   </ul>
   <p><b>Why letting the client choose cannot inflate a rate.</b> The ranked
   figure divides real MAC-equivalents by a window this server observed, and a
-  tier only changes how much of that window is grinding rather than the fixed
-  ~25 s-per-win of certificate proving: an <em>easy</em> tier earns less credit
-  against that same fixed overhead and therefore scores <em>lower</em>, so
+  tier only changes how much of that window is grinding rather than
+  certificate proving the grind cannot hide: an <em>easy</em> tier earns less
+  credit against the same proving and therefore scores <em>lower</em>, so
   there is nothing to gain by asking for one. A <em>hard</em> tier cannot lift a
   machine above its true throughput either, because every attempt it is credited
   for is genuinely performed — the credit is exactly the expected attempts at
@@ -316,7 +333,8 @@
     <li><code>statement</code> — <code>dense</code> (default when absent), <code>canonical-moe</code> or <code>dense-peak</code>; picks the verify rules, the target and the blob format</li>
     <li><code>wins[k]</code> — <code>{extranonce, cert_b64}</code>, strictly ascending (ground 0, 1, 2, …). For <code>canonical-moe</code> the field carries the u32 ordinal; for <code>dense-peak</code>, the attempt index.</li>
     <li><code>hardware</code>, <code>prover_version</code> — self-described labels (rates are not self-described)</li>
-    <li><code>grind_elapsed_ms</code> — client-measured grind window (proving excluded); displayed, never ranked</li>
+    <li><code>grind_elapsed_ms</code> — client-measured, grind start to the last win found; displayed, never ranked</li>
+    <li><code>proving</code> — optional, <code>"pipelined"</code> or <code>"serial"</code> (the default), as on the ZK track</li>
   </ul>
   <p>For <code>canonical-moe</code> the submission carries nothing but the
   certificate and its public inputs: the whole statement — Pearl header,
@@ -365,7 +383,8 @@ tock ai-bench --statement dense-peak --submit https://nockmark.xyz</pre>
     <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 14,285,714, the consensus MAC↔ZK-attempt exchange rate since height 154,500; a ZK attempt is one Tip5 hash since Anthropos (rows served before M7 divided by the Logos rate, 25.75e9 per complete proof)</li>
     <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (k wins is Poisson: 1/√k)</li>
     <li><code>rules</code> — the proof rules the wins were verified under, recorded by this server at acceptance: <code>hardened</code> or <code>legacy</code></li>
-    <li><code>rank</code> — 1-based among <code>hardened</code> rows; <code>null</code> on legacy rows</li>
+    <li><code>proving</code> — <code>pipelined</code> or <code>serial</code>, client-reported; a label only</li>
+    <li><code>rank</code> — 1-based among <code>hardened</code> rows; <code>null</code> on legacy rows, and on rows committed before 2026-11-13 00:00 UTC once a newer <code>hardened</code> row exists (the ZK board's rule, above)</li>
   </ul>
   <p>Mainnet has admitted only <code>Hardened</code> AI certificates since
   height 154,500, and since 170,000 a canonical-MoE block must also route

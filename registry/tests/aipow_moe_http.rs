@@ -151,6 +151,8 @@ async fn canonical_moe_golden_path_tamper_and_replay() {
         .unwrap();
     let ordinals: Vec<u32> = summary.wins.iter().map(|w| w.ordinal).collect();
     assert_eq!(ordinals, vec![0, 1], "the loosest target wins every attempt");
+    // ai-bench's default: certificates proved while the grind goes on.
+    assert_eq!(summary.proving, tock::pipeline::Proving::Pipelined);
     let wins_json: Vec<serde_json::Value> = summary
         .wins
         .iter()
@@ -168,6 +170,7 @@ async fn canonical_moe_golden_path_tamper_and_replay() {
         "statement": "canonical-moe",
         "grind_elapsed_ms": summary.grind_elapsed_ms,
         "wins": wins_json,
+        "proving": summary.proving.as_str(),
     });
 
     // 3. Tampered certificate first (the challenge stays unused after a
@@ -255,6 +258,7 @@ async fn canonical_moe_golden_path_tamper_and_replay() {
     // The statement is on the row — this is what the board column reads.
     assert_eq!(row["statement"], "canonical-moe");
     assert_eq!(row["win_extranonces"], serde_json::json!([0, 1]));
+    assert_eq!(row["proving"], "pipelined", "the submitted mode is recorded");
     let window_ms = row["server_window_ms"].as_u64().unwrap();
     assert!(window_ms >= summary.grind_elapsed_ms, "window {window_ms} ms");
     let mac_total = K as f64 * tock::aipow_moe::MAC_EQUIV_PER_MOE_ATTEMPT;

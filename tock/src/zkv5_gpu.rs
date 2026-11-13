@@ -7,6 +7,10 @@
 //! The registry then checks each one from scratch, so a GPU row is held to
 //! exactly the standard of a CPU row.
 //!
+//! The device keeps searching while the CPU proves earlier winners
+//! ([`crate::pipeline`]): the grind stage only pauses once the run has its `k`
+//! wins in hand.
+//!
 //! The search walks the same nonces as the CPU grinder: `add_nonce([0; 5], i)`
 //! is [`crate::zkv5::nonce_at`]`(i)` for every `i < p`.
 
@@ -15,7 +19,8 @@ use std::time::{Duration, Instant};
 use zk_pow_miner::cuda::CudaSession;
 use zk_pow_miner::v5::{add_nonce, digest_le, v5_pow_digest, V5Job};
 
-use crate::zkv5::{commitment_for_nonce, nonce_at, Belts5, GrindResult, ZK_V5_POW_LEN};
+use crate::pipeline::Sink;
+use crate::zkv5::{commitment_for_nonce, nonce_at, Belts5, ZK_V5_POW_LEN};
 
 /// The device every search runs on.
 pub const ZK_GPU_DEVICE: u32 = 0;
@@ -65,20 +70,25 @@ pub fn calibrate_hashes_per_sec(budget: Duration, batch: u64) -> f64 {
     hashes as f64 / t0.elapsed().as_secs_f64().max(1e-9)
 }
 
-/// Grind on the device until `k` nonces meet `target`.
+/// The grinding half of a run on the device: offer every nonce that meets
+/// `target` to `sink` until the run has its wins, and keep searching while the
+/// CPU proves the ones already found. Returns the digests evaluated.
 ///
 /// A launch evaluates its whole batch and reports the LOWEST winning index,
 /// so the next launch starts one past that winner: no winner is skipped, and
-/// the batch tail after a win is evaluated again (counted once below).
-pub fn grind(commitment: Belts5, target: Belts5, k: usize, batch: u64) -> GrindResult {
+/// the batch tail after a win is evaluated again (counted once below). When
+/// the run has `k` wins in hand the device waits; if a proof fails it resumes
+/// where it stopped, so a replacement is the next winner up.
+pub fn grind_stage<P>(sink: &Sink<'_, Belts5, P>, commitment: Belts5, target: Belts5, batch: u64) -> u64 {
     let mut s = session();
     let job = V5Job::new(commitment, target, ZK_V5_POW_LEN).expect("job");
     assert_device_matches_oracle(&mut s, &job);
     let mut start = [0u64; 5];
-    let mut winners = Vec::with_capacity(k);
     let mut hashes = 0u64;
-    let t0 = Instant::now();
-    while winners.len() < k {
+    loop {
+        if !sink.need_more() && !sink.wait_for_more() {
+            break;
+        }
         let r = s.search(&job, start, batch).expect("CUDA search");
         if r.found {
             let w = r.next_nonce;
@@ -89,16 +99,12 @@ pub fn grind(commitment: Belts5, target: Belts5, k: usize, batch: u64) -> GrindR
             // Nonces stay in limb 0 (i < p), so the attempts this launch spent
             // up to and including the winner are a limb-0 difference.
             hashes += w[0] - start[0] + 1;
-            winners.push(w);
+            sink.offer(w);
             start = add_nonce(w, 1);
         } else {
             hashes += r.attempts;
             start = r.next_nonce;
         }
     }
-    GrindResult {
-        winners,
-        hashes,
-        elapsed: t0.elapsed(),
-    }
+    hashes
 }

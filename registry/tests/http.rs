@@ -438,6 +438,7 @@ async fn seed_ai_run(st: &nockmark_registry::http::AppState) {
         2_000,
         vec![0, 1],
         1_004_000, // a 4 s server window
+        nockmark_registry::proving::Proving::Serial,
     )
     .unwrap()
     .unwrap();
@@ -504,7 +505,15 @@ async fn economics_estimates_and_annotates_the_board() {
         let mut zk = st.zk.lock().await;
         let t = tock::zkv5::target_for_attempts(1 << 20).unwrap();
         zk.record_challenge(7, 1_000_000, t, 1 << 20).unwrap();
-        zk.commit_run(7, "test-gpu", "v", 2_000, vec![[1, 0, 0, 0, 0], [2, 0, 0, 0, 0]], 1_004_000)
+        zk.commit_run(
+            7,
+            "test-gpu",
+            "v",
+            2_000,
+            vec![[1, 0, 0, 0, 0], [2, 0, 0, 0, 0]],
+            1_004_000,
+            nockmark_registry::proving::Proving::Serial,
+        )
             .unwrap()
             .unwrap();
     }
@@ -550,6 +559,7 @@ async fn ai_board_ranks_only_current_rules_rows() {
     assert_eq!(rows.len(), 2);
     assert_eq!((rows[0]["rules"].as_str(), rows[0]["rank"].as_u64()), (Some("hardened"), Some(1)));
     assert_eq!((rows[1]["rules"].as_str(), rows[1]["rank"].is_null()), (Some("legacy"), true));
+    assert_eq!(rows[1]["proving"], "serial", "a line from before the field replays as serial");
     assert!(
         rows[1]["verified_mac_per_sec_lb"].as_f64() > rows[0]["verified_mac_per_sec_lb"].as_f64(),
         "the legacy row is faster and still sits below, unranked"
@@ -724,4 +734,146 @@ async fn economics_publishes_every_input_needed_to_recompute() {
     for word in ["electricity", "capital", "pool fees", "difficulty drift", "price drift"] {
         assert!(joined.contains(word), "notes must mention {word}: {joined}");
     }
+}
+
+/// Seed one verified ZK v5 run: `k` = 2 wins at tier 2^20, minted at
+/// `issued_ms` and committed `window_ms` later, labelled `proving`.
+async fn seed_zk_run(
+    st: &nockmark_registry::http::AppState,
+    nonce: u64,
+    issued_ms: u64,
+    window_ms: u64,
+    proving: nockmark_registry::proving::Proving,
+) {
+    let mut zk = st.zk.lock().await;
+    let t = tock::zkv5::target_for_attempts(1 << 20).unwrap();
+    zk.record_challenge(nonce, issued_ms, t, 1 << 20).unwrap();
+    zk.commit_run(
+        nonce,
+        &format!("zk-{nonce}"),
+        "v",
+        500,
+        vec![[1, 0, 0, 0, 0], [2, 0, 0, 0, 0]],
+        issued_ms + window_ms,
+        proving,
+    )
+    .unwrap()
+    .unwrap();
+}
+
+/// After the pipelined client's release, as the server's clock says.
+const NEW_ERA_MS: u64 = nockmark_registry::proving::PIPELINED_CLIENT_SINCE_MS + 60_000;
+
+/// Rows committed before the pipelined client existed stay ranked until the
+/// board has a newer row; from then only newer rows are ranked, and the old
+/// ones follow, unranked, however fast.
+#[tokio::test]
+async fn zk_board_unranks_pre_pipelining_rows_once_a_newer_row_exists() {
+    use nockmark_registry::proving::Proving;
+    let _guard = test_lock().lock().await;
+    let st = state().await;
+    let app = nockmark_registry::http::router(st.clone());
+
+    seed_zk_run(&st, 31, 1_000_000, 1_000, Proving::Serial).await; // old and fast
+    let (_, v) = get_json(app.clone(), "/leaderboard?track=zk").await;
+    assert_eq!((v[0]["proving"].as_str(), v[0]["rank"].as_u64()), (Some("serial"), Some(1)),
+        "no newer row yet: the old row keeps its rank");
+
+    seed_zk_run(&st, 32, NEW_ERA_MS, 4_000, Proving::Pipelined).await; // newer, slower
+    let (_, v) = get_json(app.clone(), "/leaderboard?track=zk").await;
+    let rows = v.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!((rows[0]["hardware"].as_str(), rows[0]["rank"].as_u64()), (Some("zk-32"), Some(1)));
+    assert_eq!((rows[1]["hardware"].as_str(), rows[1]["rank"].is_null()), (Some("zk-31"), true));
+    assert!(
+        rows[1]["verified_zk_hashes_per_sec_lb"].as_f64() > rows[0]["verified_zk_hashes_per_sec_lb"].as_f64(),
+        "the old row is faster and still sits below, unranked"
+    );
+    let (_, one) = get_json(app, "/runs/1?track=zk").await;
+    assert!(one["rank"].is_null(), "/runs carries the board's verdict: {one}");
+}
+
+/// The client's `proving` label decides no rank: a slow row that calls itself
+/// pipelined does not unrank a faster newer row that says serial, and ranks
+/// below it (adversarial review, 2026-11-13).
+#[tokio::test]
+async fn a_pipelined_label_does_not_move_any_rank() {
+    use nockmark_registry::proving::Proving;
+    let _guard = test_lock().lock().await;
+    let st = state().await;
+    let app = nockmark_registry::http::router(st.clone());
+    seed_zk_run(&st, 51, NEW_ERA_MS, 1_000, Proving::Serial).await; // fast, says serial
+    seed_zk_run(&st, 52, NEW_ERA_MS, 8_000, Proving::Pipelined).await; // slow, says pipelined
+    let (_, v) = get_json(app, "/leaderboard?track=zk").await;
+    let rows = v.as_array().unwrap();
+    assert_eq!(
+        (rows[0]["hardware"].as_str(), rows[0]["proving"].as_str(), rows[0]["rank"].as_u64()),
+        (Some("zk-51"), Some("serial"), Some(1))
+    );
+    assert_eq!(
+        (rows[1]["hardware"].as_str(), rows[1]["proving"].as_str(), rows[1]["rank"].as_u64()),
+        (Some("zk-52"), Some("pipelined"), Some(2))
+    );
+}
+
+/// The AI board applies the same rule within the current-rules rows; legacy
+/// rows stay unranked below both.
+#[tokio::test]
+async fn ai_board_unranks_pre_pipelining_rows_once_a_newer_row_exists() {
+    use nockmark_registry::aipow::{default_target, Statement};
+    use nockmark_registry::proving::Proving;
+    let _guard = test_lock().lock().await;
+    let st = state().await;
+    let app = nockmark_registry::http::router(st.clone());
+    let seed = |nonce: u64, issued_ms: u64, window_ms: u64, proving: Proving| {
+        let st = st.clone();
+        async move {
+            let mut ai = st.ai.lock().await;
+            ai.record_challenge(nonce, issued_ms, None).unwrap();
+            ai.commit_run(
+                nonce,
+                Statement::CanonicalMoe,
+                &format!("ai-{nonce}"),
+                "v",
+                &default_target(),
+                500,
+                vec![0, 1],
+                issued_ms + window_ms,
+                proving,
+            )
+            .unwrap()
+            .unwrap();
+        }
+    };
+    seed(41, 1_000_000, 1_000, Proving::Serial).await;
+    let (_, v) = get_json(app.clone(), "/leaderboard?track=ai").await;
+    assert_eq!(v[0]["rank"].as_u64(), Some(1), "no newer row yet");
+
+    seed(42, NEW_ERA_MS, 4_000, Proving::Pipelined).await;
+    let (_, v) = get_json(app, "/leaderboard?track=ai").await;
+    let rows = v.as_array().unwrap();
+    assert_eq!((rows[0]["hardware"].as_str(), rows[0]["rank"].as_u64()), (Some("ai-42"), Some(1)));
+    assert_eq!((rows[1]["hardware"].as_str(), rows[1]["rank"].is_null()), (Some("ai-41"), true));
+}
+
+/// An unknown proving mode is refused on both tracks before any proof is
+/// looked at; an absent one is read as serial.
+#[tokio::test]
+async fn an_unknown_proving_mode_is_refused() {
+    let _guard = test_lock().lock().await;
+    let app = nockmark_registry::http::router(state().await);
+    let zk = serde_json::json!({
+        "nonce": "1", "hardware": "hw", "prover_version": "v",
+        "grind_elapsed_ms": 1, "proofs": [], "proving": "turbo",
+    });
+    let (status, v) = post_json(app.clone(), "/run?track=zk", zk).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(v["error"].as_str().unwrap().contains("unknown proving mode"), "{v}");
+    let ai = serde_json::json!({
+        "nonce": "1", "hardware": "hw", "prover_version": "v",
+        "grind_elapsed_ms": 1, "wins": [], "statement": "canonical-moe", "proving": "turbo",
+    });
+    let (status, v) = post_json(app, "/run?track=ai", ai).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(v["error"].as_str().unwrap().contains("unknown proving mode"), "{v}");
 }
