@@ -123,7 +123,8 @@ was restarted with 9 threads.
 
 ## Pod and cost
 
-**$0.211 of the $0.50 cap** (balance $5.151 → $4.941), community cloud,
+**$0.223 of the $0.50 cap** (balance $5.151 → $4.928 once billing settled;
+it read $4.941 straight after teardown), community cloud,
 4090 at $0.34/h. The API then showed `pods: []` at $0/h.
 
 | host | driver | outcome | minutes |

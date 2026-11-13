@@ -269,7 +269,7 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
        580.95.05). The winner set belongs to the challenge, not the card. A
        fault on zk 8's own card was not tested, but it cannot have cost a
        winner.
-     - **RunPod:** $0.211 of the $0.50 cap (balance $5.151 → $4.941),
+     - **RunPod:** $0.223 of the $0.50 cap (balance $5.151 → $4.928),
        community. Three hosts on driver 580.178.04 failed `cuInit` and were
        taken down within 1.3 min each; all pods terminated.
    - **Write-up:** next, in its own PR, merged only after Tom approves the
