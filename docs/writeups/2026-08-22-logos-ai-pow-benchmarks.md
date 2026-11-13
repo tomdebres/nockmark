@@ -10,6 +10,11 @@
 > rules. The GPU rows measured upstream's generic CUDA kernel, which the peak
 > kernel has since replaced. See
 > [the M7 plan](../superpowers/specs/2026-11-11-m7-anthropos.md).
+>
+> **Note, 2026-11-13.** Finding 2 ("AI-PoW dominates") no longer holds.
+> Under today's rules every card measured earns more on ZK, the RTX 5090 by
+> about 2.7× even on mainnet's production AI kernel. See
+> [Which puzzle should this card mine?](2026-11-13-which-puzzle-should-this-card-mine.md).
 
 In July I published the first cross-hardware Nockchain proving benchmarks.
 Since then the chain has hard-forked three times. The last of those, **Logos**
