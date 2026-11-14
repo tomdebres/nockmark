@@ -32,11 +32,18 @@ registry kernel's own state (event log + PMA) lives in `--data-dir`
 (`./registry-data` by default, `/data` on Railway).
 
 - Registry node state and benchmark output go in **`~/data/nockmark-runs/<name>/`**,
-  never inside a checkout. The preserved pre-consolidation state is parked there
-  now (`registry-data.roswell`, despite the name, is registry state: every copy
-  boots at c8d6b13e and ed1edfcc) — copy from it if a run needs prior registry
-  state. A `.data.roswell` taken from a crate directory is not, and boots under
-  no registry binary.
+  never inside a checkout. The six pre-consolidation copies (m4–m6, 32 GB of
+  PMA) were deleted on 2026-11-14 to free disk (Tom's call). The live registry
+  had moved past their formats, and step 2 had already used them once for its
+  boot test. For prior registry state in today's (ed1edfcc) format, copy
+  `m7p-local/registry-data` or `m7s4-local/registry-data` (25 MB each), or
+  write a fresh dir through the current binary. A `.data.roswell` taken from a
+  crate directory is verifier scratch, not registry state, and boots under no
+  registry binary.
+- Each registry test parks a NockApp data dir in `$TMPDIR` on purpose
+  (`std::mem::forget`). `./verify` runs the tests under a TMPDIR of its own
+  and removes it on exit. A bare `cargo test` in registry/ still leaves
+  `.tmpXXXXXX` dirs behind (about 25 MB each), so delete them afterwards.
 - `target/` and `.data.roswell/` are gitignored; keep them so. `tock/assets/*.jam`
   are regenerable via `tock/setup-bench.sh` — don't commit them.
 - A worktree must stay cheap to create and delete. If it's carrying gigabytes,
