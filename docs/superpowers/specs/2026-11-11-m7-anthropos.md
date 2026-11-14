@@ -321,3 +321,14 @@ AI ≈ 1.5e19 MAC/s; AI is ~84% of the work.
   would let the server verify while the client grinds and save the ~25 s
   upload-and-verify tail (≈1.4 %), but it needs partial-run state on the
   server and a new attack surface. Not worth it.
+- **The board shows ranked rows only (Tom, 2026-11-14).** Nobody can mine
+  the retired puzzles any more, so their rows only confused a reader. A
+  serial 4090 row out-earned the ranked one on luck, for example. The page
+  now drops every `rank: null` row: the pre-Anthropos table, legacy AI rows
+  and superseded serial rows. The registry keeps them all, and the
+  `/leaderboard` JSON still lists them, unranked, because the kernel's log is
+  append-only and API users can filter on `rank`. The same day the July and
+  August write-ups were deleted. They described puzzles that no longer
+  exist, and the August headline ("one of them pays for itself") had become
+  wrong. Git history keeps them, and the November write-up replaces both.
+  That reverses the "dated write-ups stay as written" decision above.

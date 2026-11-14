@@ -10,18 +10,10 @@ server-issued challenge, the registry checks every proof, and your rate is
 computed from the server's own clock. The published number is a lower bound
 that nobody can inflate — including you.
 
-> **The ZK board measures Tip5 hashes per second since Nov 2026.** From block
-> 147,500 (Anthropos, ZK proof version 5) a ZK mining attempt is one Tip5 hash
-> of proof object 0, and a full STARK is built only for a winning nonce. The
-> ZK track now measures exactly that, on CPU or GPU. Rows from before it
-> (complete proofs per second) stay on the board, unranked; the plan is in
-> [docs/superpowers/specs/2026-11-11-m7-anthropos.md](docs/superpowers/specs/2026-11-11-m7-anthropos.md).
-
 - Leaderboard: https://nockmark.xyz/ (JSON at `/leaderboard?track=zk` and `?track=ai`)
 - Earnings estimates (every input published): https://nockmark.xyz/economics
-- Write-up with cross-hardware results (M1, Graviton4, EPYC, Xeon; complete
-  proofs, pre-Anthropos):
-  [docs/writeups/2026-07-15-first-public-nockchain-proving-benchmarks.md](docs/writeups/2026-07-15-first-public-nockchain-proving-benchmarks.md)
+- Write-up, which puzzle each card should mine (RTX 3090, 4090, 5090, M1 Max):
+  [docs/writeups/2026-11-13-which-puzzle-should-this-card-mine.md](docs/writeups/2026-11-13-which-puzzle-should-this-card-mine.md)
 
 ## Get on the board
 
@@ -116,9 +108,9 @@ your own prove time is what makes the comparison fair across machines: every
 host's ranked rate then recovers the same fraction of its true grind
 throughput, instead of one that depends on whichever CPU did the proving.
 Both clients prove each win while the grind goes on, so the window is the grind
-plus one certificate and that fraction is about 97 % at k = 16 (2/3 for a run
-made the old way, grind first and prove after; rows from before the
-pipelined client are marked `serial` and unranked once newer rows exist). Pass
+plus one certificate and that fraction is about 97 % at k = 16 (about 2/3
+for a run made the old way, grind first and prove after, which the board marks
+`serial`). Pass
 `--attempts <n>` to pick the tier yourself (expected grind attempts per win) or
 `--target <hex>` to pin the difficulty outright; either skips the calibration,
 including the prove.
@@ -147,16 +139,19 @@ ZK track (`zk-bench`):
    ranked.
 
 The `%3` complete-proof submissions of earlier versions are retired: the
-registry answers `410 Gone`. Their rows stay on the board, unranked.
+registry answers `410 Gone`.
 
 AI-track wins are verified the same way, against mainnet's current rules:
 `Hardened` proofs (block 154,500 on) and, for canonical MoE, exact routing
 multiplicity (block 170,000 on). A legacy certificate is rejected. Dense-peak
 wins arrive as the `%ai-pow` block artifact a node receives and go through
 upstream's consensus verifier itself, after the registry pins the statement
-(shape, tile, and this challenge's header). Rows
-accepted under earlier pins stay on the board, marked `rules: legacy`, after
-the ranked rows and unranked.
+(shape, tile, and this challenge's header).
+
+The board shows ranked runs only. Runs under retired rules (complete proofs
+before Anthropos, AI certificates under earlier pins, marked `rules: legacy`)
+and runs superseded by the pipelined client stay in the JSON at
+`/leaderboard`, unranked.
 
 What is *not* verified: the hardware descriptor and `prover_version` are
 self-reported. Anything rate-related is.
@@ -170,7 +165,9 @@ self-reported. Anything rate-related is.
 - `hoon/` — the registry kernel (challenge minting, pre-Anthropos runs),
   compiled against the pinned nockchain tree by `scripts/build-registry-jam.sh`
 - `bench-results/` — raw result JSONs behind the write-up
-- `docs/` — write-up, design notes, deploy runbook
+- `docs/` — write-up, design notes, deploy runbook; the M7 plan
+  (`docs/superpowers/specs/2026-11-11-m7-anthropos.md`) records how the board
+  moved to the Anthropos rules
 - `deploy/`, `Dockerfile`, `railway.json` — the deployed instance
 
 The nockchain crates are git dependencies pinned to one commit in
@@ -182,4 +179,4 @@ tock and registry test suites) are the checks a change must pass before it
 opens a PR.
 
 Runs from hardware not yet on the board are the most useful contribution —
-especially modern desktop CPUs and big-core-count servers.
+especially datacentre GPUs (H100, B200), which the write-up could not measure.

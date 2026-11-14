@@ -163,29 +163,6 @@ per transcript, certificates 72–76 s cold and 61–64 s warm, peak RSS 12 GB
 one throwaway certificate before minting, so budget ~2 minutes and that
 memory before the run starts.
 
-## Complete-proof bench (pre-Anthropos `%3`)
-
-`tock bench` times complete `%3` proofs — the ZK mining unit until block
-147,500. It is still a fair CPU proving benchmark, but no longer a mining
-rate, and the registry no longer accepts its submissions (`--submit` exits
-with a pointer to `zk-bench`).
-
-```sh
-cargo build --release
-
-# single-threaded (clean hardware-comparison number)
-./target/release/tock bench --kernel assets/miner.jam
-
-# all-cores (realistic mining-rate number), JSON output
-./target/release/tock bench --kernel assets/miner.jam -k 16 -t 8 --json
-```
-
-The result records proofs/sec, per-proof ms, a hardware descriptor
-(self-reported), the SHA-256 of the kernel jam (workload identity), and the
-nonce-derivation rule version (`fnv1a-splitmix64-v1`, golden-tested in
-`src/nonce.rs`). Per-proof nonces are derived as `<seed>/<i>` so no two
-proofs share an input; `--seed` is where a registry challenge will land at M3.
-
 ## Prove / verify primitives (from the M0 spike)
 
 ```sh
