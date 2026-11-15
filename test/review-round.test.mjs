@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { BOT, CAP, context, latestState, marker, plan, report, sinceReviewed } from '../scripts/review-round.mjs';
+import { BOT, CAP, bySource, context, latestState, marker, plan, report, sinceReviewed } from '../scripts/review-round.mjs';
 
 const SCRIPT = path.resolve(import.meta.dirname, '../scripts/review-round.mjs');
 const HEAD = 'c'.repeat(40);
@@ -161,6 +161,39 @@ test('after round 3: "round cap reached: rethink the approach", the label, red, 
   assert.equal(report({ plan: { mode: 'capped', round: 4, open: [] }, outcome: 'skipped', head: HEAD }).code, 1);
 });
 
+test('Upstream is granted only by the repo\'s scope: without one, or when it fails, Upstream counts as Important', () => {
+  const ups = finding({ severity: 'Upstream', file: 'up/Player.java' });
+  const mine = finding({ file: 'fork/Flavour.java' });
+  const scope = { context: 'An upstream merge.' };
+  const theirs = (fs) => fs.map((f) => ({ ...f, severity: f.file.startsWith('up/') ? 'Upstream' : 'Important' }));
+  assert.deepEqual(bySource([ups, mine], null, theirs).findings.map((f) => f.severity), ['Important', 'Important']);
+  assert.deepEqual(bySource([ups, mine], scope, null).findings.map((f) => f.severity), ['Important', 'Important']);
+  assert.deepEqual(bySource([finding({ file: 'up/Player.java' }), mine], scope, theirs).findings.map((f) => f.severity), ['Upstream', 'Important']);
+  let r = bySource([ups], scope, () => { throw new Error('git broke\nmore'); });
+  assert.equal(r.findings[0].severity, 'Important');
+  assert.match(r.warning, /^the review scope failed \(git broke\): Upstream counts as Important$/);
+  r = bySource([ups], scope, () => []);
+  assert.equal(r.findings[0].severity, 'Important');
+  assert.match(r.warning, /different list/);
+
+  // In a round: the scope's context goes in the prompt, Upstream is listed and never red.
+  const p = { mode: 'review', round: 1, open: [], commits: null, scope };
+  assert.match(context(p, HEAD), /^Review the whole PR: .*\n\nAn upstream merge\.$/m);
+  r = report({ plan: p, outcome: 'success', output: answer({ findings: [finding({ file: 'up/Player.java', title: 'skips on UP' })] }), head: HEAD, classify: theirs });
+  assert.equal(r.code, 0);
+  assert.match(r.body, /: no open Important findings\.$/m);
+  assert.match(r.body, /^### Upstream \(in upstream's own changes; upstream's to fix, never blocks\)\n- \*\*up\/Player\.java:12\*\*: skips on UP/m);
+  assert.deepEqual(latestState([{ user: BOT, body: r.body }]), { round: 1, reviewed: HEAD, open: [], verdict: 'no open Important findings, 1 Upstream' });
+  // The model calling a fork bug Upstream doesn't make it so.
+  r = report({ plan: p, outcome: 'success', output: answer({ findings: [finding({ severity: 'Upstream' })] }), head: HEAD, classify: theirs });
+  assert.equal(r.code, 1);
+  assert.match(r.body, /^### Important\n- \*\*src\/feed\.mjs:12\*\*/m);
+  // No scope (not an upstream merge): an Upstream finding is Important.
+  r = report({ plan: { ...p, scope: null }, outcome: 'success', output: answer({ findings: [finding({ severity: 'Upstream', file: 'up/Player.java' })] }), head: HEAD });
+  assert.equal(r.code, 1);
+  assert.doesNotMatch(r.body, /### Upstream/);
+});
+
 test('the same head, or a rebase with nothing new, keeps the last verdict without a review', () => {
   assert.equal(report({ plan: { mode: 'same', round: 1, open: [open1] }, head: HEAD }).code, 1);
   assert.equal(report({ plan: { mode: 'same', round: 1, open: [] }, head: HEAD }).code, 0);
@@ -171,7 +204,7 @@ test('the same head, or a rebase with nothing new, keeps the last verdict withou
 });
 
 // The two workflow steps against a stub gh.
-function cli(t, comments = []) {
+function cli(t, comments = [], scope = null) {
   const dir = mkdtempSync(path.join(tmpdir(), 'review-cli-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, 'bin'));
@@ -188,8 +221,10 @@ esac
 `);
   chmodSync(path.join(dir, 'bin/gh'), 0o755);
   writeFileSync(path.join(dir, 'out'), '');
+  // The repo's own scope, if any, is never the one under test: a stub, or none.
+  if (scope) writeFileSync(path.join(dir, 'scope.mjs'), scope);
   const base = { ...process.env, PATH: `${dir}/bin:${process.env.PATH}`, STUB: dir, RUNNER_TEMP: dir, GITHUB_OUTPUT: path.join(dir, 'out'),
-    GITHUB_REPOSITORY: 'tomdebres/devkit', PR: '12', HEAD_SHA: HEAD };
+    GITHUB_REPOSITORY: 'tomdebres/devkit', PR: '12', HEAD_SHA: HEAD, REVIEW_SCOPE: path.join(dir, 'scope.mjs') };
   const step = (cmd, env = {}) => {
     const r = spawnSync('node', [SCRIPT, cmd], { env: { ...base, ...env }, encoding: 'utf8' });
     return { code: r.status, out: r.stdout + r.stderr };
@@ -233,4 +268,25 @@ test('the same head is not reviewed twice: plan says "same" and the verdict stan
   assert.match(read('out'), /^mode<<EOF_\w+\nsame\n/m);
   assert.equal(step('report', { PLAN_OUTCOME: 'success', CLAUDE_OUTCOME: 'skipped' }).code, 1);
   assert.equal(read('posted.md'), '');
+});
+
+test('a repo\'s scope: plan puts its context in the prompt, report lets it set Upstream; a scope that throws leaves nothing upstream\'s', (t) => {
+  const SCOPE = `export const scope = ({ head }) => ({ context: 'Upstream merge of 1.1: up/ is upstream\\'s.', head });
+export const classify = (fs, s, { head }) => fs.map((f) => ({ ...f, severity: f.file.startsWith('up/') && s.head === head ? 'Upstream' : 'Important' }));
+`;
+  let { step, read } = cli(t, [], SCOPE);
+  assert.equal(step('plan').code, 0);
+  assert.match(read('out'), /Review the whole PR[^\n]*\n\nUpstream merge of 1\.1: up\/ is upstream's\./);
+  let r = step('report', { PLAN_OUTCOME: 'success', CLAUDE_OUTCOME: 'success', FINDINGS: answer({ findings: [finding({ file: 'up/Player.java' })] }) });
+  assert.equal(r.code, 0, r.out);
+  assert.match(read('posted.md'), /^### Upstream /m);
+  r = step('report', { PLAN_OUTCOME: 'success', CLAUDE_OUTCOME: 'success', FINDINGS: answer({ findings: [finding({ severity: 'Upstream', file: 'fork/Flavour.java' })] }) });
+  assert.equal(r.code, 1, r.out);
+
+  ({ step, read } = cli(t, [], 'export const scope = () => { throw new Error("no upstream"); };\nexport const classify = (fs) => fs;\n'));
+  r = step('plan');
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /^::warning::the review scope failed: no upstream; nothing counts as upstream's$/m);
+  r = step('report', { PLAN_OUTCOME: 'success', CLAUDE_OUTCOME: 'success', FINDINGS: answer({ findings: [finding({ severity: 'Upstream', file: 'up/Player.java' })] }) });
+  assert.equal(r.code, 1, r.out);
 });

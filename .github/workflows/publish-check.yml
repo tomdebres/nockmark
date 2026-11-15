@@ -1,0 +1,47 @@
+name: Publish check
+
+# A public repo carries no agent working docs, personal emails in commit
+# metadata, secrets, or self-hosted runners: scripts/publish-check.mjs checks the
+# tree and the new commits of each PR and of each push to main (a web merge or
+# edit included). From devkit's templates/publish-check.yml (kit-install
+# --public). Its personal patterns are private, so here it runs without them;
+# the pre-push hook on Tom's Mac (devkit bin/notes-link) runs it with them.
+# Read-only: it checks out and reads, and runs nothing from the PR but the
+# script, which a PR from outside can't merge without Tom (Risk tier).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: publish-check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish-check:
+    # Branch protection requires this check by its name: change both together.
+    name: Publish check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          case "$BASE" in
+            ''|0000000000000000000000000000000000000000) range="" ;;
+            *) range="--range $BASE..$HEAD" ;;
+          esac
+          node scripts/publish-check.mjs --no-personal $range .

@@ -16,15 +16,21 @@
 // or the cap. Anything
 // else going wrong (token, outage, timeout, a malformed answer) passes with a
 // warning, so an outage never blocks every merge.
-import { appendFileSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+//
+// A fork can add scripts/review-scope.mjs, its own: on a PR that merges its
+// upstream, scope() tells upstream's part from the fork's with git, and
+// classify() then sets each finding's severity by where it is. A bug in
+// upstream's own code is Upstream: listed, never red. Without a scope, nothing
+// is upstream's, and an Upstream finding counts as Important.
+import { appendFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const CAP = 3;
 export const BOT = 'github-actions[bot]';
 export const CAP_LABEL = 'review-cap';
-const SEVERITIES = ['Important', 'Nit', 'Pre-existing'];
+const SEVERITIES = ['Important', 'Nit', 'Pre-existing', 'Upstream'];
 const MARK = /<!-- claude-review (\{.*?\}) -->/g;
 
 // The newest state the reviewer itself wrote.
@@ -88,6 +94,7 @@ export function context(p, head) {
     for (const c of p.commits) out.push(`- ${c}`);
     out.push('The rest of the PR (`git diff origin/main...HEAD`) was reviewed already: read it for context only.');
   }
+  if (p.scope?.context) out.push('', p.scope.context);
   if (p.open.length) {
     out.push('', 'Important findings still open from earlier rounds. For each id, say "resolved" if the current code fixes it (or it was wrong), "still_open" if not:');
     for (const f of p.open) out.push(`- ${f.id}: ${where(f)}: ${f.title}`);
@@ -96,10 +103,24 @@ export function context(p, head) {
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// Upstream is a severity only the scope can grant: where it ran, its classify
+// decides; anywhere else, or if it fails, Upstream counts as Important.
+export function bySource(findings, scope, classify) {
+  const strict = () => findings.map((f) => (f.severity === 'Upstream' ? { ...f, severity: 'Important' } : f));
+  if (!scope || !classify) return { findings: strict() };
+  try {
+    const out = classify(findings, scope);
+    if (Array.isArray(out) && out.length === findings.length) return { findings: out };
+    return { findings: strict(), warning: 'the review scope gave back a different list: Upstream counts as Important' };
+  } catch (e) {
+    return { findings: strict(), warning: `the review scope failed (${String(e.message).split('\n')[0]}): Upstream counts as Important` };
+  }
+}
 const bullet = (f) => `- **${where(f)}**: ${f.title}${f.detail ? `. ${f.detail}` : ''}`;
 
 // The verdict, the comment and the labels, from the plan and Claude's answer.
-export function report({ plan: p, outcome, output, head }) {
+export function report({ plan: p, outcome, output, head, classify }) {
   const done = (code, body, state, extra = {}) => ({ code, body: body && state ? `${body}\n\n${marker(state)}` : body, ...extra });
   const keep = { round: p.round, reviewed: head, open: p.open, verdict: verdictOf(p.open) };
 
@@ -125,7 +146,8 @@ export function report({ plan: p, outcome, output, head }) {
       'Passing open, so an outage doesn\'t block every merge. The next push reviews again.', null, { warning: `review skipped: ${why}` });
   }
 
-  const findings = answer.findings.filter((f) => SEVERITIES.includes(f.severity) && f.title);
+  const scoped = bySource(answer.findings.filter((f) => SEVERITIES.includes(f.severity) && f.title), p.scope, classify);
+  const findings = scoped.findings;
   const resolved = new Set(answer.resolved);
   const fixed = p.open.filter((f) => resolved.has(f.id));
   const still = p.open.filter((f) => !resolved.has(f.id));
@@ -133,8 +155,9 @@ export function report({ plan: p, outcome, output, head }) {
     .map((f, i) => ({ id: `r${p.round}-${i + 1}`, file: f.file, line: f.line ?? null, title: f.title }));
   const open = [...still, ...fresh];
   const nits = findings.filter((f) => f.severity === 'Nit'), old = findings.filter((f) => f.severity === 'Pre-existing');
+  const theirs = findings.filter((f) => f.severity === 'Upstream');
 
-  const verdict = verdictOf(open, nits.length);
+  const verdict = verdictOf(open, nits.length, theirs.length);
   const body = [`**Claude review, round ${ofCap(p.round)}** on \`${head.slice(0, 7)}\`: ${sentence(open)}`];
   if (answer.summary) body.push('', answer.summary);
   const section = (title, items, fmt = bullet) => { if (items.length) body.push('', `### ${title}`, ...items.map(fmt)); };
@@ -143,14 +166,15 @@ export function report({ plan: p, outcome, output, head }) {
   section('Fixed since the last round', fixed, (f) => `- ${f.id} **${where(f)}**: ${f.title}`);
   section('Nit (never blocks)', nits);
   section('Pre-existing (already on main; never blocks)', old);
+  section('Upstream (in upstream\'s own changes; upstream\'s to fix, never blocks)', theirs);
   if (open.length && p.round >= CAP) {
     body.push('', `Round ${ofCap(p.round)}: if another push still leaves these open, the round cap stops this PR. If the approach is fighting the reviewer, rethink it now.`);
   }
-  return done(open.length ? 1 : 0, body.join('\n'), { round: p.round, reviewed: head, open, verdict });
+  return done(open.length ? 1 : 0, body.join('\n'), { round: p.round, reviewed: head, open, verdict }, scoped.warning ? { warning: scoped.warning } : {});
 }
 
-function verdictOf(open, nits = 0) {
-  const n = nits ? `, ${plural(nits, 'Nit')}` : '';
+function verdictOf(open, nits = 0, theirs = 0) {
+  const n = (nits ? `, ${plural(nits, 'Nit')}` : '') + (theirs ? `, ${theirs} Upstream` : '');
   return open.length ? `${plural(open.length, 'open Important finding')}${n}` : `no open Important findings${n}`;
 }
 const sentence = (open) => (open.length
@@ -163,13 +187,16 @@ const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ig
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const jsonLines = (text) => text.split('\n').filter(Boolean).map((l) => JSON.parse(l));
 const planFile = () => path.join(env.RUNNER_TEMP ?? '/tmp', 'review-plan.json');
+// The repo's scope, if it has one (REVIEW_SCOPE names another file, for tests).
+const scopeFile = () => env.REVIEW_SCOPE ?? path.join(path.dirname(fileURLToPath(import.meta.url)), 'review-scope.mjs');
+const loadScope = async () => (existsSync(scopeFile()) ? import(pathToFileURL(path.resolve(scopeFile())).href) : null);
 const output = (name, value) => {
   if (!env.GITHUB_OUTPUT) return;
   const eof = `EOF_${Math.random().toString(36).slice(2)}`;
   appendFileSync(env.GITHUB_OUTPUT, `${name}<<${eof}\n${value}\n${eof}\n`);
 };
 
-function cliPlan() {
+async function cliPlan() {
   const { GITHUB_REPOSITORY: repo, PR: pr, HEAD_SHA: head } = env;
   const comments = jsonLines(gh('api', '--paginate', `repos/${repo}/issues/${pr}/comments`, '--jq', '.[] | {user: .user.login, body}'));
   const labels = JSON.parse(gh('api', `repos/${repo}/pulls/${pr}`)).labels.map((l) => l.name);
@@ -178,19 +205,37 @@ function cliPlan() {
     ? sinceReviewed(git, { reviewed: state.reviewed, head, base: 'refs/remotes/origin/main' })
     : null;
   const p = plan({ state, labels, head, commits });
+  if (p.mode === 'review') {
+    // A scope that fails leaves nothing upstream's: the strict side.
+    try {
+      const hook = await loadScope();
+      p.scope = hook ? hook.scope({ git, head, base: 'refs/remotes/origin/main' }) : null;
+    } catch (e) {
+      console.log(`::warning::the review scope failed: ${String(e.message).split('\n')[0]}; nothing counts as upstream's`);
+      p.scope = null;
+    }
+  }
   writeFileSync(planFile(), JSON.stringify(p));
   output('mode', p.mode);
   output('context', p.mode === 'review' ? context(p, head) : '');
   console.log(`round ${p.round}: ${p.mode}${p.commits ? ` (${plural(p.commits.length, 'new commit')})` : ''}`);
 }
 
-function cliReport() {
+async function cliReport() {
   const { GITHUB_REPOSITORY: repo, PR: pr, HEAD_SHA: head } = env;
   if (env.PLAN_OUTCOME !== 'success') {
     console.log(`::warning::review skipped: planning the round ${env.PLAN_OUTCOME || 'did not run'}; passing open`);
     return 0;
   }
-  const r = report({ plan: JSON.parse(readFileSync(planFile(), 'utf8')), outcome: env.CLAUDE_OUTCOME, output: env.FINDINGS, head });
+  const p = JSON.parse(readFileSync(planFile(), 'utf8'));
+  let classify = null;
+  if (p.scope) {
+    try {
+      const hook = await loadScope();
+      if (hook) classify = (findings, scope) => hook.classify(findings, scope, { git, head });
+    } catch { /* no classify: Upstream counts as Important */ }
+  }
+  const r = report({ plan: p, outcome: env.CLAUDE_OUTCOME, output: env.FINDINGS, head, classify });
   // The verdict is decided; failing to post it doesn't change it.
   try {
     if (r.body) {
@@ -211,7 +256,7 @@ const invoked = process.argv[1] && realpathSync(process.argv[1]) === realpathSyn
 if (invoked) {
   const cmd = process.argv[2];
   try {
-    if (cmd === 'plan') { cliPlan(); process.exitCode = 0; } else if (cmd === 'report') process.exitCode = cliReport();
+    if (cmd === 'plan') { await cliPlan(); process.exitCode = 0; } else if (cmd === 'report') process.exitCode = await cliReport();
     else { console.error('usage: review-round.mjs plan | report'); process.exitCode = 2; }
   } catch (e) {
     // Never 1: that is reserved for findings.

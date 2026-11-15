@@ -1,0 +1,8 @@
+# Generated from REVIEW.md › High-risk paths: `node scripts/risk-tier.mjs codeowners > .github/CODEOWNERS`.
+# test/risk-tier.test.mjs fails when the two differ. GitHub requests Tom's review
+# from it. It enforces nothing: GitHub's code-owner rule needs at least one
+# required approval, which would put Tom on every PR, so Risk tier is the gate.
+# Rows that count only when a file is deleted (the tests) can't be said here.
+/.github/** @tomdebres
+/scripts/risk-tier.mjs @tomdebres
+/scripts/publish-check.mjs @tomdebres
