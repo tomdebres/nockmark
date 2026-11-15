@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Provision a fresh Linux box (Ubuntu 24.04, x86_64 or aarch64) to run tock
+# against the Nockchain prover, then measure it once at ZK mining (zk-bench).
+#
+# Usage (from your Mac, in the nockmark repo root):
+#   1. On EC2, wait for BOTH status checks before copying anything:
+#        aws ec2 wait instance-status-ok --instance-ids <id>
+#   2. Copy sources with tar-over-ssh — do NOT use macOS rsync (it's Apple's
+#      openrsync and silently fails against Linux rsync, sometimes exit 0
+#      with nothing transferred):
+#        tar czf - --exclude tock/target --exclude tock/assets tock \
+#          | ssh -i key.pem ubuntu@<ip> 'tar xzf -'
+#        scp -i key.pem tock/assets/miner.jam tock/setup-bench.sh ubuntu@<ip>:
+#   3. ssh -i key.pem ubuntu@<ip> 'bash setup-bench.sh 2>&1 | tee setup.log'
+#   4. scp -i key.pem 'ubuntu@<ip>:bench-results/*.json' bench-results/
+#
+# The nockchain pin is the `rev` on every nockchain line of tock/Cargo.toml:
+# cargo fetches those crates by git, so the box needs no nockchain checkout.
+# miner.jam must be compiled at that same rev (tock/README.md) and scp'd over.
+NOCKMARK_REPO=${NOCKMARK_REPO:-}   # if empty, tock sources must be scp'd to ~/tock
+TOOLCHAIN_DATE=2026-04-03
+ZK_K=${ZK_K:-6}     # winners to find and prove in the local zk-bench run
+
+set -euxo pipefail
+
+ARCH=$(uname -m)   # x86_64 | aarch64
+case "$ARCH" in
+  x86_64) RUST_TRIPLE=x86_64-unknown-linux-gnu ;;
+  aarch64) RUST_TRIPLE=aarch64-unknown-linux-gnu ;;
+  *) echo "unsupported arch $ARCH" >&2; exit 1 ;;
+esac
+
+sudo apt-get update -qq
+# protobuf-compiler: the AI track's canonical-MoE client links ai-pow-miner's
+# `node` feature (the canonical grind/prove path lives behind it), which pulls
+# nockapp-grpc — whose build.rs requires protoc.
+sudo apt-get install -y -qq build-essential clang pkg-config libssl-dev git curl xz-utils \
+  protobuf-compiler
+
+# --- pinned nightly toolchain, standalone (no rustup) --------------------
+TC="$HOME/rust-nightly"
+if [ ! -x "$TC/bin/cargo" ]; then
+  mkdir -p "$TC" /tmp/rust-dl && cd /tmp/rust-dl
+  for c in rustc cargo rust-std; do
+    curl -sSfLO "https://static.rust-lang.org/dist/$TOOLCHAIN_DATE/$c-nightly-$RUST_TRIPLE.tar.xz"
+    tar xf "$c-nightly-$RUST_TRIPLE.tar.xz"
+    "./$c-nightly-$RUST_TRIPLE/install.sh" --prefix="$TC" --disable-ldconfig >/dev/null
+  done
+fi
+export PATH="$TC/bin:$PATH"
+export RUST_MIN_STACK=8388608
+cargo --version
+
+# --- tock (this repo's harness) -------------------------------------------
+cd "$HOME"
+if [ -n "$NOCKMARK_REPO" ]; then
+  [ -d nockmark-src ] || git clone "$NOCKMARK_REPO" nockmark-src
+  TOCK="$HOME/nockmark-src/tock"
+elif [ -d "$HOME/tock" ]; then
+  TOCK="$HOME/tock"
+else
+  echo "no tock sources: set NOCKMARK_REPO or scp the tock/ dir to ~/tock" >&2
+  exit 1
+fi
+
+# miner.jam must have been scp'd to ~ (18 MB beats an 8-minute hoonc run)
+mkdir -p "$TOCK/assets"
+cp "$HOME/miner.jam" "$TOCK/assets/"
+
+cd "$TOCK"
+cargo build --release --locked
+cargo test --release --locked
+
+# --- one local zk-bench run: the ZK puzzle mainnet mines since Anthropos ---
+# Self-calibrated, grinding on every core and proving each winner as it is
+# found. To put the box on the board instead, run it with
+# `--submit https://nockmark.xyz` (the registry then sets k).
+CORES=$(nproc)
+OUT="$HOME/bench-results"
+mkdir -p "$OUT"
+HOSTTAG=$(uname -m)-${CORES}c
+./target/release/tock zk-bench --kernel assets/miner.jam -k "$ZK_K" \
+  --report "$OUT/$HOSTTAG-zk.json"
+
+echo "done — results in $OUT:"
+ls -l "$OUT"

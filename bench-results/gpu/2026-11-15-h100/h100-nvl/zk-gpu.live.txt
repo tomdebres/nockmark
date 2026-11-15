@@ -1,0 +1,44 @@
+start 1794770467.247027818
+nproc 192
+cgroup_cpu_max none
+model name	: AMD EPYC 9654 96-Core Processor
+MemTotal:       1584766536 kB
+NVIDIA H100 NVL, 570.133.20, 310.00 W, 1785 MHz, 5, 16
+01c1fc40c8df090f77a5c7ad7906e112defa5f3f
+1f6c1f32fe28897d798ef3505b55acae59fc1223ed4b120201a169ea93387c0e  assets/miner.jam
+0590b4ddd605760e05fbdc6ff9533a6ce29f55bf7f6aead4fbd7c470bc136b6b  target/release/tock
+clk_tck 100
+args zk-bench --kernel assets/miner.jam --gpu -k 16 --submit https://nockmark.xyz
+pid 34489
+exit 0 1794771246.691512004
+====TLOG
+1794770476.248240607 booted 4 prover kernel(s) in 8.9s (pipelined proving)
+1794770512.389392510 calibration: 9707519 hashes/s on CUDA device 0 (262144 attempts/launch, search only), 33.8s per proof -> tier 2^29 (~55s of grinding vs ~34s of proving per win)
+1794770514.003326829 challenge 3618574057576195678 from https://nockmark.xyz (k=16, tier 2^29); the clock is running
+1794770514.006399761 grinding 16 win(s) on CUDA device 0 (262144 attempts/launch, search only), pipelined with 4 prover(s)…
+1794771221.387530725   win 0: nonce 5840560 found 0.6s, proved 0.6-34.4s (33.8s, prover 0)
+1794771221.390708108   win 1: nonce 180376646 found 18.5s, proved 18.5-52.3s (33.7s, prover 3)
+1794771221.393338133   win 2: nonce 239532074 found 24.6s, proved 24.6-58.5s (33.8s, prover 2)
+1794771221.396153431   win 3: nonce 1035372081 found 107.3s, proved 107.3-141.0s (33.6s, prover 1)
+1794771221.398690713   win 4: nonce 1610893731 found 167.5s, proved 167.5-201.3s (33.7s, prover 0)
+1794771221.401355178   win 5: nonce 2113963002 found 220.1s, proved 220.1-253.9s (33.8s, prover 0)
+1794771221.403884281   win 6: nonce 2243988140 found 233.7s, proved 233.7-267.6s (33.8s, prover 2)
+1794771221.406385783   win 7: nonce 2771345115 found 288.8s, proved 288.8-322.5s (33.7s, prover 0)
+1794771221.408977237   win 8: nonce 2995255639 found 312.2s, proved 312.2-346.0s (33.8s, prover 1)
+1794771221.411478170   win 9: nonce 3264309788 found 340.3s, proved 340.3-373.9s (33.7s, prover 0)
+1794771221.413254450   win 10: nonce 3864048378 found 403.1s, proved 403.1-436.7s (33.6s, prover 0)
+1794771221.415545028   win 11: nonce 4271976357 found 446.2s, proved 446.2-479.9s (33.7s, prover 0)
+1794771221.418146872   win 12: nonce 4386662674 found 458.4s, proved 458.4-491.9s (33.5s, prover 1)
+1794771221.420748506   win 13: nonce 4784533966 found 500.4s, proved 500.4-534.2s (33.7s, prover 0)
+1794771221.423374231   win 14: nonce 5906305749 found 619.1s, proved 619.1-653.0s (33.9s, prover 2)
+1794771221.426052726   win 15: nonce 6423449319 found 673.7s, proved 673.7-707.4s (33.6s, prover 0)
+1794771221.428704821 tock zk-bench — ZK v5 (Anthropos): Tip5 hashes of proof object 0, %5 proofs
+1794771221.431248764   backend:      CUDA device 0 (262144 attempts/launch, search only)
+1794771221.432887502   proving:      pipelined (4 prover(s))
+1794771221.434972987   tier:         2^29 expected hashes/win
+1794771221.437523570   wins:         16 (6423449320 hashes, 0.748x expected)
+1794771221.439222409   grind:        673.7s to the last win, 9533996 hashes/s sustained, 12749599 credited hashes/s
+1794771221.441164502   proving:      539.5s of proofs (33.7s per win); 33.6s after the last win
+1794771221.443618873   grind+prove:  707.4s, 12143259 credited hashes/s (the registry's window adds network time)
+1794771245.479141424 submitted: run 9
+1794771245.481963722   https://nockmark.xyz/runs/9?track=zk

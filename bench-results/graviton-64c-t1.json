@@ -1,0 +1,41 @@
+{
+  "tool": "tock",
+  "tool_version": "0.1.0",
+  "nonce_rule": "fnv1a-splitmix64-v1",
+  "seed": "m1-baseline",
+  "proof_version": 2,
+  "pow_len": 64,
+  "k": 6,
+  "threads": 1,
+  "kernel_jam_sha256": "2e762b175e9dfcdfd01a30cf4afa354a2e8ddc302913309a0863a7d8d4bfdef5",
+  "kernel_boot_s": 2.094810042,
+  "per_proof_ms": [
+    30595,
+    30643,
+    30629,
+    30662,
+    30513,
+    30502
+  ],
+  "proof_bytes": [
+    115426,
+    117007,
+    117156,
+    116087,
+    116720,
+    116742
+  ],
+  "total_s": 183.5873896,
+  "proofs_per_sec": 0.03268198329456502,
+  "hardware": {
+    "cpu_model": "Neoverse-V2",
+    "logical_cores": 64,
+    "physical_cores": null,
+    "perf_cores": null,
+    "eff_cores": null,
+    "mem_bytes": 132635602944,
+    "os": "Ubuntu 24.04.4 LTS",
+    "arch": "aarch64"
+  },
+  "timestamp_epoch_s": 1784137421
+}

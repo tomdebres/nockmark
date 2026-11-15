@@ -1,0 +1,8 @@
+/target/
+.data.*/
+
+# comms drafts stay local, never public
+docs/announce/
+
+# python bytecode from scripts/
+__pycache__/

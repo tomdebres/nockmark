@@ -1,0 +1,149 @@
+{
+  "backend": "CUDA device 0 (262144 attempts/launch, search only)",
+  "calibrated_hashes_per_sec": 9707518.608548552,
+  "calibrated_prove_s": 33.784012196,
+  "client_window_s": 731.475788274,
+  "expected_hashes": 8589934592.0,
+  "failures": 0,
+  "grind_s": 673.741576219,
+  "hardware": "NVIDIA H100 NVL 94GB · host AMD EPYC 9654 96-Core Processor / 192c / 1511GB / Ubuntu 24.04.1 LTS / x86_64",
+  "hashes": 6423449320,
+  "k": 16,
+  "provers": 4,
+  "proving": "pipelined",
+  "run_id": 9,
+  "sustained_hashes_per_sec": 9533995.743661892,
+  "tier_log2": 29.0,
+  "track": "zk",
+  "wall_s": 707.382989224,
+  "wins": [
+    {
+      "found_s": 0.626970941,
+      "nonce": 5840560,
+      "prove_done_s": 34.447521835,
+      "prove_s": 33.816000747,
+      "prove_start_s": 0.627038182,
+      "prover": 0
+    },
+    {
+      "found_s": 18.54244909,
+      "nonce": 180376646,
+      "prove_done_s": 52.27762247,
+      "prove_s": 33.729755269,
+      "prove_start_s": 18.542498941,
+      "prover": 3
+    },
+    {
+      "found_s": 24.640294167,
+      "nonce": 239532074,
+      "prove_done_s": 58.465208664,
+      "prove_s": 33.819274182,
+      "prove_start_s": 24.640364878,
+      "prover": 2
+    },
+    {
+      "found_s": 107.345412498,
+      "nonce": 1035372081,
+      "prove_done_s": 140.98750720499999,
+      "prove_s": 33.639692426,
+      "prove_start_s": 107.345473919,
+      "prover": 1
+    },
+    {
+      "found_s": 167.539441605,
+      "nonce": 1610893731,
+      "prove_done_s": 201.253430007,
+      "prove_s": 33.710497553,
+      "prove_start_s": 167.539501046,
+      "prover": 0
+    },
+    {
+      "found_s": 220.133467076,
+      "nonce": 2113963002,
+      "prove_done_s": 253.909199172,
+      "prove_s": 33.772197626,
+      "prove_start_s": 220.133511526,
+      "prover": 0
+    },
+    {
+      "found_s": 233.742704781,
+      "nonce": 2243988140,
+      "prove_done_s": 267.584509514,
+      "prove_s": 33.838403596,
+      "prove_start_s": 233.742750772,
+      "prover": 2
+    },
+    {
+      "found_s": 288.807056671,
+      "nonce": 2771345115,
+      "prove_done_s": 322.504029566,
+      "prove_s": 33.693463765,
+      "prove_start_s": 288.807117853,
+      "prover": 0
+    },
+    {
+      "found_s": 312.191029686,
+      "nonce": 2995255639,
+      "prove_done_s": 345.985758813,
+      "prove_s": 33.791090615,
+      "prove_start_s": 312.191114067,
+      "prover": 1
+    },
+    {
+      "found_s": 340.266398076,
+      "nonce": 3264309788,
+      "prove_done_s": 373.943181168,
+      "prove_s": 33.672058623,
+      "prove_start_s": 340.266467187,
+      "prover": 0
+    },
+    {
+      "found_s": 403.146423959,
+      "nonce": 3864048378,
+      "prove_done_s": 436.742826733,
+      "prove_s": 33.592918934,
+      "prove_start_s": 403.146488851,
+      "prover": 0
+    },
+    {
+      "found_s": 446.229300337,
+      "nonce": 4271976357,
+      "prove_done_s": 479.897452045,
+      "prove_s": 33.664701869,
+      "prove_start_s": 446.229363868,
+      "prover": 0
+    },
+    {
+      "found_s": 458.359388192,
+      "nonce": 4386662674,
+      "prove_done_s": 491.896974932,
+      "prove_s": 33.532979441,
+      "prove_start_s": 458.359454243,
+      "prover": 1
+    },
+    {
+      "found_s": 500.438125582,
+      "nonce": 4784533966,
+      "prove_done_s": 534.161402891,
+      "prove_s": 33.719834121,
+      "prove_start_s": 500.438195803,
+      "prover": 0
+    },
+    {
+      "found_s": 619.116316704,
+      "nonce": 5906305749,
+      "prove_done_s": 652.981575674,
+      "prove_s": 33.860650962,
+      "prove_start_s": 619.116389245,
+      "prover": 2
+    },
+    {
+      "found_s": 673.741576219,
+      "nonce": 6423449319,
+      "prove_done_s": 707.382989224,
+      "prove_s": 33.638012068,
+      "prove_start_s": 673.74162156,
+      "prover": 0
+    }
+  ]
+}

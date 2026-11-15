@@ -1,0 +1,79 @@
+==============NVSMI LOG==============
+Timestamp                                 : Sun Nov 15 19:22:25 2026
+Driver Version                            : 570.133.20
+CUDA Version                              : 12.8
+Attached GPUs                             : 1
+GPU 00000000:43:00.0
+    Performance State                     : P0
+    Clocks Event Reasons
+        Idle                              : Not Active
+        Applications Clocks Setting       : Not Active
+        SW Power Cap                      : Not Active
+        HW Slowdown                       : Not Active
+            HW Thermal Slowdown           : Not Active
+            HW Power Brake Slowdown       : Not Active
+        Sync Boost                        : Not Active
+        SW Thermal Slowdown               : Not Active
+        Display Clock Setting             : Not Active
+    Sparse Operation Mode                 : Disabled
+    GPU Power Readings
+        Average Power Draw                : 307.89 W
+        Instantaneous Power Draw          : 311.41 W
+        Current Power Limit               : 310.00 W
+        Requested Power Limit             : 310.00 W
+        Default Power Limit               : 310.00 W
+        Min Power Limit                   : 200.00 W
+        Max Power Limit                   : 400.00 W
+    Power Samples
+        Duration                          : 2.36 sec
+        Number of Samples                 : 119
+        Max                               : 317.23 W
+        Min                               : 293.08 W
+        Avg                               : 308.59 W
+    GPU Memory Power Readings
+        Average Power Draw                : N/A
+        Instantaneous Power Draw          : N/A
+    Module Power Readings
+        Average Power Draw                : N/A
+        Instantaneous Power Draw          : N/A
+        Current Power Limit               : N/A
+        Requested Power Limit             : N/A
+        Default Power Limit               : N/A
+        Min Power Limit                   : N/A
+        Max Power Limit                   : N/A
+    Clocks
+        Graphics                          : 1770 MHz
+        SM                                : 1770 MHz
+        Memory                            : 2619 MHz
+        Video                             : 1410 MHz
+    Applications Clocks
+        Graphics                          : 1785 MHz
+        Memory                            : 2619 MHz
+    Default Applications Clocks
+        Graphics                          : 1785 MHz
+        Memory                            : 2619 MHz
+    Deferred Clocks
+        Memory                            : N/A
+    Max Clocks
+        Graphics                          : 1785 MHz
+        SM                                : 1785 MHz
+        Memory                            : 2619 MHz
+        Video                             : 1410 MHz
+    Max Customer Boost Clocks
+        Graphics                          : 1785 MHz
+    SM Clock Samples
+        Duration                          : Not Found
+        Number of Samples                 : Not Found
+        Max                               : Not Found
+        Min                               : Not Found
+        Avg                               : Not Found
+    Memory Clock Samples
+        Duration                          : Not Found
+        Number of Samples                 : Not Found
+        Max                               : Not Found
+        Min                               : Not Found
+        Avg                               : Not Found
+    Clock Policy
+        Auto Boost                        : N/A
+name, pci.device_id, vbios_version, power.default_limit [W], power.max_limit [W], power.limit [W], clocks.max.sm [MHz], clocks.max.memory [MHz], memory.total [MiB], pcie.link.gen.max, pcie.link.width.max, compute_cap
+NVIDIA H100 NVL, 0x232110DE, 96.00.74.00.11, 310.00 W, 400.00 W, 310.00 W, 1785 MHz, 2619 MHz, 95830 MiB, 5, 16, 9.0

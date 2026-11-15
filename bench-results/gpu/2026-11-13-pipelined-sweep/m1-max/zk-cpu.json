@@ -1,0 +1,149 @@
+{
+  "backend": "CPU, 10 thread(s), upstream v5_pow_digest",
+  "calibrated_hashes_per_sec": 175915.48108755564,
+  "calibrated_prove_s": 20.658382375,
+  "client_window_s": 566.827764916,
+  "expected_hashes": 134217728.0,
+  "failures": 0,
+  "grind_s": 422.44291875,
+  "hardware": "Apple M1 Max / 10c / 32GB / macOS 26.7.1 / aarch64",
+  "hashes": 70276491,
+  "k": 16,
+  "provers": 1,
+  "proving": "pipelined",
+  "run_id": 5,
+  "sustained_hashes_per_sec": 166357.36541151337,
+  "tier_log2": 23.0,
+  "track": "zk",
+  "wall_s": 542.401237125,
+  "wins": [
+    {
+      "found_s": 121.406217,
+      "nonce": 21524012,
+      "prove_done_s": 150.96297925,
+      "prove_s": 29.551073542,
+      "prove_start_s": 121.409971959,
+      "prover": 0
+    },
+    {
+      "found_s": 129.625649,
+      "nonce": 22991840,
+      "prove_done_s": 180.574382834,
+      "prove_s": 29.6093565,
+      "prove_start_s": 150.962979917,
+      "prover": 0
+    },
+    {
+      "found_s": 166.21211375,
+      "nonce": 28907404,
+      "prove_done_s": 210.016858167,
+      "prove_s": 29.441240083,
+      "prove_start_s": 180.574383667,
+      "prover": 0
+    },
+    {
+      "found_s": 174.936044917,
+      "nonce": 30171115,
+      "prove_done_s": 239.813256417,
+      "prove_s": 29.795154791,
+      "prove_start_s": 210.016859,
+      "prover": 0
+    },
+    {
+      "found_s": 178.743311334,
+      "nonce": 30849602,
+      "prove_done_s": 269.120669584,
+      "prove_s": 29.306203541,
+      "prove_start_s": 239.813256917,
+      "prover": 0
+    },
+    {
+      "found_s": 184.533203292,
+      "nonce": 31795862,
+      "prove_done_s": 298.904534,
+      "prove_s": 29.782619458,
+      "prove_start_s": 269.120670125,
+      "prover": 0
+    },
+    {
+      "found_s": 186.41913675,
+      "nonce": 32048038,
+      "prove_done_s": 328.521241,
+      "prove_s": 29.615350458,
+      "prove_start_s": 298.9045345,
+      "prover": 0
+    },
+    {
+      "found_s": 191.069898042,
+      "nonce": 32727543,
+      "prove_done_s": 357.973761084,
+      "prove_s": 29.451298708,
+      "prove_start_s": 328.521241584,
+      "prover": 0
+    },
+    {
+      "found_s": 219.790463542,
+      "nonce": 37374973,
+      "prove_done_s": 387.444366417,
+      "prove_s": 29.466885625,
+      "prove_start_s": 357.97376175,
+      "prover": 0
+    },
+    {
+      "found_s": 253.320337,
+      "nonce": 43020459,
+      "prove_done_s": 417.216478334,
+      "prove_s": 29.770791916,
+      "prove_start_s": 387.444367084,
+      "prover": 0
+    },
+    {
+      "found_s": 254.075185875,
+      "nonce": 43102946,
+      "prove_done_s": 439.353818584,
+      "prove_s": 22.136124167,
+      "prove_start_s": 417.216479042,
+      "prover": 0
+    },
+    {
+      "found_s": 279.795799292,
+      "nonce": 47240072,
+      "prove_done_s": 459.965050834,
+      "prove_s": 20.609977833,
+      "prove_start_s": 439.353881125,
+      "prover": 0
+    },
+    {
+      "found_s": 391.528996542,
+      "nonce": 65374810,
+      "prove_done_s": 480.585984667,
+      "prove_s": 20.619765792,
+      "prove_start_s": 459.965061334,
+      "prover": 0
+    },
+    {
+      "found_s": 408.030399209,
+      "nonce": 67833763,
+      "prove_done_s": 501.176654375,
+      "prove_s": 20.589481834,
+      "prove_start_s": 480.585994375,
+      "prover": 0
+    },
+    {
+      "found_s": 414.685438209,
+      "nonce": 68916595,
+      "prove_done_s": 521.798238417,
+      "prove_s": 20.620397875,
+      "prove_start_s": 501.176670542,
+      "prover": 0
+    },
+    {
+      "found_s": 422.44291875,
+      "nonce": 70355144,
+      "prove_done_s": 542.401237125,
+      "prove_s": 20.601687083,
+      "prove_start_s": 521.798247084,
+      "prover": 0
+    }
+  ]
+}

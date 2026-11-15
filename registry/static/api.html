@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nockmark API</title>
+<meta name="description" content="HTTP API of the Nockmark registry: challenges, verified submissions, leaderboard, and economics.">
+<link rel="canonical" href="https://nockmark.xyz/api">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext x='1' y='13' font-family='monospace' font-size='15' fill='%23555'%3E~%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --paper: #ffffff;
+    --ink: #161615;
+    --faint: #8b8a86;
+    --hair: #e4e3df;
+    --wash: #f6f6f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0d0d0c;
+      --ink: #e8e6e1;
+      --faint: #77756f;
+      --hair: #262523;
+      --wash: #151514;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 14px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 4rem 1.25rem 5rem;
+  }
+  a { color: inherit; text-underline-offset: 3px; }
+  a:hover { text-decoration-thickness: 2px; }
+  a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  header { margin-bottom: 3rem; }
+  .mark { font-size: 1.5rem; font-weight: 700; letter-spacing: -.02em; }
+  .mark .sig, .mark .page { color: var(--faint); font-weight: 400; }
+  .thesis { margin-top: 1rem; max-width: 36rem; }
+
+  .eyebrow {
+    font-size: .6875rem;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 2.5rem 0 1rem;
+  }
+  .endpoint { border-top: 1px solid var(--hair); padding: 1.25rem 0; }
+  .sigline { font-weight: 700; }
+  .sigline .verb { color: var(--faint); font-weight: 400; margin-right: .5rem; }
+  .endpoint p { margin-top: .5rem; max-width: 38rem; }
+  .endpoint p, .endpoint li { color: var(--ink); }
+  .fields { margin: .5rem 0 0 1.1rem; }
+  .fields li { margin-top: .15rem; }
+  .fields code, p code { background: var(--wash); padding: 0 .3em; }
+  pre {
+    border: 1px solid var(--hair);
+    padding: 1rem 1.25rem;
+    margin-top: .75rem;
+    overflow-x: auto;
+    font: inherit;
+    line-height: 1.5;
+  }
+  footer { margin-top: 3rem; font-size: .8125rem; color: var(--faint); border-top: 1px solid var(--hair); padding-top: 1.5rem; }
+  footer a { color: var(--ink); }
+</style>
+
+<header>
+  <div class="mark"><span class="sig">~</span>nockmark <span class="page">/ api</span></div>
+  <p class="thesis">Everything the <a href="/">board</a> shows comes from these
+  endpoints. No accounts, no keys: a valid STARK proof of the server's own
+  challenge is the only credential a submission needs.</p>
+</header>
+
+<div class="eyebrow">Read</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">GET</span>/leaderboard</div>
+  <p>The ZK board (<code>?track=zk</code> says so explicitly). Ranked rows
+  first: ZK v5 runs, by verified Tip5 hashes per second. Then every run from
+  before Anthropos, in their own unit, unranked.</p>
+  <ul class="fields">
+    <li><code>rank</code> — 1-based among current-rules rows; <code>null</code> on every unranked row</li>
+    <li><code>rules</code> — server-attested era: <code>anthropos</code> (ZK proof %5, ranked) or <code>pre-anthropos</code> (complete %3 proofs/sec, unranked)</li>
+    <li><code>proving</code> (v5 rows) — <code>pipelined</code> or <code>serial</code>, as the client reported it: a label, never a ranking input; see below</li>
+  </ul>
+  <p><b>Pipelined and serial rows.</b> The tier gives each win about twice a
+  proof's worth of grinding. A <code>pipelined</code> client proves each
+  winner while it keeps grinding, so the window is the grind plus one proof
+  and the ranked rate is about 97 % of the true one at k = 16. A
+  <code>serial</code> client grinds all k wins first and proves them after,
+  which caps it at about two thirds. Both are honest lower bounds, but they do
+  not rank fairly together. Every run this server committed before
+  2026-11-13 00:00 UTC came from the serial client, the only one there was;
+  once a board has a current-rules row committed after that, those older rows
+  follow the ranked ones with <code>rank: null</code>. That cut uses the
+  server's own clock. The <code>proving</code> label is the client's word, so
+  it moves no rank: a run made later with <code>--serial</code> is ranked with
+  the rest, at the rate its idle grinder cost it.</p>
+  <p>A v5 row (<code>rules: anthropos</code>):</p>
+  <ul class="fields">
+    <li><code>verified_zk_hashes_per_sec_lb</code> — k · <code>expected_attempts_per_win</code> / server-observed window (mint → submit, proving included); the ranked lower bound</li>
+    <li><code>grind_zk_hashes_per_sec</code> — the same numerator over the client's grind time; informational only</li>
+    <li><code>expected_attempts_per_win</code> — the tier: p<sup>5</sup> / (target + 1) Tip5 hashes, with p the Goldilocks prime</li>
+    <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (1/√k)</li>
+    <li><code>target</code>, <code>attempts</code>, <code>win_nonces</code> — the target the wins were verified against (5 base-p limbs, least significant first, as decimal strings), its tier, and the winning nonces</li>
+    <li><code>est_nock_per_day</code>, <code>est_usd_per_day</code> — from the ranked rate, at the difficulty and price on <a href="/economics">/economics</a></li>
+  </ul>
+  <p>A pre-Anthropos row (<code>rules: pre-anthropos</code>) keeps its old
+  shape: <code>proofs_per_sec</code> (k / server window) and
+  <code>self_reported_pps</code>. Those rows measure complete proofs per
+  second, the mining unit before height 147,500. They carry no earnings
+  estimate: network difficulty counts Tip5 hashes now, so a proofs/sec figure
+  prices nothing.</p>
+  <pre>curl 'https://nockmark.xyz/leaderboard?track=zk'</pre>
+  <p><code>?track=ai</code> returns the AI-PoW board instead: rates in
+  MAC-equivalents per second, plus <code>est_nock_per_day</code> and
+  <code>est_usd_per_day</code> computed from the ranked
+  <code>verified_mac_per_sec_lb</code>. Those two are absent until an
+  <code>ai-pow</code> block has actually been seen at the chain tip — AI
+  difficulty cannot be derived from the ZK figure. Only rows verified under
+  the current AI rules (<code>hardened</code>) are ranked.</p>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">GET</span>/runs/:id</div>
+  <p>One verified run by id, same shape as a leaderboard entry, with its board
+  rank. Each track numbers its runs separately, so the track picks which:
+  <code>?track=zk</code> for a v5 run, <code>?track=ai</code> for an AI run,
+  and no track for a pre-Anthropos run (the links older clients printed).</p>
+  <pre>curl 'https://nockmark.xyz/runs/1?track=zk'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">GET</span>/economics</div>
+  <p>Every input behind every estimate this registry publishes, so you can
+  recompute any of them yourself: both difficulties — ZK
+  (<code>difficulty</code>, expected attempts per ZK block — Tip5 hashes since
+  height 147,500) and AI
+  (<code>ai_difficulty_mac_equiv_per_block</code> = 2^256 / (<code>ai_target</code>
+  + 1), expected MAC-equivalents per block) — each with its own
+  <code>*_observed_at</code> and <code>*_age_secs</code>; the NOCK price with
+  its source and age; the block reward; both block times; and the
+  MAC↔ZK-attempt exchange rate (14,285,714 MAC-equivalents per Tip5 hash
+  since height 154,500). <code>difficulty_source</code> and
+  <code>ai_difficulty_source</code> name where each figure came from — nockscan
+  first, NockBlocks when it fails — and <code>block_reward_observed_at</code>
+  says the reward (the 80% miner share) was read from the chain rather than
+  configured. <code>model</code> carries the formulas, <code>notes.excludes</code>
+  what they do not account for, and <code>notes.zk_board</code> which ZK rows
+  are priced and why the pre-Anthropos ones are not.</p>
+  <p>Anything unobserved is omitted rather than defaulted: no AI block seen
+  means no <code>ai_*</code> keys, no price means no USD anywhere. Pass
+  <code>?zk_hashes_per_sec=</code> or <code>?mac_per_sec=</code> to price a
+  machine of your own on either puzzle. The old <code>?pps=</code> is answered
+  with a <code>pps_note</code> saying why, not with a number.</p>
+  <pre>curl 'https://nockmark.xyz/economics?zk_hashes_per_sec=1.8e7&amp;mac_per_sec=3.3e14'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">GET</span>/economics/history</div>
+  <p>ZK difficulty over time as <code>[unix_secs, difficulty]</code> pairs
+  (points before height 147,500 count proofs, after it Tip5 hashes),
+  oldest first, thinned to ≤ 1000 points. <code>?hours=</code> bounds the
+  lookback (default 168, max 2160).</p>
+  <pre>curl 'https://nockmark.xyz/economics/history?hours=720'</pre>
+</div>
+
+<div class="eyebrow">Submit</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">POST</span>/challenge?track=zk</div>
+  <p>Mint a ZK v5 challenge. The ranked rate is measured from this moment to
+  submission, server-side. Returns:</p>
+  <ul class="fields">
+    <li><code>nonce</code> — the kernel-minted u64 the rest derives from (decimal string)</li>
+    <li><code>challenge</code> — C = <code>blake3("nockmark-zk-v5" ‖ nonce_le8)</code>, hex</li>
+    <li><code>commitment</code> — the block commitment to grind: C as a little-endian 256-bit integer written in base p (5 belts, least significant first). Rule <code>commitment_rule</code>.</li>
+    <li><code>target</code>, <code>attempts</code> — the benchmark target T<sub>b</sub> (5 base-p limbs) and the tier it realises</li>
+    <li><code>k</code> — winners required; <code>pow_len</code> 64; <code>proof_version</code> 5; <code>nonce_rule</code></li>
+  </ul>
+  <p>Belts travel as decimal strings: they run to 2<sup>64</sup>, past what a
+  JSON number survives in JavaScript.</p>
+  <p><code>?attempts=</code> picks the tier: expected Tip5 hashes per win,
+  rounded to the nearest power of two and clamped to
+  [2<sup>12</sup>, 2<sup>31</sup>] (default 2<sup>20</sup>). The target is
+  T<sub>b</sub> = ⌊(p<sup>5</sup> − 1) / attempts⌋ − 1, so that
+  p<sup>5</sup> / (T<sub>b</sub> + 1) gives the tier back exactly. As on the
+  AI track, a tier cannot inflate a rate: an easy one earns less credit
+  against the same proving time, and a hard one has to be ground out.
+  <code>tock zk-bench</code> sizes it at twice the machine's own proving time
+  and proves each winner while it keeps grinding, which makes the ranked rate
+  about 97 % of the true one at k = 16 on every host (two thirds for a serial
+  run).</p>
+  <p>Without <code>?track=</code>, <code>POST /challenge</code> and
+  <code>POST /run</code> answer <code>410 Gone</code>: they were the complete
+  %3 proofs/sec submission, retired with Anthropos.</p>
+  <pre>curl -X POST 'https://nockmark.xyz/challenge?track=zk&amp;attempts=16777216'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">POST</span>/run?track=zk</div>
+  <p>Submit k winners, one <code>%5</code> proof each, in strictly ascending
+  nonce order (base-p, most significant limb first).</p>
+  <ul class="fields">
+    <li><code>nonce</code>, <code>proofs[k]</code> — the challenge and the winners' base64 proof jams</li>
+    <li><code>hardware</code>, <code>prover_version</code> — self-described labels (rates are not self-described)</li>
+    <li><code>grind_elapsed_ms</code> — client-measured grind time; displayed, never ranked</li>
+    <li><code>proving</code> — optional label, <code>"pipelined"</code> or <code>"serial"</code> (the default); any other value is refused</li>
+  </ul>
+  <p>Nothing digest-shaped is taken from the client. Per proof, cheapest
+  first:</p>
+  <ul class="fields">
+    <li>version is <code>%5</code>: a %3 proof is refused, as mainnet has refused them since height 147,500</li>
+    <li>object 0 is a <code>%puzzle</code> whose commitment is this challenge's and whose <code>len</code> is 64</li>
+    <li>its Tip5 digest is re-derived from the submitted object 0 the way consensus does (<code>+proof-to-pow</code>), must equal upstream's own <code>v5_pow_digest</code> of the object's commitment, nonce and length, and must be ≤ T<sub>b</sub> (consensus's <code>+check-target</code>)</li>
+    <li>every polynomial object is in canonical form (<code>+canonical-pow-proof</code>)</li>
+    <li>across the submission, one win per nonce. Consensus treats everything after object 0 as a witness envelope: two different proofs of one nonce are one win, so the dedupe is on the nonce, not on the proof bytes</li>
+    <li>the STARK verifies with upstream's native verifier, and again with the consensus Hoon verifier</li>
+  </ul>
+  <pre>tock zk-bench --kernel assets/miner.jam \
+  --submit https://nockmark.xyz</pre>
+</div>
+
+<div class="eyebrow">AI-PoW track (CPU and GPU)</div>
+
+<div class="endpoint">
+  <p><b>What these rates cover.</b> The AI track grinds the canonical block
+  shape, and the GPU rows are behind upstream: they were measured at pin
+  <code>c8d6b13e</code>, under the legacy proof rules, with the generic CUDA
+  kernel that still serves this shape. Two days after that pin upstream made
+  a peak kernel on its own dense shape the production GPU path — the same
+  card goes from 0.19 to 335 TMAC/s, about 1,700x. Read the GPU rows as a
+  floor for the hardware. That shape is now the <code>dense-peak</code>
+  statement below (CPU rows first, from rented hosts); GPU re-runs are
+  pending. Nockchain
+  also admits mining inside real model inference, at throughput comparable to
+  the optimised dedicated kernel — the notable part being that the compute is
+  dual-use, not that it is faster.</p>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">POST</span>/challenge?track=ai</div>
+  <p>Mint an AI-PoW challenge for the Logos puzzle (INT8 tiled matmul +
+  recursive STARK certificate). Returns the kernel-minted <code>nonce</code>,
+  the 32-byte <code>challenge</code> derived from it
+  (<code>blake3("nockmark-ai-v1" ‖ nonce_le8)</code>), the jackpot
+  <code>target</code> T<sub>b</sub>, <code>k</code> (wins required), the fixed
+  <code>params</code>, the <code>statement</code>, and the grind rule.</p>
+  <p><code>?statement=</code> selects which AI-PoW statement to be challenged
+  on. It defaults to <code>dense</code>, so a request without it means exactly
+  what it always did.</p>
+  <ul class="fields">
+    <li><code>dense</code> — the single-tile statement (m=8, k=1024, n=8,
+      noise_rank=64, tile=8), matrices seeded from the challenge. Grind rule
+      <code>extranonce-le8-v1</code>: attempts are extranonces 0, 1, 2, …
+      encoded as 8 little-endian bytes, and a win is
+      <code>jackpot ≤ target</code>, unscaled.</li>
+    <li><code>canonical-moe</code> — the canonical MoE (GROUPED_GEMM) block the
+      production gateway-free miner submits, and the one the upcoming CUDA
+      backend accelerates: m=64, k=1024, n=64, noise_rank=64, tile=8, with
+      <code>hw=8</code>, <code>e=2</code>, <code>top_k=1</code>. The challenge
+      binds through the Pearl header's aux commitment. Grind rule
+      <code>canonical-ordinal-v3</code>: attempts are u32 ordinals 0, 1, 2, …
+      that offset the header timestamp — <b>not</b> an 8-byte nonce. A win is
+      <code>jackpot ≤ target × F</code> with F = 2<sup>16</sup>, so the same
+      32-byte target means F times less grinding here than on the dense
+      statement. The response says so explicitly:
+      <code>params.shape_work_factor</code> and
+      <code>params.target_is_scaled_by_shape_work_factor</code>.</li>
+    <li><code>dense-peak</code> — mainnet's production AI shape, the one
+      upstream's peak CUDA kernel grinds (#159): m=4096, k=8192, n=32768,
+      noise_rank=512, 16×16 tiles, production synthetic matrices. One
+      extranonce fixes a Pearl transcript; each of its 2<sup>19</sup> output
+      tiles is one attempt, worth F = 16·16·8192 = 2<sup>21</sup>
+      MAC-equivalents. Grind rule <code>peak-extranonce-tile-v1</code>: an
+      attempt index is <code>extranonce · 2^19 + tile</code> (tile =
+      <code>row_tile · 2048 + col_tile</code>, upstream's order), and a win is
+      <code>jackpot ≤ target × 2^21</code>. The challenge binds through the
+      Pearl header's aux commitment, as on <code>canonical-moe</code>. Tiers run
+      to 2<sup>36</sup>, the response carries <code>window_ms</code>, and the
+      challenge lives <b>3 h</b>: one certificate takes 60–76 s and 12–15 GB on
+      an M1 Max, so 16 wins at twice the proving time, proved after the grind,
+      do not fit an hour (pipelined, they need about 33 certificates' worth). A
+      dense-peak challenge takes only dense-peak wins, and the other way
+      round. Its GPU path (<code>--gpu</code>) is upstream's peak kernel,
+      which runs only on compute capability 12.0 (RTX 5090 class).</li>
+  </ul>
+  <p><code>?attempts=</code> requests a difficulty <b>tier</b>: the expected
+  grind attempts per win you want to be targeted at. The server derives the
+  <code>target</code> from it — respecting each statement's own semantics, so
+  the same tier is a different 32 bytes on <code>dense</code> and on
+  <code>canonical-moe</code> — and echoes the granted value back as
+  <code>attempts</code>. Clients still read <code>target</code>; omitting the
+  parameter reproduces the previous behaviour exactly, target and response
+  alike.</p>
+  <ul class="fields">
+    <li>Rounded to the nearest power of two internally, so the target is a
+      single set bit and tier → target → score round-trips exactly and
+      reproducibly.</li>
+    <li>Clamped to [2<sup>12</sup>, 2<sup>30</sup>] (dense-peak:
+      [2<sup>12</sup>, 2<sup>36</sup>]); compare the echoed
+      <code>attempts</code> against what you asked for to see the clamp. The
+      ceiling is the challenge expiry: at ~3 M attempts/s, 2<sup>30</sup> is
+      ~6 min of grinding per win, and a challenge goes stale 1 h after it is
+      minted.</li>
+  </ul>
+  <p><b>Why letting the client choose cannot inflate a rate.</b> The ranked
+  figure divides real MAC-equivalents by a window this server observed, and a
+  tier only changes how much of that window is grinding rather than
+  certificate proving the grind cannot hide: an <em>easy</em> tier earns less
+  credit against the same proving and therefore scores <em>lower</em>, so
+  there is nothing to gain by asking for one. A <em>hard</em> tier cannot lift a
+  machine above its true throughput either, because every attempt it is credited
+  for is genuinely performed — the credit is exactly the expected attempts at
+  the target the wins were verified against, and a win only exists if a jackpot
+  really cleared it.</p>
+  <pre>curl -X POST 'https://nockmark.xyz/challenge?track=ai&amp;statement=canonical-moe&amp;attempts=1048576'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">POST</span>/run?track=ai</div>
+  <p>Submit k jackpot wins. Each win's certificate is verified end-to-end
+  before anything is recorded: statement re-derived from
+  <code>(challenge, extranonce)</code> — matrices re-synthesized, every
+  public input re-checked, <code>HASH_JACKPOT ≤ target</code> — then the
+  compact STARK verify against the server's own setup.</p>
+  <ul class="fields">
+    <li><code>nonce</code> — the challenge's nonce (decimal string)</li>
+    <li><code>statement</code> — <code>dense</code> (default when absent), <code>canonical-moe</code> or <code>dense-peak</code>; picks the verify rules, the target and the blob format</li>
+    <li><code>wins[k]</code> — <code>{extranonce, cert_b64}</code>, strictly ascending (ground 0, 1, 2, …). For <code>canonical-moe</code> the field carries the u32 ordinal; for <code>dense-peak</code>, the attempt index.</li>
+    <li><code>hardware</code>, <code>prover_version</code> — self-described labels (rates are not self-described)</li>
+    <li><code>grind_elapsed_ms</code> — client-measured, grind start to the last win found; displayed, never ranked</li>
+    <li><code>proving</code> — optional, <code>"pipelined"</code> or <code>"serial"</code> (the default), as on the ZK track</li>
+  </ul>
+  <p>For <code>canonical-moe</code> the submission carries nothing but the
+  certificate and its public inputs: the whole statement — Pearl header,
+  mining config, matrix commitments, routing, opened indices, jackpot — is
+  re-derived here from <code>(challenge, ordinal)</code> and the jackpot is
+  gated at <code>target × F</code> before the compact STARK verify.</p>
+  <p>For <code>dense-peak</code> each <code>cert_b64</code> is the jammed
+  <code>%ai-pow</code> block artifact a node receives (~147 KB, cap 160 KB).
+  Per win, the server decodes it with the consensus jet's own bounded decoder;
+  checks that it is dense (no MoE tail), carries dense-peak's mining config and
+  m×n, opens the tile the attempt index names, and carries this challenge's
+  Pearl header at that extranonce; then runs upstream's consensus verifier
+  (<code>verify_ai_pow_block_artifact_with_verification_rules</code>, the
+  function behind <code>%ai-pow-verify-v2</code>) under
+  <code>ConsensusBatch</code>: admission limits, canonical FRI witnesses, the
+  2<sup>19</sup> trace cap, the challenge bound as the block commitment,
+  <code>jackpot ≤ target × 2^21</code>, and the compact recursive STARK,
+  against a verifier setup this server derives from the shape and a key digest
+  it pins. As in consensus, the matrices are the miner's choice; a tile over
+  other matrices costs the same 2<sup>21</sup> MACs.</p>
+  <pre>tock ai-bench --statement canonical-moe --submit https://nockmark.xyz
+tock ai-bench --statement dense-peak --submit https://nockmark.xyz</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">GET</span>/leaderboard?track=ai</div>
+  <p>All three statements rank on this one board, by
+  <code>verified_mac_per_sec_lb</code>. They share it because MAC-equivalents
+  is precisely the unit consensus uses to compare AI work of different shapes:
+  expected MAC-equivalents per block is <code>2^256 / T</code> whatever tile
+  shape the miner picked, which is what makes the AI puzzle's fork-choice
+  weight meaningful in the first place. An attempt is F = 2<sup>16</sup>
+  MAC-equivalents (an 8×8 tile over k=1024) on <code>dense</code> and
+  <code>canonical-moe</code>, and 2<sup>21</sup> (a 16×16 tile over k=8192) on
+  <code>dense-peak</code>; the attempt count follows each statement's target
+  semantics — <code>2^256/(T+1)</code> for <code>dense</code>,
+  <code>2^256/(T·F+1)</code> for <code>canonical-moe</code> and
+  <code>dense-peak</code>. Every row carries its own <code>statement</code>
+  and its own <code>target</code>, so a re-calibration cannot rewrite how an
+  older row was scored.</p>
+  <ul class="fields">
+    <li><code>statement</code> — <code>dense</code>, <code>canonical-moe</code> or <code>dense-peak</code></li>
+    <li><code>expected_attempts_per_win</code> — the difficulty tier this run was measured at, derived from its own stored <code>target</code> (so rows from before tiers existed carry it too). A tighter lower bound comes with a harder tier, because more of the window was grinding and less of it proving.</li>
+    <li><code>verified_mac_per_sec_lb</code> — k · attempts-per-win · F / server window (issue → submit, proving included); the ranked lower bound</li>
+    <li><code>grind_mac_per_sec</code> — same numerator over the client grind window; informational only</li>
+    <li><code>zk_attempt_equiv_per_sec</code> — MAC/s ÷ 14,285,714, the consensus MAC↔ZK-attempt exchange rate since height 154,500; a ZK attempt is one Tip5 hash since Anthropos (rows served before M7 divided by the Logos rate, 25.75e9 per complete proof)</li>
+    <li><code>sigma_frac</code> — ±1σ as a fraction of the rate (k wins is Poisson: 1/√k)</li>
+    <li><code>rules</code> — the proof rules the wins were verified under, recorded by this server at acceptance: <code>hardened</code> or <code>legacy</code></li>
+    <li><code>proving</code> — <code>pipelined</code> or <code>serial</code>, client-reported; a label only</li>
+    <li><code>rank</code> — 1-based among <code>hardened</code> rows; <code>null</code> on legacy rows, and on rows committed before 2026-11-13 00:00 UTC once a newer <code>hardened</code> row exists (the ZK board's rule, above)</li>
+  </ul>
+  <p>Mainnet has admitted only <code>Hardened</code> AI certificates since
+  height 154,500, and since 170,000 a canonical-MoE block must also route
+  every token exactly <code>top_k</code> times. This registry pins nockchain
+  <code>ed1edfcc</code> and verifies new wins under exactly those rules: a
+  legacy certificate is rejected. Rows accepted before that pin carry
+  <code>rules: legacy</code> and stay on the board, listed after the ranked
+  rows with <code>rank: null</code>. Older still, rows proved
+  before pin <code>c8d6b13e</code> used the pre-Pearl-V3 statement, whose AIR
+  was later hardened upstream (urange8 lookup fix). Cross-era rate
+  comparisons are fair — the grind is the same work — but each row's
+  certificates were verified under its own era's rules.
+  <code>prover_version</code> is the client's own label; <code>rules</code> is
+  the server's.</p>
+  <pre>curl 'https://nockmark.xyz/leaderboard?track=ai'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="sigline"><span class="verb">429</span>rate limits</div>
+  <p>The two POST routes are rate-limited per IP. Over-limit responses
+  carry a <code>Retry-After</code> header and
+  <code>{"retry_after_secs": …}</code> in the body — sleep that long and
+  retry.</p>
+</div>
+
+<footer>
+  <p><a href="/">Board</a> ·
+  <a href="https://github.com/tomdebres/nockmark">Source &amp; verification model</a></p>
+</footer>
+</html>

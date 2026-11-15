@@ -1,0 +1,77 @@
+start 1794535192.128076624
+nproc 128
+cgroup_cpu_max 1785000 100000
+model name	: AMD Ryzen Threadripper PRO 5995WX 64-Cores
+MemTotal:       263706464 kB
+NVIDIA GeForce RTX 3090, 580.65.06, 330.00 W, 2100 MHz, 1, 16
+58fe623de09ec417cfc3530e6a4ca2a19d450e7b
+1f6c1f32fe28897d798ef3505b55acae59fc1223ed4b120201a169ea93387c0e  assets/miner.jam
+392045cf31263c2b30478d41e7aea23bf93a5113b234d7b78a1541488c33b23b  target/release/tock
+clk_tck 100
+args ai-bench --statement dense-peak -k 16 --serial --attempts 2097152
+pid 40139
+exit 0 1794536687.446194976
+====TLOG
+1794535192.587970009 grinding to 16 dense-peak win(s) on the CPU, serial with 1 prover(s)…
+1794535245.990224277   win 1 (of k=16) at extranonce 3 tile 6149 (53.4s)
+1794535250.405454686   win 2 (of k=16) at extranonce 3 tile 87248 (57.8s)
+1794535283.411634620   win 3 (of k=16) at extranonce 5 tile 42696 (90.8s)
+1794535310.395793887   win 4 (of k=16) at extranonce 6 tile 291301 (117.8s)
+1794535393.110220123   win 5 (of k=16) at extranonce 11 tile 63490 (200.5s)
+1794535503.194048910   win 6 (of k=16) at extranonce 17 tile 222208 (310.6s)
+1794535595.707706141   win 7 (of k=16) at extranonce 22 tile 429414 (403.1s)
+1794535672.132221409   win 8 (of k=16) at extranonce 26 tile 491744 (479.5s)
+1794535720.917568425   win 9 (of k=16) at extranonce 29 tile 307501 (528.3s)
+1794535758.898795750   win 10 (of k=16) at extranonce 31 tile 343585 (566.3s)
+1794535809.202428709   win 11 (of k=16) at extranonce 34 tile 304918 (616.6s)
+1794535889.700065408   win 12 (of k=16) at extranonce 39 tile 267365 (697.1s)
+1794536031.985491310   win 13 (of k=16) at extranonce 48 tile 108560 (839.4s)
+1794536044.945775144   win 14 (of k=16) at extranonce 48 tile 511523 (852.4s)
+1794536167.256788329   win 15 (of k=16) at extranonce 56 tile 81984 (974.7s)
+1794536232.938789498   win 16 (of k=16) at extranonce 59 tile 520574 (1040.4s)
+1794536263.320187287   cert for attempt 1579013: 30.4s (147114 bytes)
+1794536291.223810203   cert for attempt 1660112: 27.9s (147217 bytes)
+1794536319.448225608   cert for attempt 2664136: 28.2s (147133 bytes)
+1794536347.085747558   cert for attempt 3437029: 27.6s (147193 bytes)
+1794536374.846203341   cert for attempt 5830658: 27.8s (147235 bytes)
+1794536403.129018828   cert for attempt 9135104: 28.3s (147130 bytes)
+1794536431.034519501   cert for attempt 11963750: 27.9s (147153 bytes)
+1794536459.445875896   cert for attempt 14123232: 28.4s (147071 bytes)
+1794536487.394145280   cert for attempt 15511853: 27.9s (147140 bytes)
+1794536515.485489597   cert for attempt 16596513: 28.1s (147042 bytes)
+1794536544.386583689   cert for attempt 18130710: 28.9s (147104 bytes)
+1794536573.515529242   cert for attempt 20714597: 29.1s (147140 bytes)
+1794536601.897266729   cert for attempt 25274384: 28.4s (147225 bytes)
+1794536629.876451782   cert for attempt 25677347: 28.0s (147124 bytes)
+1794536657.715868822   cert for attempt 29442112: 27.8s (147146 bytes)
+1794536686.035596991   cert for attempt 31453566: 28.3s (147124 bytes)
+1794536686.238220688 tock ai-bench — Logos AI-PoW, dense-peak (mainnet production shape)
+1794536686.239838494   statement:    dense-peak
+1794536686.241640587   shape:        m=4096 k=8192 n=32768 r=512 tile=16 (524288 tiles per extranonce)
+1794536686.243677893   backend:      CPU, 64 workers (upstream CpuSearchBackend::search_dense)
+1794536686.245192344   challenge:    ace8beddf55f47f081d6ba4ecbf991a332d882c788f024a2b019b51c23c75a2e
+1794536686.246355474   target:       0000000000000000000000000000000000000000000000000000400000000000 (x F = 2^21)
+1794536686.247498576   tier:         2097152 expected attempts/win
+1794536686.248665443   nonce rule:   peak-extranonce-tile-v1
+1794536686.249719668   hardware:     AMD Ryzen Threadripper PRO 5995WX 64-Cores (128 cores)
+1794536686.250831641   grind:        16 win(s) in 1040.35s, 31453567 attempts
+1794536686.252115659   grind rate:   30233.6 attempts/sec (6.340e10 MAC-equiv/s at F=2^21)
+1794536686.253598621   proving:      serial (1 prover(s))
+1794536686.254864925   cert prove:   min 27637 ms / mean 28318 ms / max 30380 ms
+1794536686.256324062   grind+prove:  1493.4s, of which 453.1s after the last win
+1794536686.257903456   win:          attempt 1579013 — found 53.4s, artifact 147114 bytes, proved 1040.4-1070.7s (30380 ms)
+1794536686.259359958   win:          attempt 1660112 — found 57.8s, artifact 147217 bytes, proved 1070.7-1098.6s (27904 ms)
+1794536686.260874018   win:          attempt 2664136 — found 90.8s, artifact 147133 bytes, proved 1098.6-1126.9s (28223 ms)
+1794536686.262266400   win:          attempt 3437029 — found 117.8s, artifact 147193 bytes, proved 1126.9-1154.5s (27637 ms)
+1794536686.263915374   win:          attempt 5830658 — found 200.5s, artifact 147235 bytes, proved 1154.5-1182.3s (27760 ms)
+1794536686.265304249   win:          attempt 9135104 — found 310.6s, artifact 147130 bytes, proved 1182.3-1210.5s (28283 ms)
+1794536686.266830563   win:          attempt 11963750 — found 403.1s, artifact 147153 bytes, proved 1210.5-1238.4s (27905 ms)
+1794536686.268100644   win:          attempt 14123232 — found 479.5s, artifact 147071 bytes, proved 1238.4-1266.9s (28411 ms)
+1794536686.269499728   win:          attempt 15511853 — found 528.3s, artifact 147140 bytes, proved 1266.9-1294.8s (27947 ms)
+1794536686.270601984   win:          attempt 16596513 — found 566.3s, artifact 147042 bytes, proved 1294.8-1322.9s (28092 ms)
+1794536686.271759182   win:          attempt 18130710 — found 616.6s, artifact 147104 bytes, proved 1322.9-1351.8s (28900 ms)
+1794536686.272944364   win:          attempt 20714597 — found 697.1s, artifact 147140 bytes, proved 1351.8-1380.9s (29128 ms)
+1794536686.274039556   win:          attempt 25274384 — found 839.4s, artifact 147225 bytes, proved 1380.9-1409.3s (28382 ms)
+1794536686.275117475   win:          attempt 25677347 — found 852.4s, artifact 147124 bytes, proved 1409.3-1437.3s (27978 ms)
+1794536686.276344706   win:          attempt 29442112 — found 974.7s, artifact 147146 bytes, proved 1437.3-1465.1s (27839 ms)
+1794536686.277761964   win:          attempt 31453566 — found 1040.4s, artifact 147124 bytes, proved 1465.1-1493.4s (28320 ms)

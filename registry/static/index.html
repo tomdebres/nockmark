@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nockmark — verified Nockchain mining benchmarks</title>
+<meta name="description" content="A public registry of Nockchain mining benchmarks. Every rate is computed server-side from verified proofs of a server-issued challenge.">
+<link rel="canonical" href="https://nockmark.xyz/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://nockmark.xyz/">
+<meta property="og:site_name" content="Nockmark">
+<meta property="og:title" content="Nockmark — verified Nockchain mining benchmarks">
+<meta property="og:description" content="Verified mining rates for both Nockchain puzzles, ZK and AI, computed by the server from challenges it issued and proofs it checked.">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext x='1' y='13' font-family='monospace' font-size='15' fill='%23555'%3E~%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --paper: #ffffff;
+    --ink: #161615;
+    --faint: #8b8a86;
+    --hair: #e4e3df;
+    --wash: #f6f6f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0d0d0c;
+      --ink: #e8e6e1;
+      --faint: #77756f;
+      --hair: #262523;
+      --wash: #151514;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 14px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 4rem 1.25rem 5rem;
+  }
+  a { color: inherit; text-underline-offset: 3px; }
+  a:hover { text-decoration-thickness: 2px; }
+  a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  header { margin-bottom: 3.5rem; }
+  .mark { font-size: 1.5rem; font-weight: 700; letter-spacing: -.02em; }
+  .mark .sig { color: var(--faint); font-weight: 400; }
+  .thesis { margin-top: 1rem; max-width: 36rem; }
+  .thesis em { font-style: normal; border-bottom: 1px solid var(--faint); }
+
+  .rule { border: 0; border-top: 1px solid var(--hair); margin: 2.5rem 0; }
+
+  .eyebrow {
+    font-size: .6875rem;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 1rem;
+  }
+
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 38rem; }
+  th {
+    font-size: .6875rem;
+    font-weight: 400;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--faint);
+    text-align: left;
+    padding: 0 1rem .5rem 0;
+    border-bottom: 1px solid var(--ink);
+    white-space: nowrap;
+  }
+  td {
+    padding: .7rem 1rem .7rem 0;
+    border-bottom: 1px solid var(--hair);
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  th:last-child, td:last-child { padding-right: 0; }
+  td.hw { white-space: normal; min-width: 9rem; }
+  td.hw .host { display: block; font-size: .75rem; color: var(--faint); }
+  td.hw .stmt-m { display: none; }
+  /* On a phone the earnings must show without scrolling sideways: drop the
+     decorative mark, tighten the cells and fold the AI statement into the
+     hardware cell. Everything else stays one swipe to the right. */
+  @media (max-width: 34rem) {
+    th.sigil, td.sigil, th.stmt, td.stmt { display: none; }
+    table { min-width: 0; }
+    th { white-space: normal; vertical-align: bottom; }
+    th, td { padding-right: .5rem; }
+    td.hw { min-width: 6rem; }
+    td.hw .stmt-m { display: block; font-size: .75rem; color: var(--faint); }
+  }
+  th.num, td.num { text-align: right; }
+  tr:hover td { background: var(--wash); }
+  .rank { color: var(--faint); }
+  .sigil svg { display: block; }
+  .verified { font-size: 1.0625rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .quiet { color: var(--faint); font-variant-numeric: tabular-nums; }
+  .state td { color: var(--faint); white-space: normal; }
+  #ai { margin-top: 3rem; }
+
+  .econ { margin-top: .875rem; font-size: .8125rem; color: var(--faint); }
+  .econ .spark { vertical-align: -3px; margin-left: .35rem; }
+  .econ .spark polyline { stroke: var(--faint); }
+
+  .submit { margin-top: 3rem; }
+  pre {
+    border: 1px solid var(--hair);
+    padding: 1rem 1.25rem;
+    overflow-x: auto;
+    font: inherit;
+    line-height: 1.5;
+  }
+  pre b { font-weight: 700; }
+
+  footer { margin-top: 3rem; font-size: .8125rem; color: var(--faint); }
+  footer p + p { margin-top: .75rem; }
+  footer a { color: var(--ink); }
+</style>
+
+<header>
+  <div class="mark"><span class="sig">~</span>nockmark</div>
+  <p class="thesis">Nockchain mining benchmarks, <em>verified</em>. Every rate
+  below was computed by this server from proofs it checked, of a challenge it
+  issued. Nobody can inflate it, the submitter included.</p>
+</header>
+
+<section>
+  <div class="eyebrow">ZK mining — Tip5 hashes per second, CPU and GPU</div>
+  <div class="scroll">
+    <table id="board">
+      <thead>
+        <tr>
+          <th>#</th><th class="sigil"></th><th>hardware</th>
+          <th class="num">verified hashes/s</th>
+          <th class="num">nock/day</th><th class="num">usd/day</th>
+          <th class="num">±σ</th><th class="num">tier</th>
+          <th class="num">grind-window</th><th>prover</th>
+        </tr>
+      </thead>
+      <tbody><tr class="state"><td colspan="10">Loading verified runs…</td></tr></tbody>
+    </table>
+  </div>
+  <p class="econ" id="econ" hidden></p>
+  <p class="econ">Since block 147,500 a ZK attempt is one Tip5 hash, and only
+  a winning nonce gets a full proof. Each run proves k winners of this
+  server's challenge; every proof is verified twice, and the rate is k × the
+  tier's expected hashes over the server's own clock. <b>Tier</b>: hashes per
+  win, set at twice the machine's proving time. The client proves each winner
+  while it keeps grinding (a GPU only searches; the CPU proves), so the window
+  is the grind plus one proof. A row marked <b>serial</b> proved after the
+  grind, which costs about a third of its rate. Only ranked runs are shown;
+  runs under retired rules stay in the <a href="/leaderboard">JSON</a>.
+  Details on <a href="/api">/api</a>.</p>
+</section>
+
+<section id="ai" hidden>
+  <div class="eyebrow">AI-PoW — MAC-equivalents per second, CPU and GPU</div>
+  <div class="scroll">
+    <table id="ai-board">
+      <thead>
+        <tr>
+          <th>#</th><th>hardware</th><th class="stmt">statement</th>
+          <th class="num">verified MAC-equiv/s</th>
+          <th class="num">nock/day</th><th class="num">usd/day</th>
+          <th class="num">±σ</th><th class="num">tier</th>
+          <th class="num">grind-window</th><th class="num">zk-attempt-equiv/s</th>
+          <th>prover</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <p class="econ">Logos AI-PoW (INT8 matmul + recursive STARK certificate),
+  verified the same way. Three statements share one board in MAC-equivalents,
+  the unit consensus compares them in: dense, canonical MoE, and
+  <b>dense-peak</b>, mainnet's production shape (4096 × 8192 × 32768, 16 × 16
+  tiles). Only ranked runs under mainnet's current rules (Hardened) are
+  shown.</p>
+  <p class="econ"><b>GPU rows:</b> dense-peak on an RTX 5090 runs upstream's
+  peak kernel (#159, compute capability 12.0 only); canonical-MoE rows run the
+  generic CUDA kernel, about 1,500× less work per second on the same card.</p>
+</section>
+
+<section class="submit">
+  <div class="eyebrow">Get on the board</div>
+  <pre><b>tock zk-bench</b> --kernel assets/miner.jam \
+  --submit https://nockmark.xyz</pre>
+</section>
+
+<footer>
+  <p>The mark beside each ZK row is drawn from its challenge nonce. Hardware
+  is self-reported; rates are not.</p>
+  <p>nock/day and usd/day: the lottery model at the difficulty and price
+  above, before power, hardware, fees and luck — a snapshot, not a forecast.
+  <a href="/economics">/economics</a> has every input.</p>
+  <p><a href="https://github.com/tomdebres/nockmark">How it works</a> ·
+  <a href="/api">API</a> ·
+  <a href="/leaderboard">JSON</a> ·
+  <a href="/economics">economics</a></p>
+</footer>
+
+<script>
+// A sigil in the spirit of Urbit's: four glyphs in a 2×2 cell, chosen
+// deterministically from the run's challenge nonce.
+function sigil(seed) {
+  let h = 0x811c9dc5;
+  for (const c of String(seed)) { h ^= c.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+  const next = () => (h = (Math.imul(h, 0x2c1b3c6d) + 0x297a2d39) >>> 0);
+  const S = 11, glyphs = [];
+  const draw = [
+    (x, y) => `<circle cx="${x + 5.5}" cy="${y + 5.5}" r="4.5" fill="currentColor"/>`,
+    (x, y) => `<circle cx="${x + 5.5}" cy="${y + 5.5}" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/>`,
+    (x, y, r) => `<path d="M ${x + 1} ${y + 5.5} A 4.5 4.5 0 0 1 ${x + 10} ${y + 5.5} Z" fill="currentColor" transform="rotate(${r * 90} ${x + 5.5} ${y + 5.5})"/>`,
+    (x, y, r) => `<path d="M ${x + 1.5} ${y + 9.5} A 8 8 0 0 1 ${x + 9.5} ${y + 1.5}" fill="none" stroke="currentColor" stroke-width="1.5" transform="rotate(${r * 90} ${x + 5.5} ${y + 5.5})"/>`,
+    (x, y, r) => `<line x1="${x + 1.5}" y1="${y + 9.5}" x2="${x + 9.5}" y2="${y + 1.5}" stroke="currentColor" stroke-width="1.5" transform="rotate(${r * 90} ${x + 5.5} ${y + 5.5})"/>`,
+    (x, y) => `<circle cx="${x + 5.5}" cy="${y + 5.5}" r="1.6" fill="currentColor"/>`,
+  ];
+  for (const [x, y] of [[0, 0], [S, 0], [0, S], [S, S]]) {
+    next();
+    glyphs.push(draw[h % draw.length](x, y, (h >>> 8) % 4));
+  }
+  return `<svg width="22" height="22" viewBox="0 0 22 22" role="img" aria-label="challenge sigil">${glyphs.join('')}</svg>`;
+}
+
+// NOCK/day spans ~6e-7 (a laptop on the AI track) to tens (a peak-kernel GPU).
+// Below 0.001 an exponent, never "0.000": a printed zero says "earns
+// nothing", which is a different claim from "earns very little".
+const fmt = v => v == null ? '—' :
+  v >= 1 ? v.toFixed(1) : v >= 0.001 ? v.toFixed(3) : v.toExponential(1);
+// USD/day spans ~$0.0003 (one CPU) to ~$100 (a rack), so a fixed number of
+// decimals is useless at one end or the other. An em dash means the figure is
+// genuinely absent — this instance has no price feed, or the chain has not
+// yet shown us an AI block — never that the machine earns nothing.
+const usd = v => v == null ? '—' : '$' + (v >= 1 ? v.toFixed(2) : v.toPrecision(3));
+const tb = document.querySelector('#board tbody');
+
+// The prover cell: the client's pin label, then the rules the row was
+// measured under (server-side), then "serial" for a row whose proofs came
+// after the grind (client-reported). Set as text: prover_version is whatever
+// the submitter sent.
+const RULES = { anthropos: 'Anthropos', 'pre-anthropos': 'pre-Anthropos', legacy: 'legacy rules', hardened: 'Hardened' };
+const prover = r => (r.rules ? `${r.prover_version} · ${RULES[r.rules] || r.rules}` : r.prover_version) +
+  (r.proving === 'serial' ? ' · serial' : '');
+
+// The hardware cell. The descriptor is self-reported free text, as tock writes
+// it: "<GPU> · host <CPU> / <cores> / <RAM> / <OS> / <arch>" for a GPU run,
+// "<CPU> / <cores> / ..." for a CPU one. The device goes on the first line, a
+// short host line under it, and the full string in the tooltip. Set as text,
+// never HTML.
+const chip = s => s.replace(/\((R|TM)\)/g, '').replace(/\s+\d+-Cores?( Processor)?$/i, '').trim();
+function hardware(td, s) {
+  s = String(s ?? '');
+  td.title = s;
+  const [dev, host] = s.split(' · host ');
+  const parts = (host ?? dev).split(' / ');
+  const name = host ? dev.replace(/^NVIDIA (GeForce )?/, '') : chip(parts[0]);
+  const rest = host ? [chip(parts[0]), parts[1]] : parts.slice(1, 3);
+  const a = document.createElement('span'), b = document.createElement('span');
+  a.textContent = name;
+  b.className = 'host';
+  b.textContent = rest.filter(Boolean).join(' · ');
+  td.append(a, b);
+}
+
+// The ZK board shows ranked rows only. The server ranks v5 runs from the
+// current client; pre-Anthropos and superseded serial runs carry no rank and
+// stay in the JSON, off the page.
+const cell = (tr, sel, text) => { tr.querySelector(sel).textContent = text; };
+fetch('/leaderboard?track=zk').then(r => r.json()).then(rows => {
+  const ranked = rows.filter(r => r.rank != null);
+  tb.textContent = '';
+  if (!ranked.length) {
+    tb.innerHTML = '<tr class="state"><td colspan="10">No ranked runs yet. Yours can be first — command below.</td></tr>';
+  }
+  for (const r of ranked) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td class="rank">${r.rank ?? '—'}</td>` +
+      `<td class="sigil">${sigil(r.nonce)}</td>` +
+      `<td class="hw"></td>` +
+      `<td class="num verified">${human(r.verified_zk_hashes_per_sec_lb)}</td>` +
+      `<td class="num">${fmt(r.est_nock_per_day)}</td>` +
+      `<td class="num quiet">${usd(r.est_usd_per_day)}</td>` +
+      `<td class="num quiet">±${Math.round(r.sigma_frac * 100)}%</td>` +
+      `<td class="num quiet">${tier(r.expected_attempts_per_win)}</td>` +
+      `<td class="num quiet">${human(r.grind_zk_hashes_per_sec)}</td>` +
+      `<td class="quiet prover"></td>`;
+    hardware(tr.querySelector('.hw'), r.hardware);
+    cell(tr, '.prover', prover(r));
+    tb.appendChild(tr);
+  }
+}).catch(() => {
+  tb.innerHTML = '<tr class="state"><td colspan="10">Could not load the leaderboard — reload the page to retry, or read the <a href="/leaderboard">JSON</a> directly.</td></tr>';
+});
+
+// A compact "3.1M"-style figure for the estimated network proving rate.
+const human = v => {
+  // Past trillions, an exponent reads better than a stack of suffixes: the
+  // AI difficulty is ~3e21 MAC-equivalents per block, and "3.26e+12B" (what
+  // the B-capped version printed) helps nobody.
+  if (v >= 1e15) {
+    const e = Math.floor(Math.log10(v));
+    return (v / 10 ** e).toFixed(2) + 'e' + e;
+  }
+  for (const [n, s] of [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'k']]) {
+    if (v >= n) return (v / n).toPrecision(3) + s;
+  }
+  return v.toPrecision(3);
+};
+
+// The difficulty tier a run was measured at, as expected grind attempts per
+// win. Granted tiers are powers of two, so they read as 2^N; a hand-set
+// target (and every row from before tiers existed) falls back to a figure.
+// Missing means a registry too old to report it at all.
+const tier = v => {
+  if (v == null) return '—';
+  const lg = Math.log2(v);
+  return Number.isInteger(lg) ? `2^${lg}` : human(v);
+};
+
+// AI-PoW track: ranked rows only, as on ZK. The server ranks only runs under
+// the current rules from the current client; the rest stay in the JSON.
+fetch('/leaderboard?track=ai').then(r => r.json()).then(rows => {
+  if (!Array.isArray(rows)) return;
+  const ranked = rows.filter(r => r.rank != null);
+  const tb = document.querySelector('#ai-board tbody');
+  if (!ranked.length) {
+    tb.innerHTML = '<tr class="state"><td colspan="11">No ranked runs under the current rules yet.</td></tr>';
+  }
+  for (const r of ranked) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td class="rank">${r.rank ?? '—'}</td>` +
+      `<td class="hw"></td>` +
+      `<td class="quiet stmt"></td>` +
+      `<td class="num verified">${human(r.verified_mac_per_sec_lb)}</td>` +
+      `<td class="num">${fmt(r.est_nock_per_day)}</td>` +
+      `<td class="num quiet">${usd(r.est_usd_per_day)}</td>` +
+      `<td class="num quiet">±${Math.round(r.sigma_frac * 100)}%</td>` +
+      `<td class="num quiet">${tier(r.expected_attempts_per_win)}</td>` +
+      `<td class="num quiet">${human(r.grind_mac_per_sec)}</td>` +
+      `<td class="num quiet">${r.zk_attempt_equiv_per_sec.toExponential(2)}</td>` +
+      `<td class="quiet prover"></td>`;
+    hardware(tr.querySelector('.hw'), r.hardware);
+    tr.querySelector('.prover').textContent = prover(r);
+    // Rows written before the statement existed were all dense.
+    const stmt = ({'canonical-moe': 'canonical MoE', 'dense-peak': 'dense-peak'})[r.statement] || 'dense';
+    tr.querySelector('td.stmt').textContent = stmt;
+    const m = document.createElement('span');
+    m.className = 'stmt-m';
+    m.textContent = stmt;
+    tr.querySelector('.hw').append(m);
+    tb.appendChild(tr);
+  }
+  document.getElementById('ai').hidden = false;
+}).catch(() => {});
+
+// How old an observation is. A difficulty or a price without its age is a
+// number the reader has to take on trust — and the two refresh at very
+// different rates, since ZK blocks are only ~30% of the chain.
+const ago = s => s == null ? 'age unknown' :
+  s < 120 ? `${s}s ago` :
+  s < 7200 ? `${Math.round(s / 60)} min ago` :
+  s < 172800 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+
+fetch('/economics').then(r => r.ok ? r.json() : null).then(d => {
+  if (!d || !d.difficulty) return;
+  const el = document.getElementById('econ');
+  el.textContent = `economics: ZK difficulty 2^${Math.log2(d.difficulty).toFixed(2)} hashes/block` +
+    // Prefer the age of the BLOCK it came from: we re-poll every ten
+    // minutes, so our own fetch time would read "3 min ago" against a chain
+    // that has not produced a block in a week.
+    (d.difficulty_tip_age_secs != null ? ` (block ${ago(d.difficulty_tip_age_secs)})`
+      : d.difficulty_observed_at ? ` (read ${ago(d.difficulty_age_secs)})` : '') +
+    (d.est_network_zk_hashes_per_sec ? ` · est ZK network ${human(d.est_network_zk_hashes_per_sec)} hashes/s` : '') +
+    ` · block reward ${d.block_reward_nock} NOCK` +
+    (d.nock_usd
+      ? ` · NOCK $${d.nock_usd.toPrecision(4)} (${ago(d.nock_usd_age_secs)})`
+      : ' · no price feed, so no usd/day') +
+    (d.ai_difficulty_mac_equiv_per_block
+      ? ` · AI difficulty ${human(d.ai_difficulty_mac_equiv_per_block)} MAC-equiv/block (${ago(d.ai_difficulty_age_secs)})`
+      : ' · no AI block observed yet, so no AI nock/day');
+  el.hidden = false;
+  return fetch('/economics/history?hours=720').then(r => r.ok ? r.json() : null);
+}).then(h => {
+  // 30-day difficulty sparkline, appended once there are enough points
+  // to say something.
+  if (!h || !h.points || h.points.length < 2) return;
+  const ts = h.points.map(p => p[0]), ds = h.points.map(p => p[1]);
+  const [t0, t1] = [Math.min(...ts), Math.max(...ts)];
+  const [d0, d1] = [Math.min(...ds), Math.max(...ds)];
+  const W = 96, H = 16;
+  const pts = h.points.map(([t, d]) =>
+    `${(t1 > t0 ? (t - t0) / (t1 - t0) : 0.5) * W},${H - 1 - (d1 > d0 ? (d - d0) / (d1 - d0) : 0.5) * (H - 2)}`
+  ).join(' ');
+  document.getElementById('econ').insertAdjacentHTML('beforeend',
+    `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"` +
+    ` aria-label="difficulty over the last ${Math.round(h.hours / 24)} days">` +
+    `<polyline points="${pts}" fill="none" stroke-width="1"/></svg>`);
+}).catch(() => {});
+</script>
+</html>

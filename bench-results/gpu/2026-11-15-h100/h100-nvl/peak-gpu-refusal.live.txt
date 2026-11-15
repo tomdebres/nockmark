@@ -1,0 +1,16 @@
+start 1794774197.506776333
+nproc 192
+cgroup_cpu_max 1615000 100000
+model name	: AMD EPYC 9654 96-Core Processor
+MemTotal:       1584766536 kB
+NVIDIA H100 NVL, 570.133.20, 310.00 W, 1785 MHz, 5, 16
+01c1fc40c8df090f77a5c7ad7906e112defa5f3f
+1f6c1f32fe28897d798ef3505b55acae59fc1223ed4b120201a169ea93387c0e  assets/miner.jam
+0590b4ddd605760e05fbdc6ff9533a6ce29f55bf7f6aead4fbd7c470bc136b6b  target/release/tock
+clk_tck 100
+args ai-bench --statement dense-peak --gpu -k 1 --attempts 2097152
+pid 36733
+exit 2 1794774199.264217573
+====TLOG
+1794774198.112625915 peak CUDA preflight failed: peak source session creation failed with CUDA status 801
+1794774198.116798445 upstream's #159 peak kernel runs only on compute capability 12.0 (RTX 5090 class); other cards report CUDA status 801. Drop --gpu to grind dense-peak on the CPU.

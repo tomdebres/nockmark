@@ -1,0 +1,10 @@
+start 1794558539.987791445
+nproc 96
+cgroup_cpu_max 1105000 100000
+model name	: AMD EPYC 7642 48-Core Processor
+MemTotal:       263750164 kB
+NVIDIA GeForce RTX 4090, 570.211.01, 450.00 W, 3105 MHz, 1, 4, 95.02.3C.C0.0B, [N/A], GPU-c5c08e83-c444-12de-647a-5386c8d701df
+| NVIDIA-SMI 570.211.01             Driver Version: 570.211.01     CUDA Version: 12.8     |
+|-----------------------------------------+------------------------+----------------------+
+c91b986164f67d15fb20509f540106f6bb827de7
+c9478ce08611a6ddba3d7fa9024f4eabf58ac5145549aa48d394b099bb718926  /build/nockmark/tock/target/release/examples/zk_v5_probe

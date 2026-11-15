@@ -1,0 +1,150 @@
+{
+  "attempts": 474386936,
+  "backend": "CUDA device 0 (32768 attempts/launch, jackpot search only)",
+  "calibrated_attempts_per_sec": 1998213.3474587137,
+  "calibrated_prove_s": 8.951993395,
+  "client_window_s": 255.905372522,
+  "expected_attempts": 536870912.0,
+  "failures": 0,
+  "grind_s": 236.883,
+  "hardware": "NVIDIA GeForce RTX 4090 24GB · host Intel(R) Core(TM) i5-14600KF / 20c / 31GB / Ubuntu 24.04.1 LTS / x86_64",
+  "k": 16,
+  "provers": 1,
+  "proving": "pipelined",
+  "run_id": 14,
+  "statement": "canonical-moe",
+  "sustained_attempts_per_sec": 2002621.2771705862,
+  "tier_attempts": 33554432.0,
+  "track": "ai",
+  "wall_s": 252.315,
+  "wins": [
+    {
+      "found_s": 32.500633001,
+      "index": 65255285,
+      "prove_done_s": 41.62277179,
+      "prove_s": 9.121,
+      "prove_start_s": 32.500713372,
+      "prover": 0
+    },
+    {
+      "found_s": 60.588596641,
+      "index": 121530751,
+      "prove_done_s": 69.875554487,
+      "prove_s": 9.286,
+      "prove_start_s": 60.588662175,
+      "prover": 0
+    },
+    {
+      "found_s": 81.179276746,
+      "index": 162826567,
+      "prove_done_s": 90.365340056,
+      "prove_s": 9.185,
+      "prove_start_s": 81.179325719,
+      "prover": 0
+    },
+    {
+      "found_s": 82.865377826,
+      "index": 166170539,
+      "prove_done_s": 99.691357754,
+      "prove_s": 9.325,
+      "prove_start_s": 90.365342145,
+      "prover": 0
+    },
+    {
+      "found_s": 107.158650345,
+      "index": 214778667,
+      "prove_done_s": 116.406889701,
+      "prove_s": 9.248,
+      "prove_start_s": 107.158692779,
+      "prover": 0
+    },
+    {
+      "found_s": 113.440673061,
+      "index": 227336047,
+      "prove_done_s": 125.760302519,
+      "prove_s": 9.353,
+      "prove_start_s": 116.406892002,
+      "prover": 0
+    },
+    {
+      "found_s": 147.406973157,
+      "index": 295343602,
+      "prove_done_s": 156.629974155,
+      "prove_s": 9.222,
+      "prove_start_s": 147.407035062,
+      "prover": 0
+    },
+    {
+      "found_s": 167.671986573,
+      "index": 336004319,
+      "prove_done_s": 176.756594253,
+      "prove_s": 9.084,
+      "prove_start_s": 167.672053161,
+      "prover": 0
+    },
+    {
+      "found_s": 178.573847843,
+      "index": 357793312,
+      "prove_done_s": 187.841965298,
+      "prove_s": 9.267,
+      "prove_start_s": 178.573907002,
+      "prover": 0
+    },
+    {
+      "found_s": 179.443057101,
+      "index": 359519724,
+      "prove_done_s": 197.092261172,
+      "prove_s": 9.25,
+      "prove_start_s": 187.841968022,
+      "prover": 0
+    },
+    {
+      "found_s": 182.420758179,
+      "index": 365461199,
+      "prove_done_s": 206.318604264,
+      "prove_s": 9.226,
+      "prove_start_s": 197.092263335,
+      "prover": 0
+    },
+    {
+      "found_s": 182.439268253,
+      "index": 365468984,
+      "prove_done_s": 215.561795176,
+      "prove_s": 9.243,
+      "prove_start_s": 206.318606301,
+      "prover": 0
+    },
+    {
+      "found_s": 206.81226376,
+      "index": 414283474,
+      "prove_done_s": 224.893817902,
+      "prove_s": 9.331,
+      "prove_start_s": 215.561797252,
+      "prover": 0
+    },
+    {
+      "found_s": 206.928946893,
+      "index": 414498508,
+      "prove_done_s": 234.293207119,
+      "prove_s": 9.399,
+      "prove_start_s": 224.893819809,
+      "prover": 0
+    },
+    {
+      "found_s": 207.76334042,
+      "index": 416150048,
+      "prove_done_s": 243.294052562,
+      "prove_s": 9.0,
+      "prove_start_s": 234.293208765,
+      "prover": 0
+    },
+    {
+      "found_s": 236.882489515,
+      "index": 474386935,
+      "prove_done_s": 252.315587658,
+      "prove_s": 9.021,
+      "prove_start_s": 243.294056128,
+      "prover": 0
+    }
+  ]
+}

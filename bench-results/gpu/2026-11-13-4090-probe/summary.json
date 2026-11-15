@@ -1,0 +1,477 @@
+{
+ "replay_meta": [
+  "# device-scan batch 131072 device NVIDIA GeForce RTX 4090",
+  "# done wins 14931 false 0 launches 126422 nonces 15567367630 evaluated 16570257802 secs 1142.4"
+ ],
+ "replay": {
+  "nonces": 15567367630,
+  "tier_log2": 20,
+  "wins": 14931,
+  "expected": 14846.198682785034,
+  "z": 0.6959771223464226,
+  "false_positives": 0
+ },
+ "replay_blocks": [
+  {
+   "block": 0,
+   "from": 0,
+   "to": 1073741824,
+   "wins": 992,
+   "expected": 1024.0
+  },
+  {
+   "block": 1,
+   "from": 1073741824,
+   "to": 2147483648,
+   "wins": 1070,
+   "expected": 1024.0
+  },
+  {
+   "block": 2,
+   "from": 2147483648,
+   "to": 3221225472,
+   "wins": 999,
+   "expected": 1024.0
+  },
+  {
+   "block": 3,
+   "from": 3221225472,
+   "to": 4294967296,
+   "wins": 1025,
+   "expected": 1024.0
+  },
+  {
+   "block": 4,
+   "from": 4294967296,
+   "to": 5368709120,
+   "wins": 1082,
+   "expected": 1024.0
+  },
+  {
+   "block": 5,
+   "from": 5368709120,
+   "to": 6442450944,
+   "wins": 1035,
+   "expected": 1024.0
+  },
+  {
+   "block": 6,
+   "from": 6442450944,
+   "to": 7516192768,
+   "wins": 1017,
+   "expected": 1024.0
+  },
+  {
+   "block": 7,
+   "from": 7516192768,
+   "to": 8589934592,
+   "wins": 1042,
+   "expected": 1024.0
+  },
+  {
+   "block": 8,
+   "from": 8589934592,
+   "to": 9663676416,
+   "wins": 1054,
+   "expected": 1024.0
+  },
+  {
+   "block": 9,
+   "from": 9663676416,
+   "to": 10737418240,
+   "wins": 995,
+   "expected": 1024.0
+  },
+  {
+   "block": 10,
+   "from": 10737418240,
+   "to": 11811160064,
+   "wins": 1036,
+   "expected": 1024.0
+  },
+  {
+   "block": 11,
+   "from": 11811160064,
+   "to": 12884901888,
+   "wins": 1004,
+   "expected": 1024.0
+  },
+  {
+   "block": 12,
+   "from": 12884901888,
+   "to": 13958643712,
+   "wins": 1022,
+   "expected": 1024.0
+  },
+  {
+   "block": 13,
+   "from": 13958643712,
+   "to": 15032385536,
+   "wins": 1026,
+   "expected": 1024.0
+  },
+  {
+   "block": 14,
+   "from": 15032385536,
+   "to": 15567367630,
+   "wins": 532,
+   "expected": 510.1986827850342
+  }
+ ],
+ "replay_blocks_chi2": {
+  "chi2": 10.616163137697132,
+  "dof": 14
+ },
+ "depth": [
+  {
+   "tier_log2": 20,
+   "wins": 14931,
+   "expected": 14846.198682785034,
+   "z": 0.6959771223464226
+  },
+  {
+   "tier_log2": 21,
+   "wins": 7471,
+   "expected": 7423.099341392517,
+   "z": 0.5559667876179448
+  },
+  {
+   "tier_log2": 22,
+   "wins": 3691,
+   "expected": 3711.5496706962585,
+   "z": -0.3373084557187652
+  },
+  {
+   "tier_log2": 23,
+   "wins": 1829,
+   "expected": 1855.7748353481293,
+   "z": -0.6215329655268411
+  },
+  {
+   "tier_log2": 24,
+   "wins": 916,
+   "expected": 927.8874176740646,
+   "z": -0.39024727523762653
+  },
+  {
+   "tier_log2": 25,
+   "wins": 460,
+   "expected": 463.9437088370323,
+   "z": -0.18309319305124058
+  },
+  {
+   "tier_log2": 26,
+   "wins": 241,
+   "expected": 231.97185441851616,
+   "z": 0.5927627530593873
+  },
+  {
+   "tier_log2": 27,
+   "wins": 115,
+   "expected": 115.98592720925808,
+   "z": -0.09154659652562029
+  },
+  {
+   "tier_log2": 28,
+   "wins": 48,
+   "expected": 57.99296360462904,
+   "z": -1.3122200044382992
+  },
+  {
+   "tier_log2": 29,
+   "wins": 16,
+   "expected": 28.99648180231452,
+   "z": -2.4135324892886936
+  },
+  {
+   "tier_log2": 30,
+   "wins": 6,
+   "expected": 14.49824090115726,
+   "z": -2.231882783575551
+  },
+  {
+   "tier_log2": 31,
+   "wins": 1,
+   "expected": 7.24912045057863,
+   "z": -2.321005863950645
+  },
+  {
+   "tier_log2": 32,
+   "wins": 0,
+   "expected": 3.624560225289315,
+   "z": -1.903827782465976
+  }
+ ],
+ "tier29": {
+  "probe": [
+   899213693,
+   1416556860,
+   2049933379,
+   2158927867,
+   4514298689,
+   5349425223,
+   6788265529,
+   7987009601,
+   8222331055,
+   9071868663,
+   10357193145,
+   11737257992,
+   15044571993,
+   15237437513,
+   15289674219,
+   15567367629
+  ],
+  "zk8": [
+   899213693,
+   1416556860,
+   2049933379,
+   2158927867,
+   4514298689,
+   5349425223,
+   6788265529,
+   7987009601,
+   8222331055,
+   9071868663,
+   10357193145,
+   11737257992,
+   15044571993,
+   15237437513,
+   15289674219,
+   15567367629
+  ],
+  "identical": true,
+  "missed_by_zk8": [],
+  "zk8_not_found_by_probe": []
+ },
+ "crosscheck_m1": {
+  "m1_wins": 8229,
+  "identical_to_pod_cpu": true,
+  "meta": [
+   "# cpu-scan nonces 134217728 threads 8 secs 876.5 rate 153136"
+  ],
+  "m1_only": [],
+  "pod_only": []
+ },
+ "crosscheck": {
+  "ranges": 32,
+  "nonces": 134217728,
+  "tier_log2": 14,
+  "cpu_wins": 8229,
+  "device_wins": 8229,
+  "expected": 8192.0,
+  "device_only": [],
+  "cpu_only": [],
+  "device_false_positives": 0,
+  "cpu_meta": [
+   "# cpu-scan nonces 134217728 threads 9 secs 1567.2 rate 85642"
+  ],
+  "device_meta": [
+   "# device-scan batch 262144 device NVIDIA GeForce RTX 4090",
+   "# done wins 8229 false 0 launches 8261 nonces 134217728 evaluated 2095864792 secs 141.9"
+  ],
+  "identical": true
+ },
+ "crosscheck_ranges": [
+  {
+   "range": 0,
+   "start": 0,
+   "cpu": 258,
+   "device": 258
+  },
+  {
+   "range": 1,
+   "start": 4292870144,
+   "cpu": 267,
+   "device": 267
+  },
+  {
+   "range": 2,
+   "start": 8587837440,
+   "cpu": 246,
+   "device": 246
+  },
+  {
+   "range": 3,
+   "start": 17177772032,
+   "cpu": 279,
+   "device": 279
+  },
+  {
+   "range": 4,
+   "start": 12102640174,
+   "cpu": 217,
+   "device": 217
+  },
+  {
+   "range": 5,
+   "start": 12470119507,
+   "cpu": 276,
+   "device": 276
+  },
+  {
+   "range": 6,
+   "start": 12837598841,
+   "cpu": 283,
+   "device": 283
+  },
+  {
+   "range": 7,
+   "start": 13205078174,
+   "cpu": 262,
+   "device": 262
+  },
+  {
+   "range": 8,
+   "start": 13572557507,
+   "cpu": 252,
+   "device": 252
+  },
+  {
+   "range": 9,
+   "start": 13940036841,
+   "cpu": 253,
+   "device": 253
+  },
+  {
+   "range": 10,
+   "start": 14307516174,
+   "cpu": 273,
+   "device": 273
+  },
+  {
+   "range": 11,
+   "start": 14674995507,
+   "cpu": 278,
+   "device": 278
+  },
+  {
+   "range": 12,
+   "start": 2493312261,
+   "cpu": 266,
+   "device": 266
+  },
+  {
+   "range": 13,
+   "start": 2829793807,
+   "cpu": 243,
+   "device": 243
+  },
+  {
+   "range": 14,
+   "start": 3166275353,
+   "cpu": 250,
+   "device": 250
+  },
+  {
+   "range": 15,
+   "start": 3502756899,
+   "cpu": 251,
+   "device": 251
+  },
+  {
+   "range": 16,
+   "start": 3839238445,
+   "cpu": 242,
+   "device": 242
+  },
+  {
+   "range": 17,
+   "start": 4175719991,
+   "cpu": 237,
+   "device": 237
+  },
+  {
+   "range": 18,
+   "start": 5635096133,
+   "cpu": 294,
+   "device": 294
+  },
+  {
+   "range": 19,
+   "start": 5922864194,
+   "cpu": 275,
+   "device": 275
+  },
+  {
+   "range": 20,
+   "start": 6210632255,
+   "cpu": 266,
+   "device": 266
+  },
+  {
+   "range": 21,
+   "start": 6498400316,
+   "cpu": 233,
+   "device": 233
+  },
+  {
+   "range": 22,
+   "start": 1559709137,
+   "cpu": 250,
+   "device": 250
+  },
+  {
+   "range": 23,
+   "start": 3121515426,
+   "cpu": 241,
+   "device": 241
+  },
+  {
+   "range": 24,
+   "start": 4683321716,
+   "cpu": 255,
+   "device": 255
+  },
+  {
+   "range": 25,
+   "start": 6245128005,
+   "cpu": 242,
+   "device": 242
+  },
+  {
+   "range": 26,
+   "start": 7806934295,
+   "cpu": 268,
+   "device": 268
+  },
+  {
+   "range": 27,
+   "start": 9368740584,
+   "cpu": 280,
+   "device": 280
+  },
+  {
+   "range": 28,
+   "start": 10930546874,
+   "cpu": 239,
+   "device": 239
+  },
+  {
+   "range": 29,
+   "start": 12492353163,
+   "cpu": 237,
+   "device": 237
+  },
+  {
+   "range": 30,
+   "start": 14054159453,
+   "cpu": 277,
+   "device": 277
+  },
+  {
+   "range": 31,
+   "start": 15615965742,
+   "cpu": 239,
+   "device": 239
+  }
+ ],
+ "zk8_launches": {
+  "launches": 16,
+  "returned_expected_winner": 16
+ },
+ "digests": {
+  "nonces": 383,
+  "mismatches": 0,
+  "max_nonce": 18446744069414584320
+ }
+}

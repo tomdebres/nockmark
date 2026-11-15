@@ -1,0 +1,7 @@
+PAR n=1 wall=31.5 proofs: 29.28s
+PAR n=4 wall=32.4 proofs: 29.99s 30.15s 30.10s 30.06s
+PAR n=8 wall=33.2 proofs: 30.70s 30.66s 30.63s 30.67s 30.55s 30.66s 30.64s 30.64s
+PAR n=16 wall=43.7 proofs: 39.89s 39.45s 40.54s 39.86s 40.42s 39.73s 40.27s 39.58s 40.30s 40.04s 39.66s 40.27s 39.91s 39.82s 39.67s 40.19s
+GRIND alone:   4 winner(s) in 31.5s (457145052 hashes, 14499762 hashes/s)
+GRIND with 8 provers:   4 winner(s) in 31.5s (457145052 hashes, 14491232 hashes/s)
+BG proofs: 30.76s 30.74s 30.77s 30.73s 30.79s 30.76s 30.80s 30.89s 30.88s 30.93s 31.02s 30.93s 30.95s 30.94s 30.93s 31.06s 30.92s 30.94s 30.93s 30.94s 31.00s 30.99s 31.02s 31.04s

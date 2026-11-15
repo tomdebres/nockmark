@@ -1,0 +1,85 @@
+{
+  "backend": "CPU, 10 thread(s), upstream v5_pow_digest",
+  "calibrated_hashes_per_sec": null,
+  "calibrated_prove_s": null,
+  "client_window_s": 492.72686475,
+  "expected_hashes": 67108864.0,
+  "failures": 0,
+  "grind_s": 315.927461625,
+  "hardware": "Apple M1 Max / 10c / 32GB / macOS 26.7.1 / aarch64",
+  "hashes": 53283272,
+  "k": 8,
+  "provers": 1,
+  "proving": "serial",
+  "run_id": 1,
+  "sustained_hashes_per_sec": 168656.66481138716,
+  "tier_log2": 23.0,
+  "track": "zk",
+  "wall_s": 485.216236541,
+  "wins": [
+    {
+      "found_s": 9.92313125,
+      "nonce": 1647267,
+      "prove_done_s": 337.001816166,
+      "prove_s": 21.072902416,
+      "prove_start_s": 315.927473958,
+      "prover": 0
+    },
+    {
+      "found_s": 72.0832135,
+      "nonce": 12210441,
+      "prove_done_s": 358.17518675,
+      "prove_s": 21.172109417,
+      "prove_start_s": 337.001833625,
+      "prover": 0
+    },
+    {
+      "found_s": 112.815940291,
+      "nonce": 19023566,
+      "prove_done_s": 379.331925166,
+      "prove_s": 21.155505625,
+      "prove_start_s": 358.17519575,
+      "prover": 0
+    },
+    {
+      "found_s": 188.2302575,
+      "nonce": 31617454,
+      "prove_done_s": 400.586217416,
+      "prove_s": 21.252772,
+      "prove_start_s": 379.33193925,
+      "prover": 0
+    },
+    {
+      "found_s": 188.904077041,
+      "nonce": 31738754,
+      "prove_done_s": 421.732859875,
+      "prove_s": 21.145351,
+      "prove_start_s": 400.586242166,
+      "prover": 0
+    },
+    {
+      "found_s": 192.415301625,
+      "nonce": 32371617,
+      "prove_done_s": 442.89623875,
+      "prove_s": 21.162173125,
+      "prove_start_s": 421.732877458,
+      "prover": 0
+    },
+    {
+      "found_s": 266.622298625,
+      "nonce": 44836737,
+      "prove_done_s": 464.031799291,
+      "prove_s": 21.134349,
+      "prove_start_s": 442.896256291,
+      "prover": 0
+    },
+    {
+      "found_s": 315.927461625,
+      "nonce": 53135884,
+      "prove_done_s": 485.216236541,
+      "prove_s": 21.183208167,
+      "prove_start_s": 464.0318185,
+      "prover": 0
+    }
+  ]
+}
