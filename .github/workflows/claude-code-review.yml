@@ -4,11 +4,9 @@ name: Claude Code Review
 # keeps the rounds (round 1 the whole diff, later rounds the new commits, three
 # at most) and decides the check: red only for an open Important finding or the
 # round cap. Every other failure (token, outage, timeout, turn limit) passes
-# with a warning, so an outage never blocks every merge.
-#
-# devkit's own reviewer (devkit a7a7482, itself bodyops's), copied from heerr
-# with only the repo name in the prompt changed; scripts/review-round.mjs and
-# test/review-round.test.mjs are devkit's, verbatim.
+# with a warning, so an outage never blocks every merge. A fork's
+# scripts/review-scope.mjs, if it has one, tells upstream's part of an upstream
+# merge from the fork's: a bug in upstream's own code is Upstream, never red.
 on:
   pull_request:
     types:
@@ -44,6 +42,32 @@ jobs:
         continue-on-error: true
         with:
           node-version: '22'
+      # A public repo keeps REVIEW.md in its private notes repo, <repo>-notes
+      # (devkit PLAN.md › Public repos), read with the NOTES_KEY secret, a
+      # read-only deploy key there. Only REVIEW.md is kept, and the rest goes
+      # before the review starts, so nothing else of the notes can reach a
+      # public comment. A fork's PR gets no secret, and no review either.
+      - name: Notes key
+        id: notes
+        continue-on-error: true
+        env:
+          KEY: ${{ secrets.NOTES_KEY }}
+        run: '[ -z "$KEY" ] || echo "repo=${GITHUB_REPOSITORY}-notes" >> "$GITHUB_OUTPUT"'
+      - name: Private notes
+        if: steps.notes.outputs.repo
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.notes.outputs.repo }}
+          ssh-key: ${{ secrets.NOTES_KEY }}
+          path: .notes
+          persist-credentials: false
+      - name: REVIEW.md from the notes
+        if: steps.notes.outputs.repo
+        continue-on-error: true
+        run: |
+          if [ ! -e REVIEW.md ] && [ -f .notes/REVIEW.md ]; then cp .notes/REVIEW.md REVIEW.md; fi
+          rm -rf .notes
       - name: Plan the round
         id: plan
         continue-on-error: true
@@ -58,7 +82,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           prompt: |
-            You are the bug reviewer for nockmark pull request #${{ github.event.pull_request.number }}. Report bugs only.
+            You are the bug reviewer for ${{ github.event.repository.name }} pull request #${{ github.event.pull_request.number }}. Report bugs only.
 
             1. Read REVIEW.md first. "What failure looks like here" is what to look for in this repo; "Findings" is how to tag.
             2. The scope of this round is at the end. Review only that; anything else in the PR is context.
@@ -68,13 +92,14 @@ jobs:
                - Important: in code this PR adds or changes, and it would reach a user, the data or a ship: wrong behaviour, a crash, lost or corrupted data, a security hole, or a REVIEW.md rule broken.
                - Nit: a real bug, but minor or unlikely.
                - Pre-existing: a bug in code this PR didn't change. Never Important.
+               - Upstream: only on a PR the scope below says merges the repo's upstream: a bug in upstream's own changes. Listed, never blocks. Git then checks every Important and Upstream finding against the scope, so put each where its cause is.
             6. Don't post comments or reviews yourself. Answer only with the JSON the output schema asks for: file is repo-relative, line is in the PR head's version, title is one line, detail is the failing scenario in a sentence or two. List each earlier finding's id under resolved or still_open.
 
             ${{ steps.plan.outputs.context }}
           claude_args: |
             --max-turns 30
             --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
-            --json-schema '{"type":"object","properties":{"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["Important","Nit","Pre-existing"]},"file":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"detail":{"type":"string"}},"required":["severity","file","title","detail"]}},"resolved":{"type":"array","items":{"type":"string"}},"still_open":{"type":"array","items":{"type":"string"}}},"required":["summary","findings","resolved","still_open"]}'
+            --json-schema '{"type":"object","properties":{"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["Important","Nit","Pre-existing","Upstream"]},"file":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"detail":{"type":"string"}},"required":["severity","file","title","detail"]}},"resolved":{"type":"array","items":{"type":"string"}},"still_open":{"type":"array","items":{"type":"string"}}},"required":["summary","findings","resolved","still_open"]}'
       - name: Verdict
         if: ${{ !cancelled() }}
         env:

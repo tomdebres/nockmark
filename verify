@@ -112,6 +112,10 @@ sys.exit(bad)' "${html[@]}"
 # The reviewer's bookkeeping (devkit's, verbatim). Node is on the runner and the Mac.
 step 'reviewer rounds (node --test test/review-round.test.mjs)' \
   node --test test/review-round.test.mjs
+# Risk tier's matcher, its table (.github/high-risk-paths.md) and CODEOWNERS
+# (devkit's, verbatim).
+step 'risk tier (node --test test/risk-tier.test.mjs)' \
+  node --test test/risk-tier.test.mjs
 
 if [ "$mode" = full ]; then
   # ---- full only: slow, or needs something shared -------------------------
