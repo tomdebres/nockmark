@@ -2,6 +2,7 @@
 name = "tock"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 # Nockmark bench harness (M1). Grew out of the M0 spike; depends on the
 # nockchain crates by git at the pinned rev below (bump every rev together on

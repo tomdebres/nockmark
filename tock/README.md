@@ -3,10 +3,8 @@
 Benchmarks a machine at Nockchain mining: the ZK lottery (`zk-bench`: Tip5
 hashes of proof object 0, winners proved through the **real mainnet miner
 kernel**) and AI-PoW (`ai-bench`). Run standalone — no node, no networking
-beyond the registry. Born as the M0 spike
-(`docs/superpowers/specs/2026-07-15-m0-spike-findings.md`).
-
-See also: [M2 Registry Deployment Runbook](../docs/superpowers/specs/2026-07-15-m2-deploy-runbook.md)
+beyond the registry. It began as the M0 spike: one proof through the miner
+kernel, verified by the roswell kernel.
 
 ## Prerequisites
 
@@ -19,9 +17,9 @@ See also: [M2 Registry Deployment Runbook](../docs/superpowers/specs/2026-07-15-
 - `protoc` on PATH (`brew install protobuf` / `apt install protobuf-compiler`).
   The AI track's canonical-MoE client links `ai-pow-miner`'s `node` feature —
   the canonical grind/prove path lives behind it — which pulls `nockapp-grpc`.
-- The pinned nightly toolchain (`nightly-2026-04-03`). On this machine it
-  lives at `~/.rustup/toolchains/nightly-2026-04-03-aarch64-apple-darwin/bin`
-  (installed from static.rust-lang.org tarballs; there is no rustup here).
+- The pinned nightly toolchain (`nightly-2026-04-03`): `rustup toolchain
+  install nightly-2026-04-03`, or the static.rust-lang.org tarballs without
+  rustup. Put its `bin/` first on PATH (here for Apple silicon):
 
 ```sh
 export PATH="$HOME/.rustup/toolchains/nightly-2026-04-03-aarch64-apple-darwin/bin:$PATH"
@@ -172,7 +170,7 @@ memory before the run starts.
 ./target/release/tock verify --proof proof.jam --kernel assets/roswell.jam
 ```
 
-Reference timings (Tom's Apple M1, 8 GB): prove ~21 s/proof single-threaded
+Reference timings (an Apple M1, 8 GB): prove ~21 s/proof single-threaded
 (and ~21 s wall-clock for 2 proofs on 2 threads), verify ~0.5 s, proofs
 ~116 KB jammed.
 

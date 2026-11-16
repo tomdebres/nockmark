@@ -19,13 +19,15 @@ that nobody can inflate — including you.
 
 ```sh
 cd tock
+cargo build --release
 ./target/release/tock zk-bench --kernel assets/miner.jam \
   --submit https://nockmark.xyz
 ```
 
-Build instructions (pinned toolchain, kernel jams) are in
-[tock/README.md](tock/README.md); `tock/setup-bench.sh` provisions a fresh
-Ubuntu box end-to-end in about 15 minutes.
+The build needs the pinned nightly toolchain and `protoc`, and
+`assets/miner.jam` is the mainnet miner kernel, compiled once with hoonc:
+both are in [tock/README.md](tock/README.md). `tock/setup-bench.sh`
+provisions a fresh Ubuntu box end-to-end in about 15 minutes.
 
 `zk-bench` measures the machine first — ~2 s of hashing plus one throwaway
 `%5` proof (~21 s on an M1 Max) — and asks the registry for a difficulty
@@ -165,21 +167,36 @@ self-reported. Anything rate-related is.
 - `hoon/` — the registry kernel (challenge minting, pre-Anthropos runs),
   compiled against the pinned nockchain tree by `scripts/build-registry-jam.sh`
 - `bench-results/` — raw result JSONs behind the write-up
-- `docs/` — write-up, design notes, deploy runbook; the M7 plan
-  (`docs/superpowers/specs/2026-11-11-m7-anthropos.md`) records how the board
-  moved to the Anthropos rules
+- `docs/writeups/` — write-ups of what the board shows
+- `scripts/` — the registry jam build and the RunPod recipe the GPU rows were
+  measured with
+- `aipow-spike/` — the AI-PoW feasibility spike the AI track grew from
 - `deploy/`, `Dockerfile`, `railway.json` — the deployed instance
 
 The nockchain crates are git dependencies pinned to one commit in
 `tock/Cargo.toml` and `registry/Cargo.toml`, so any checkout builds without a
 sibling nockchain tree; toolchain and kernel-jam steps are in `tock/README.md`.
 
-`./verify --fast` (syntax checks, under a second) and `./verify` (adds the
-tock and registry test suites) are the checks a change must pass before it
-opens a PR.
+## Contributing
 
 Runs from hardware not yet on the board are the most useful contribution —
 especially datacentre GPUs. An H100 NVL is on the ZK board
 ([`bench-results/gpu/2026-11-15-h100/`](bench-results/gpu/2026-11-15-h100/));
 still missing are an H100 on the AI puzzle, other H100 variants, and the
-B200.
+B200. A run needs no pull request: submit it with `--submit`, and the
+registry ranks it once its proofs verify.
+
+For code, `./verify --fast` (syntax checks, under a second) and `./verify`
+(adds the tock and registry test suites) are the checks a change must pass
+before it opens a PR. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest.
+
+## Security
+
+A way to get a rate onto the board that the work didn't earn is a security
+bug. Please report it privately, not in an issue: see
+[SECURITY.md](SECURITY.md).
+
+## Licence
+
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at
+your option, as Nockchain is.

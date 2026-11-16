@@ -221,7 +221,6 @@ the 4090 does 13.4 MH/s on ZK, about 15 NOCK/day. Details:
   (per-run reports, timestamped logs, GPU samples) and the snapshot and script
   behind every figure here,
   [`bench-results/econ/2026-11-13-snapshot/`](../../bench-results/econ/2026-11-13-snapshot/).
-- How it got here: [the M7 plan](../superpowers/specs/2026-11-11-m7-anthropos.md).
 
 Run your own card:
 
