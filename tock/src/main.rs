@@ -3,8 +3,7 @@
 //! Benchmarks a machine at Nockchain mining as mainnet does it since Anthropos
 //! (height 147,500): `zk-bench` (Tip5 hashes of proof object 0, winners proved
 //! as `%5` through the real miner kernel) and `ai-bench` (AI-PoW). `prove` and
-//! `verify` are the M0 spike primitives (see docs/superpowers/specs/
-//! 2026-07-15-m0-spike-findings.md).
+//! `verify` are the M0 spike primitives: one proof, and its verification.
 
 use std::path::PathBuf;
 use std::time::Instant;

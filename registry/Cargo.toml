@@ -2,6 +2,7 @@
 name = "nockmark-registry"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 # M2 Task 3: RegistryKernel wrapper around tock/assets/registry.jam (Task 2's
 # kernel). Standalone crate (not part of a workspace), sibling of tock/.
